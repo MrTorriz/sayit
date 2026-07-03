@@ -1,0 +1,24 @@
+%YAML 1.3
+---
+# Example: bind a Logitech mouse thumb button to hold-to-talk dictation via
+# Solaar.
+#
+# Prerequisites:
+#   1. Solaar installed and running (autostarts hidden at login).
+#   2. The button diverted. In Solaar's GUI: device -> button -> "Diverted".
+#      Or in ~/.config/solaar/config.yaml, set the control ID to 1 under the
+#      device's "divert-keys". On the MX Master 3S the large thumb plate
+#      ("Mouse Gesture Button") is control ID 195, i.e.: 195: 1
+#
+# Copy this to ~/.config/solaar/rules.yaml and restart Solaar.
+# Press -> sayit start (record), release -> sayit stop (transcribe + paste).
+# Replace /home/USER/path/to with your clone location and the key name with
+# your mouse's button (Solaar's Execute does not expand ~ or $HOME, the path
+# must be absolute).
+- Rule:
+  - Key: [Mouse Gesture Button, pressed]
+  - Execute: [/home/USER/path/to/sayit/bin/sayit, start]
+- Rule:
+  - Key: [Mouse Gesture Button, released]
+  - Execute: [/home/USER/path/to/sayit/bin/sayit, stop]
+...

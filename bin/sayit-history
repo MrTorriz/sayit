@@ -1,0 +1,149 @@
+#!/usr/bin/env bash
+# sayit-history — show transcription history and statistics
+#
+# Usage:
+#   sayit-history              # show the latest 20 entries (absolute line numbers)
+#   sayit-history <N>          # show the latest N entries (integer)
+#   sayit-history --stat       # total words, speaking WPM and time saved
+#   sayit-history --stat 7d    # same, limited to a period: Nd (days), Nh, Nm
+#   sayit-history --copy N     # copy entry N to the clipboard (wl-copy)
+#   sayit-history --inject N   # re-inject entry N into the focused window
+#   sayit-history --clear      # empty the history file
+#
+# Numbering: the listing shows each entry's absolute line number in the history
+# file, so the same N works directly with --copy and --inject.
+#
+# Data source:
+#   $XDG_DATA_HOME/sayit/history.jsonl (default ~/.local/share/...)
+#   One JSON line per entry: {time, seconds, words, text}
+#
+# Exit codes:
+#   0  Success (including "Empty history")
+#   >0 Missing parameter, invalid entry or read error
+
+set -euo pipefail
+
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck source=/dev/null
+[[ -f "$REPO_ROOT/.env" ]] && source "$REPO_ROOT/.env"
+# Assumed typing speed (words/min) used to estimate time saved vs typing.
+TYPING_WPM="${TYPING_WPM:-40}"
+
+HIST="${XDG_DATA_HOME:-$HOME/.local/share}/sayit/history.jsonl"
+mkdir -p "$(dirname "$HIST")"
+touch "$HIST"
+
+# Extract the text field of the entry at absolute line N; error if missing.
+entry_text() {
+    local n="$1" line
+    [[ "$n" =~ ^[0-9]+$ ]] || { echo "Invalid line number: $n" >&2; exit 1; }
+    line=$(sed -n "${n}p" "$HIST")
+    [[ -n "$line" ]] || { echo "No entry on line $n" >&2; exit 1; }
+    printf '%s' "$line" | python3 -c 'import json,sys; print(json.loads(sys.stdin.read())["text"])'
+}
+
+case "${1:-}" in
+    --stat)
+        if [[ ! -s "$HIST" ]]; then echo "Empty history"; exit 0; fi
+        PERIOD="${2:-}"
+        if [[ -n "$PERIOD" && ! "$PERIOD" =~ ^[0-9]+[dhm]$ ]]; then
+            echo "Invalid period: $PERIOD (use e.g. 7d, 12h or 30m)" >&2
+            exit 1
+        fi
+        TYPING_WPM="$TYPING_WPM" PERIOD="$PERIOD" python3 - "$HIST" <<'EOF'
+import json, sys, os, datetime
+
+period = os.environ.get("PERIOD", "")
+cutoff = None
+if period:
+    count, unit = int(period[:-1]), period[-1]
+    delta = {"d": datetime.timedelta(days=count),
+             "h": datetime.timedelta(hours=count),
+             "m": datetime.timedelta(minutes=count)}[unit]
+    cutoff = datetime.datetime.now() - delta
+
+total_words = 0
+total_sec = 0
+n = 0
+with open(sys.argv[1]) as f:
+    for line in f:
+        line = line.strip()
+        if not line: continue
+        d = json.loads(line)
+        if cutoff is not None:
+            try:
+                t = datetime.datetime.fromisoformat(d.get("time", ""))
+            except ValueError:
+                continue
+            if t < cutoff:
+                continue
+        total_words += d.get("words", 0)
+        total_sec += d.get("seconds", 0)
+        n += 1
+
+if n == 0:
+    print(f"No entries{' within ' + period if period else ''}")
+    sys.exit(0)
+
+typing_wpm = float(os.environ.get("TYPING_WPM", "40"))
+speak_wpm = (total_words / (total_sec / 60)) if total_sec > 0 else 0
+# Estimated typing time for the same word count at TYPING_WPM, minus speaking time.
+typing_sec = (total_words / typing_wpm * 60) if typing_wpm > 0 else 0
+saved_sec = typing_sec - total_sec
+
+def fmt(s):
+    s = abs(s)
+    if s < 90: return f"{s:.0f}s"
+    if s < 5400: return f"{s/60:.1f} min"
+    return f"{s/3600:.1f} h"
+
+if period:
+    print(f"Period:          last {period}")
+print(f"Entries:         {n}")
+print(f"Total words:     {total_words}")
+print(f"Speaking time:   {fmt(total_sec)} ({speak_wpm:.0f} words/min spoken)")
+print(f"Typing time est: {fmt(typing_sec)} (at {typing_wpm:.0f} words/min keyboard)")
+label = "saved" if saved_sec >= 0 else "LOST"
+print(f"Time {label}:      {fmt(saved_sec)}  (speaking vs typing)")
+if total_words:
+    print(f"Avg/dictation:   {total_words/n:.0f} words, {total_sec/n:.1f}s")
+EOF
+        ;;
+    --copy)
+        TEXT=$(entry_text "${2:?--copy requires a line number}")
+        if command -v wl-copy >/dev/null; then
+            printf '%s' "$TEXT" | wl-copy
+            echo "Copied to clipboard"
+        else
+            echo "$TEXT"
+        fi
+        ;;
+    --inject)
+        TEXT=$(entry_text "${2:?--inject requires a line number}")
+        exec "$REPO_ROOT/bin/sayit-inject" "$TEXT"
+        ;;
+    --clear)
+        : > "$HIST"
+        echo "History cleared"
+        ;;
+    *)
+        if [[ ! -s "$HIST" ]]; then echo "Empty history"; exit 0; fi
+        COUNT="${1:-20}"
+        [[ "$COUNT" =~ ^[0-9]+$ ]] || { echo "Unknown argument: $COUNT" >&2; exit 1; }
+        # Number entries with their absolute line number in the file so the
+        # same N works with --copy/--inject
+        python3 - "$HIST" "$COUNT" <<'EOF'
+import json, sys
+path, count = sys.argv[1], int(sys.argv[2])
+with open(path) as f:
+    lines = f.read().splitlines()
+start = max(0, len(lines) - count)
+for i, line in enumerate(lines[start:], start + 1):
+    line = line.strip()
+    if not line:
+        continue
+    d = json.loads(line)
+    print(f"{i:3} [{d['time']}] ({d['words']} words) {d['text'][:80]}")
+EOF
+        ;;
+esac

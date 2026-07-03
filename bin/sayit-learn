@@ -1,0 +1,65 @@
+#!/usr/bin/env bash
+# sayit-learn — teach sayit your vocabulary by growing the wordlist
+#
+# Usage:
+#   sayit-learn "wrong" "right"   # add a replacement to the wordlist (deduped)
+#   sayit-learn --list            # show the current wordlist
+#   sayit-learn --undo "wrong"    # remove the replacement whose original = "wrong"
+#
+# Behavior:
+#   - Appends the line "wrong<TAB>right" to the wordlist unless the original
+#     already exists (case-insensitive comparison). Applied to all future
+#     transcriptions by sayit-transcribe.
+#   - "wrong" is matched case-insensitively on word boundaries (same as
+#     sayit-transcribe).
+#   - Wordlist location: $XDG_CONFIG_HOME/sayit/wordlist.tsv (override with
+#     WORDLIST in .env). Created on first use.
+#
+# Exit codes:
+#   0  Success
+#   1  Bad arguments, or original already exists / was not found
+
+set -euo pipefail
+
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck source=/dev/null
+[[ -f "$REPO_ROOT/.env" ]] && source "$REPO_ROOT/.env"
+WORDLIST="${WORDLIST:-${XDG_CONFIG_HOME:-$HOME/.config}/sayit/wordlist.tsv}"
+mkdir -p "$(dirname "$WORDLIST")"
+touch "$WORDLIST"
+
+case "${1:-}" in
+    --list)
+        grep -vE '^[[:space:]]*#|^[[:space:]]*$' "$WORDLIST" || true
+        ;;
+    --undo)
+        WRONG="${2:?--undo requires the \"wrong\" string}"
+        # Remove the line whose first column (case-insensitive) = WRONG
+        TMP=$(mktemp)
+        awk -F'\t' -v w="${WRONG,,}" 'tolower($1)==w{next} {print}' "$WORDLIST" > "$TMP"
+        if cmp -s "$WORDLIST" "$TMP"; then
+            rm -f "$TMP"; echo "No rule found with original: $WRONG" >&2; exit 1
+        fi
+        mv "$TMP" "$WORDLIST"
+        echo "Removed: $WRONG"
+        ;;
+    "" | --help | -h)
+        sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//'
+        ;;
+    *)
+        WRONG="$1"
+        RIGHT="${2:?Usage: sayit-learn \"wrong\" \"right\"}"
+        # No-op guard: an identical original/replacement does nothing useful
+        if [[ "$WRONG" == "$RIGHT" ]]; then
+            echo "Original and replacement are identical — no rule added" >&2
+            exit 1
+        fi
+        # Dedup: does the original already exist (case-insensitive, first column)?
+        if awk -F'\t' -v w="${WRONG,,}" 'tolower($1)==w{found=1} END{exit !found}' "$WORDLIST"; then
+            echo "Already in the wordlist: $WRONG (run --undo first to change it)" >&2
+            exit 1
+        fi
+        printf '%s\t%s\n' "$WRONG" "$RIGHT" >> "$WORDLIST"
+        echo "Added: $WRONG -> $RIGHT"
+        ;;
+esac

@@ -1,0 +1,53 @@
+#!/usr/bin/env bash
+# test-pipeline — smoke test of the full chain using a synthetic voice
+#
+# Usage:
+#   test-pipeline            # uses a default sentence in SPEECH_LANGUAGE
+#   test-pipeline "<text>"   # transcribe an arbitrary sentence
+#
+# Behavior:
+#   1. Generates a WAV with espeak-ng (voice follows SPEECH_LANGUAGE) in /tmp
+#   2. Sends it through sayit-transcribe (whisper.cpp)
+#   3. Prints the original and the result on stdout
+#   4. Cleans up the /tmp file on exit
+#
+# Requirements:
+#   espeak-ng installed
+#
+# Exit codes:
+#   0  The pipeline returned non-empty text
+#   1  espeak-ng missing, or transcription produced an empty result
+
+set -euo pipefail
+
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck source=/dev/null
+[[ -f "$REPO_ROOT/.env" ]] && source "$REPO_ROOT/.env"
+SPEECH_LANGUAGE="${SPEECH_LANGUAGE:-sv}"
+
+case "$SPEECH_LANGUAGE" in
+    sv) DEFAULT_TEXT="Hej Claude, kan du öppna readme-filen och visa innehållet?" ;;
+    *)  DEFAULT_TEXT="Hello, can you open the readme file and show its contents?" ;;
+esac
+TEST_TEXT="${1:-$DEFAULT_TEXT}"
+WAV="/tmp/sayit-test-$$.wav"
+trap 'rm -f "$WAV"' EXIT
+
+if ! command -v espeak-ng >/dev/null; then
+    echo "espeak-ng missing — install it with your package manager" >&2
+    exit 1
+fi
+
+echo "[test] Generating WAV with espeak-ng (voice: $SPEECH_LANGUAGE)"
+echo "[test] Original: $TEST_TEXT"
+espeak-ng -v "$SPEECH_LANGUAGE" "$TEST_TEXT" -w "$WAV"
+
+echo "[test] Transcribing..."
+RESULT=$("$REPO_ROOT/bin/sayit-transcribe" "$WAV")
+echo "[test] Result: $RESULT"
+if [[ -n "${RESULT// }" ]]; then
+    echo "[test] OK — the pipeline works"
+else
+    echo "[test] FAIL — empty result" >&2
+    exit 1
+fi

@@ -1,0 +1,140 @@
+#!/usr/bin/env bash
+# sayit — main command: start/stop recording, transcribe, inject text
+#
+# Usage:
+#   sayit           # toggle (default): press once = start, again = stop
+#   sayit start     # hold-mode key-press: start recording
+#   sayit stop      # hold-mode key-release: stop, transcribe, inject
+#   sayit cancel    # discard the current recording without transcribing
+#
+# Behavior:
+#   - PID, start timestamp and WAV live in $XDG_RUNTIME_DIR (or /tmp)
+#   - Transcribed text is injected into the focused window via sayit-inject
+#   - Every successful transcription is logged to
+#     $XDG_DATA_HOME/sayit/history.jsonl
+#   - Status notifications via notify-send (when available)
+#
+# Exit codes:
+#   0  Normal flow (including empty results — "Empty result" is notified)
+#   1  Unknown argument
+
+set -euo pipefail
+
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck source=/dev/null
+[[ -f "$REPO_ROOT/.env" ]] && source "$REPO_ROOT/.env"
+
+PID_FILE="${XDG_RUNTIME_DIR:-/tmp}/sayit.pid"
+START_FILE="${XDG_RUNTIME_DIR:-/tmp}/sayit.start"
+WAV_FILE="${XDG_RUNTIME_DIR:-/tmp}/sayit.wav"
+SOURCE_FILE="${XDG_RUNTIME_DIR:-/tmp}/sayit.source"
+HIST="${XDG_DATA_HOME:-$HOME/.local/share}/sayit/history.jsonl"
+
+MODE="${1:-toggle}"
+
+notify() {
+    command -v notify-send >/dev/null || return 0
+    notify-send -t 1500 -i audio-input-microphone "sayit" "$1" || true
+}
+
+start_recording() {
+    [[ -f "$PID_FILE" ]] && kill -0 "$(cat "$PID_FILE")" 2>/dev/null && return 0
+    notify "Recording"
+    # Switch a connected Bluetooth headset to its headset profile so the mic
+    # becomes available; the source name is saved and passed to sayit-record.
+    # Empty when no Bluetooth headset is connected -> default mic.
+    SOURCE=$("$REPO_ROOT/bin/sayit-bt" up 2>/dev/null || true)
+    printf '%s' "$SOURCE" > "$SOURCE_FILE"
+    date +%s.%N > "$START_FILE"
+    "$REPO_ROOT/bin/sayit-record" "$WAV_FILE" "$SOURCE" &
+    echo $! > "$PID_FILE"
+    disown
+}
+
+stop_and_inject() {
+    # Race guard: in hold-mode the release may arrive while start is still
+    # switching the Bluetooth profile (PID not written yet). Wait up to ~3 s.
+    for _ in $(seq 1 30); do
+        [[ -f "$PID_FILE" ]] && break
+        sleep 0.1
+    done
+    [[ -f "$PID_FILE" ]] || return 0
+    REC_PID=$(cat "$PID_FILE")
+    rm -f "$PID_FILE"
+    kill -INT "$REC_PID" 2>/dev/null || true
+    wait "$REC_PID" 2>/dev/null || true
+
+    # Restore the headset's previous profile (A2DP) once recording is done.
+    rm -f "$SOURCE_FILE"
+    "$REPO_ROOT/bin/sayit-bt" down 2>/dev/null || true
+
+    # Compute recording duration (guard against an empty/corrupt start file)
+    DURATION=0
+    if [[ -f "$START_FILE" ]]; then
+        START=$(cat "$START_FILE")
+        rm -f "$START_FILE"
+        if [[ "$START" =~ ^[0-9]+(\.[0-9]+)?$ ]]; then
+            END=$(date +%s.%N)
+            DURATION=$(awk "BEGIN { printf \"%.2f\", $END - $START }")
+        fi
+    fi
+
+    notify "Transcribing..."
+    TEXT=$("$REPO_ROOT/bin/sayit-transcribe" "$WAV_FILE" || true)
+    rm -f "$WAV_FILE"
+
+    if [[ -n "${TEXT// }" ]]; then
+        WORDS=$(echo "$TEXT" | wc -w)
+        if "$REPO_ROOT/bin/sayit-inject" "$TEXT"; then
+            notify "Done ($WORDS words): ${TEXT:0:60}"
+        else
+            notify "Injection failed — text in clipboard/stdout"
+        fi
+
+        # Append to history
+        mkdir -p "$(dirname "$HIST")"
+        python3 -c "
+import json, sys, datetime
+print(json.dumps({
+    'time': datetime.datetime.now().isoformat(timespec='seconds'),
+    'seconds': float(sys.argv[2]),
+    'words': int(sys.argv[3]),
+    'text': sys.argv[1]
+}, ensure_ascii=False))
+" "$TEXT" "$DURATION" "$WORDS" >> "$HIST"
+    else
+        notify "Empty result"
+    fi
+}
+
+cancel_recording() {
+    if [[ ! -f "$PID_FILE" ]]; then
+        notify "No recording in progress"
+        return 0
+    fi
+    REC_PID=$(cat "$PID_FILE")
+    rm -f "$PID_FILE" "$START_FILE" "$SOURCE_FILE"
+    kill -INT "$REC_PID" 2>/dev/null || true
+    wait "$REC_PID" 2>/dev/null || true
+    rm -f "$WAV_FILE"
+    "$REPO_ROOT/bin/sayit-bt" down 2>/dev/null || true
+    notify "Recording cancelled — nothing injected"
+}
+
+case "$MODE" in
+    start)
+        start_recording ;;
+    stop)
+        stop_and_inject ;;
+    cancel)
+        cancel_recording ;;
+    toggle|"")
+        if [[ -f "$PID_FILE" ]] && kill -0 "$(cat "$PID_FILE")" 2>/dev/null; then
+            stop_and_inject
+        else
+            start_recording
+        fi ;;
+    *)
+        echo "Usage: sayit [toggle|start|stop|cancel]" >&2
+        exit 1 ;;
+esac

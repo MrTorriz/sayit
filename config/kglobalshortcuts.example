@@ -1,0 +1,20 @@
+# Example: KDE Plasma global shortcut for sayit (toggle mode)
+# Add it in System Settings -> Shortcuts -> Custom Shortcuts,
+# or set it programmatically with kwriteconfig5/kwriteconfig6.
+#
+# Shortcut: Meta+D (or any free key, e.g. F12)
+# Command:  $HOME/path/to/sayit/bin/sayit
+#
+# Manual installation via shell:
+#
+# kwriteconfig6 --file kglobalshortcutsrc \
+#     --group "sayit" \
+#     --key "_k_friendly_name" "sayit"
+#
+# kwriteconfig6 --file kglobalshortcutsrc \
+#     --group "sayit" \
+#     --key "toggle" "Meta+D,none,Start/stop dictation"
+#
+# Then wire it up via the kglobalaccel D-Bus interface, or create a .desktop
+# file under ~/.local/share/applications/sayit.desktop (template in
+# config/sayit.desktop) and bind it in System Settings -> Shortcuts.

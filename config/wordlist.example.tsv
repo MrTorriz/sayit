@@ -1,0 +1,20 @@
+# sayit wordlist — auto-replacements applied after transcription
+# Format: original<TAB>replacement  (one per line, # = comment)
+# Matched case-insensitively on word boundaries, longest original first.
+#
+# Copy this file to ~/.config/sayit/wordlist.tsv (done by install.sh) and
+# grow it with `sayit-learn "wrong" "right"` whenever the model mishears a
+# term. Examples below fix common tech-term mistranscriptions.
+claude kod	Claude Code
+clode md	CLAUDE.md
+cloud md	CLAUDE.md
+clode	Claude
+get hub	GitHub
+gitt hub	GitHub
+gitting nore	gitignore
+gitt ignore	gitignore
+docker komposse	docker-compose
+push to talk	push-to-talk
+text to speech	text-to-speech
+play rate	Playwright
+play right	Playwright

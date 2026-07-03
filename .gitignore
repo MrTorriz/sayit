@@ -1,0 +1,29 @@
+# Models (downloaded by install.sh)
+models/*.bin
+models/*.gguf
+
+# Recordings and temp files
+*.wav
+*.log
+*.tmp
+
+# Configuration with user-specific paths
+.env
+
+# Local (untracked) Claude Code context
+CLAUDE.local.md
+ANTIGRAVITY.md
+.claude/
+
+# Build artifacts
+build/
+
+# Editor temp files
+*~
+*.swp
+*.swo
+.DS_Store
+
+# Python cache (in case helper scripts are introduced)
+__pycache__/
+*.pyc

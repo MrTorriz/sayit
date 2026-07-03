@@ -1,0 +1,46 @@
+#!/usr/bin/env bash
+# sayit-wordlist — apply wordlist replacements to text on stdin
+#
+# Usage:
+#   sayit-wordlist <wordlist.tsv> < input > output
+#
+# Arguments:
+#   wordlist.tsv  TSV file: original<TAB>replacement, # starts a comment line
+#
+# Behavior:
+#   - Replacements are case-insensitive and anchored on word boundaries.
+#   - All rules are applied in ONE pass, sorted longest original first, so
+#     multi-word rules win over substrings regardless of line order.
+#   - Originals are matched literally (regex metacharacters are escaped).
+#   - UTF-8 aware: word boundaries are correct around non-ASCII letters.
+#   - A missing or unreadable wordlist passes the input through unchanged.
+#
+# Exit codes:
+#   0  Success (including passthrough)
+
+set -euo pipefail
+
+TSV="${1:?Usage: sayit-wordlist <wordlist.tsv> < input}"
+
+# One perl pass: rules are sorted longest-first so multi-word rules win over
+# substrings regardless of line order in the file. -CSD + UTF-8 reading keeps
+# \b correct around non-ASCII letters (otherwise they count as non-word chars).
+exec perl -CSD -e '
+    my $tsv = shift;
+    open my $fh, "<:encoding(UTF-8)", $tsv
+        or do { print do { local $/; <STDIN> }; exit 0 };
+    my @rules;
+    while (<$fh>) {
+        chomp;
+        next if /^\s*#/ || /^\s*$/;
+        my ($orig, $repl) = split /\t/, $_, 2;
+        next unless defined $repl && length($orig) && length($repl);
+        push @rules, [$orig, $repl];
+    }
+    @rules = sort { length($b->[0]) <=> length($a->[0]) } @rules;
+    my $text = do { local $/; <STDIN> };
+    for my $r (@rules) {
+        $text =~ s/\b\Q$r->[0]\E\b/$r->[1]/gi;
+    }
+    print $text;
+' "$TSV"

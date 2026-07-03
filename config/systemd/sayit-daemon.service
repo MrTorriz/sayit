@@ -1,0 +1,17 @@
+[Unit]
+Description=sayit — keeps the Whisper model warm in RAM
+After=default.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/path/to/sayit
+# sayit-daemon sources .env itself (with shell expansion of $HOME) and starts
+# whisper-server with the right model + VAD + flash-attn + beam. Model switching
+# (medium <-> large) and VAD are controlled entirely from .env — no
+# EnvironmentFile needed.
+ExecStart=%h/path/to/sayit/bin/sayit-daemon
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=default.target

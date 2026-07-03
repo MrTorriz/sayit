@@ -1,0 +1,30 @@
+# CI: shellcheck + bash -n on every script, and the bats test suite.
+# Runs on push and pull requests.
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Syntax check (bash -n)
+        run: |
+          for f in bin/* install.sh; do
+            bash -n "$f"
+          done
+      - name: shellcheck
+        run: shellcheck bin/* install.sh
+
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install bats
+        run: sudo apt-get update && sudo apt-get install -y bats
+      - name: Run test suite
+        run: bats tests/

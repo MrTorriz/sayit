@@ -1,0 +1,64 @@
+#!/usr/bin/env bash
+# sayit-daemon — start a warm whisper-server with .env-driven flags
+#
+# Usage:
+#   sayit-daemon
+#
+# Behavior:
+#   - Reads configuration from .env (MODEL_PATH, SPEECH_LANGUAGE, THREADS,
+#     DAEMON_PORT, VAD_MODEL, BEAM, INITIAL_PROMPT)
+#   - Starts whisper-server, keeping the model warm in RAM/GPU
+#   - Enables VAD when VAD_MODEL points to an existing file (less
+#     hallucination on trailing silence), flash attention and beam search
+#   - Run by the systemd service sayit-daemon.service (exec, no fork)
+#
+# Exit codes:
+#   1  Model or whisper-server missing
+#
+# Note: this is a wrapper so that model switching (medium <-> large) and
+# VAD/beam settings are controlled entirely from .env without editing the
+# service file.
+
+set -euo pipefail
+
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck source=/dev/null
+[[ -f "$REPO_ROOT/.env" ]] && source "$REPO_ROOT/.env"
+
+WHISPER_SERVER="${WHISPER_SERVER:-$HOME/.local/src/whisper.cpp/build/bin/whisper-server}"
+[[ -x "$WHISPER_SERVER" ]] || { echo "whisper-server missing — run install.sh" >&2; exit 1; }
+
+# SAYIT_MODEL (environment variable) wins over .env:MODEL_PATH — for
+# temporary A/B switching between models without editing .env (e.g. via
+# `systemctl --user set-environment SAYIT_MODEL=...`).
+MODEL="${SAYIT_MODEL:-${MODEL_PATH:-$REPO_ROOT/models/ggml-kb-whisper-medium-q5_0.bin}}"
+[[ -f "$MODEL" ]] || { echo "Model missing: $MODEL — run install.sh" >&2; exit 1; }
+
+SPEECH_LANGUAGE="${SPEECH_LANGUAGE:-sv}"
+THREADS="${THREADS:-8}"
+DAEMON_PORT="${DAEMON_PORT:-9876}"
+BEAM="${BEAM:-5}"
+
+ARGV=(
+    --model "$MODEL"
+    --language "$SPEECH_LANGUAGE"
+    --threads "$THREADS"
+    --beam-size "$BEAM"
+    --flash-attn
+    --suppress-nst
+    --host 127.0.0.1
+    --port "$DAEMON_PORT"
+)
+
+# Optional: suppress specific recurring junk tokens (regex). Empty = off.
+SUPPRESS_REGEX="${SUPPRESS_REGEX:-}"
+[[ -n "$SUPPRESS_REGEX" ]] && ARGV+=(--suppress-regex "$SUPPRESS_REGEX")
+
+# VAD: filters out non-speech before the model sees it -> less hallucination.
+# Only enabled when VAD_MODEL exists on disk.
+VAD_MODEL="${VAD_MODEL:-$REPO_ROOT/models/ggml-silero-v5.1.2.bin}"
+if [[ -f "$VAD_MODEL" ]]; then
+    ARGV+=(--vad --vad-model "$VAD_MODEL")
+fi
+
+exec "$WHISPER_SERVER" "${ARGV[@]}"

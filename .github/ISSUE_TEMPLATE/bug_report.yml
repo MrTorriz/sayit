@@ -1,0 +1,39 @@
+name: Bug report
+description: Something does not work as documented
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What did you do, what did you expect, what happened instead?
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. ...
+        2. ...
+    validations:
+      required: true
+  - type: textarea
+    id: env
+    attributes:
+      label: Environment
+      description: Distro, desktop/compositor, GPU, audio setup
+      placeholder: |
+        - Distro: Fedora 44
+        - Desktop: KDE Plasma 6 (Wayland)
+        - GPU / Vulkan: Intel Arc (vulkaninfo works)
+        - Microphone: built-in / USB / Bluetooth headset
+        - Model: kb-whisper-medium q5_0
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Output / logs
+      description: Output of the failing command, `./bin/test-pipeline`, or `journalctl --user -u sayit-daemon`
+      render: text

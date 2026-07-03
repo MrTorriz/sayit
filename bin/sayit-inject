@@ -1,0 +1,78 @@
+#!/usr/bin/env bash
+# sayit-inject — send text to the focused window
+#
+# Usage:
+#   sayit-inject <text>
+#
+# Arguments:
+#   text  The string to type into the active window
+#
+# Behavior:
+#   Primary: put the text on the clipboard (wl-copy) and paste with
+#   Shift+Insert via ydotool. This is LAYOUT-INDEPENDENT — `ydotool type`
+#   sends keycodes according to the US layout, so non-ASCII characters
+#   (e.g. å/ä/ö) and some symbols (?) are dropped or wrong on non-US layouts.
+#   Clipboard pasting preserves the exact text. Shift+Insert pastes in
+#   terminals (Konsole et al.), Qt/GTK editors and browsers.
+#
+#   Fallbacks when wl-copy/ydotool are missing: ydotool type (ASCII-safe),
+#   wtype (wlroots), xdotool (X11). KWin lacks the virtual-keyboard protocol
+#   -> wtype does not work there.
+#   ydotool talks to ydotoold via YDOTOOL_SOCKET (default /run/.ydotool_socket).
+#
+# Exit codes:
+#   0  Text injected
+#   1  No injector succeeded (the text is printed to stdout as a fallback)
+
+set -euo pipefail
+
+TEXT="${1:?Usage: sayit-inject <text>}"
+
+export YDOTOOL_SOCKET="${YDOTOOL_SOCKET:-/run/.ydotool_socket}"
+
+# Try an injector; return its exit code without tripping the script (set -e).
+attempt() { "$@" 2>/dev/null; }
+
+# Clipboard + Shift+Insert: put the text on both the clipboard and the primary
+# selection so pasting works regardless of which selection the app reads, then
+# press Shift+Insert (keycodes: 42=leftshift, 110=insert). The previous
+# clipboard is saved beforehand and restored ~1 s after pasting (in the
+# background, so dictation is not delayed). NOTE: restoration is text/bytes —
+# MIME types for e.g. images are not preserved.
+inject_clipboard() {
+    command -v wl-copy >/dev/null && command -v ydotool >/dev/null || return 1
+
+    # Save the current clipboard (bytes). Empty/unavailable clipboard -> no file.
+    local saved=""
+    if command -v wl-paste >/dev/null; then
+        saved=$(mktemp "${XDG_RUNTIME_DIR:-/tmp}/sayit-clipboard.XXXXXX")
+        wl-paste -n > "$saved" 2>/dev/null || { rm -f "$saved"; saved=""; }
+    fi
+
+    printf '%s' "$TEXT" | wl-copy 2>/dev/null || { rm -f "$saved"; return 1; }
+    printf '%s' "$TEXT" | wl-copy --primary 2>/dev/null || true
+    attempt ydotool key 42:1 110:1 110:0 42:0
+    local rc=$?
+
+    # Restore the previous clipboard once the target app has read the paste.
+    if [[ -n "$saved" ]]; then
+        ( sleep 1; wl-copy < "$saved" 2>/dev/null; rm -f "$saved" ) &
+        disown
+    fi
+    return $rc
+}
+
+if inject_clipboard; then
+    exit 0
+elif command -v ydotool >/dev/null && attempt ydotool type --key-delay 0 --key-hold 2 -- "$TEXT"; then
+    exit 0
+elif command -v wtype >/dev/null && attempt wtype -- "$TEXT"; then
+    exit 0
+elif command -v xdotool >/dev/null && attempt xdotool type --clearmodifiers -- "$TEXT"; then
+    exit 0
+fi
+
+echo "No text injector succeeded — check that ydotool.service is running" \
+     "(systemctl status ydotool) or install wl-clipboard/wtype/xdotool" >&2
+echo "$TEXT"
+exit 1

@@ -1,0 +1,122 @@
+#!/usr/bin/env bash
+# sayit-transcribe — transcribe a WAV file with whisper.cpp
+#
+# Usage:
+#   sayit-transcribe <file.wav>
+#
+# Arguments:
+#   file.wav  16 kHz mono PCM file (same format as sayit-record produces)
+#
+# Behavior:
+#   - Reads configuration from .env (MODEL_PATH, WHISPER_CLI, SPEECH_LANGUAGE,
+#     THREADS, BEAM, VAD_MODEL, INITIAL_PROMPT, DAEMON_PORT)
+#   - Applies the wordlist as case-insensitive word-boundary replacements
+#   - Prints normalized text on stdout (no newlines, tabs or status lines)
+#
+# Exit codes:
+#   0  Successful transcription (even when the result is empty)
+#   1  File missing, or whisper-cli/model not installed
+
+set -euo pipefail
+
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck source=/dev/null
+[[ -f "$REPO_ROOT/.env" ]] && source "$REPO_ROOT/.env"
+
+WAV="${1:?Usage: sayit-transcribe <file.wav>}"
+[[ -f "$WAV" ]] || { echo "File not found: $WAV" >&2; exit 1; }
+
+WHISPER_CLI="${WHISPER_CLI:-$HOME/.local/bin/whisper-cli}"
+[[ -x "$WHISPER_CLI" ]] || { echo "whisper-cli missing — run install.sh" >&2; exit 1; }
+
+MODEL="${MODEL_PATH:-$REPO_ROOT/models/ggml-kb-whisper-medium-q5_0.bin}"
+[[ -f "$MODEL" ]] || { echo "Model missing: $MODEL — run install.sh" >&2; exit 1; }
+
+SPEECH_LANGUAGE="${SPEECH_LANGUAGE:-sv}"
+THREADS="${THREADS:-8}"
+BEAM="${BEAM:-5}"
+DAEMON_PORT="${DAEMON_PORT:-9876}"
+DAEMON_URL="http://127.0.0.1:${DAEMON_PORT}/inference"
+INITIAL_PROMPT="${INITIAL_PROMPT:-}"
+VAD_MODEL="${VAD_MODEL:-$REPO_ROOT/models/ggml-silero-v5.1.2.bin}"
+SUPPRESS_REGEX="${SUPPRESS_REGEX:-}"
+LLM_CLEANUP="${LLM_CLEANUP:-0}"
+LLM_MODEL="${LLM_MODEL:-gemma2:2b}"
+LLM_URL="${LLM_URL:-http://127.0.0.1:11434/api/generate}"
+
+# Prefer a warm daemon (whisper-server) when it responds — the model is already
+# in RAM/GPU, so the ~0.8 s model load per call disappears. Falls back to
+# whisper-cli (cold start) when the server is not running.
+transcribe_daemon() {
+    command -v curl >/dev/null || return 1
+    # VAD/beam/flash-attn are set at server start (sayit-daemon); the prompt
+    # is sent per request to prime spelling of domain terms and names.
+    curl -sf -m 30 \
+        -F file=@"$WAV" \
+        -F language="$SPEECH_LANGUAGE" \
+        -F prompt="$INITIAL_PROMPT" \
+        -F response_format=text \
+        "$DAEMON_URL" 2>/dev/null
+}
+
+transcribe_cli() {
+    # -nt: no timestamps; -np: no status lines; -fa: flash attention;
+    # -bs: beam search (more accurate than greedy); --vad: filter non-speech;
+    # -sns: suppress non-speech tokens (e.g. [music], brackets, noise).
+    local cli_args=(-m "$MODEL" -l "$SPEECH_LANGUAGE" -t "$THREADS" -bs "$BEAM" -fa -sns -nt -np)
+    [[ -f "$VAD_MODEL" ]] && cli_args+=(--vad -vm "$VAD_MODEL")
+    [[ -n "$INITIAL_PROMPT" ]] && cli_args+=(--prompt "$INITIAL_PROMPT")
+    [[ -n "$SUPPRESS_REGEX" ]] && cli_args+=(--suppress-regex "$SUPPRESS_REGEX")
+    "$WHISPER_CLI" "${cli_args[@]}" -f "$WAV" 2>/dev/null
+}
+
+# Optional local LLM cleanup (Ollama): fixes spelling, merged/split words and
+# obvious speech-to-text errors using context, without changing the meaning.
+# Falls back to the original text on error/timeout. Enabled with LLM_CLEANUP=1.
+llm_cleanup() {
+    python3 - "$LLM_URL" "$LLM_MODEL" "$1" <<'PYEOF'
+import sys, json, urllib.request
+url, model, text = sys.argv[1], sys.argv[2], sys.argv[3]
+prompt = ("You correct speech-to-text output. Return EXACTLY the same sentence "
+          "but fix spelling errors, stray spaces inside words and obvious "
+          "mistranscriptions. Do NOT change the meaning, do NOT add or remove "
+          "information, write NO comments or explanations. Keep the original "
+          "language. Reply with the corrected text only.\n\n"
+          "Text: " + text)
+payload = json.dumps({"model": model, "prompt": prompt, "stream": False,
+                      "options": {"temperature": 0}}).encode()
+try:
+    req = urllib.request.Request(url, data=payload,
+                                 headers={"Content-Type": "application/json"})
+    with urllib.request.urlopen(req, timeout=20) as r:
+        out = json.loads(r.read()).get("response", "").strip()
+    print(out if out else text)
+except Exception:
+    print(text)
+PYEOF
+}
+
+RAW=$(transcribe_daemon || true)
+[[ -z "${RAW// }" || "$RAW" == *"<|"*"|>"* ]] && RAW=$(transcribe_cli || true)
+
+# Normalize: strip special tokens (<|nospeech|> etc.), trim, join lines
+RAW=$(printf '%s' "$RAW" \
+    | sed -e 's/<|[^>]*|>//g' \
+    | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' \
+    | tr '\n' ' ' \
+    | sed 's/  */ /g')
+
+# Optional LLM cleanup (contextual). Runs before the wordlist so that exact
+# replacements always get the final say on domain terms.
+if [[ "$LLM_CLEANUP" == "1" && -n "${RAW// }" ]]; then
+    RAW=$(llm_cleanup "$RAW")
+fi
+
+# Apply the wordlist (auto-replacement for recurring mistranscriptions).
+# See bin/sayit-wordlist for the matching rules.
+WORDLIST="${WORDLIST:-${XDG_CONFIG_HOME:-$HOME/.config}/sayit/wordlist.tsv}"
+if [[ -f "$WORDLIST" && -n "${RAW// }" ]]; then
+    RAW=$(printf '%s' "$RAW" | "$REPO_ROOT/bin/sayit-wordlist" "$WORDLIST")
+fi
+
+printf '%s' "$RAW"

@@ -1,0 +1,34 @@
+#!/usr/bin/env bash
+# sayit-record — record mono 16 kHz WAV with PipeWire until SIGINT/SIGTERM
+#
+# Usage:
+#   sayit-record <outfile.wav> [source]
+#
+# Arguments:
+#   outfile.wav  Path where the recording is saved (overwritten without warning)
+#   source       (optional) PipeWire target overriding AUDIO_SOURCE, e.g. a
+#                bluez_input source from sayit-bt. Empty = AUDIO_SOURCE or
+#                the PipeWire default mic.
+#
+# Behavior:
+#   - Format: PCM s16le, 16 kHz mono (whisper.cpp-compatible)
+#   - Recording source: argument 2 if set, otherwise AUDIO_SOURCE from .env,
+#     otherwise the PipeWire default mic
+#   - Records until the process receives SIGINT or SIGTERM
+#
+# Exit codes:
+#   0  Normal termination (SIGINT)
+#   >0 pw-record failed
+
+set -euo pipefail
+
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck source=/dev/null
+[[ -f "$REPO_ROOT/.env" ]] && source "$REPO_ROOT/.env"
+
+OUTFILE="${1:?Usage: sayit-record <outfile.wav> [source]}"
+SOURCE="${2:-${AUDIO_SOURCE:-}}"
+ARGS=(--rate 16000 --channels 1 --format=s16)
+[[ -n "$SOURCE" ]] && ARGS+=(--target "$SOURCE")
+
+exec pw-record "${ARGS[@]}" "$OUTFILE"

@@ -1,0 +1,97 @@
+#!/usr/bin/env bash
+# sayit-bt — switch a connected Bluetooth headset (e.g. AirPods) between A2DP
+#              and HSP/HFP so the microphone becomes available while recording,
+#              then restore the previous profile afterwards.
+#
+# Background:
+#   The A2DP profile (high-quality playback) exposes no microphone. Recording
+#   requires the headset profile (HSP/HFP, mSBC). It degrades playback quality
+#   but provides a mic. pw-record does not trigger an automatic profile switch,
+#   so we do it here.
+#
+# Usage:
+#   sayit-bt up     # switch connected Bluetooth headset to headset profile
+#                     #   (mic on), print the source name to stdout (empty when
+#                     #   no Bluetooth headset is connected)
+#   sayit-bt down   # restore the previous profile
+#
+# Behavior:
+#   - Picks the card behind the default sink if it is a Bluetooth device,
+#     otherwise the first connected Bluetooth card with a headset-head-unit
+#     profile. Works with multiple headsets (selected dynamically by whichever
+#     is active).
+#   - Saves the previous profile in $XDG_RUNTIME_DIR/sayit.bt and restores it.
+#   - No-op (exit 0, empty stdout) when no Bluetooth headset is connected ->
+#     falls back to the built-in/default mic.
+#
+# Exit codes:
+#   0  Normal flow (including no-op)
+#   1  pactl or jq missing
+
+set -euo pipefail
+
+# pactl warns on stderr about non-ASCII in its own JSON output (device names
+# may contain dashes or other characters); the pactl calls below are silenced
+# with 2>/dev/null. A UTF-8 locale keeps jq's parsing of those bytes correct.
+export LC_ALL=C.UTF-8
+
+command -v pactl >/dev/null || { echo "pactl missing" >&2; exit 1; }
+command -v jq    >/dev/null || { echo "jq missing" >&2; exit 1; }
+
+STATE="${XDG_RUNTIME_DIR:-/tmp}/sayit.bt"
+HEADSET_PROFILE="headset-head-unit"
+
+# Find which Bluetooth card to switch. Prefer the card behind the default sink.
+find_card() {
+    local sink mac
+    sink=$(pactl get-default-sink 2>/dev/null || true)
+    if [[ "$sink" == bluez_output.* ]]; then
+        mac=${sink#bluez_output.}; mac=${mac%%.*}
+        echo "bluez_card.$mac"; return 0
+    fi
+    pactl -f json list cards 2>/dev/null | jq -r \
+        '.[] | select(.name|startswith("bluez_card.")) |
+         select(.profiles|has("headset-head-unit")) | .name' | head -1
+}
+
+active_profile() {
+    pactl -f json list cards 2>/dev/null | jq -r --arg k "$1" \
+        '.[] | select(.name==$k) | .active_profile'
+}
+
+# Source names use colons in the MAC (bluez_input.AA:BB:..), cards use
+# underscores (bluez_card.AA_BB_..). Convert and look up the card's source.
+card_source() {
+    local mac_colon=${1#bluez_card.}
+    mac_colon=${mac_colon//_/:}
+    pactl -f json list sources 2>/dev/null | jq -r --arg pfx "bluez_input.$mac_colon" \
+        '.[] | select(.name|startswith($pfx)) | .name' | head -1
+}
+
+case "${1:-}" in
+    up)
+        card=$(find_card) || true
+        [[ -n "${card:-}" ]] || exit 0
+        prev=$(active_profile "$card")
+        if [[ "$prev" != "$HEADSET_PROFILE" ]]; then
+            printf '%s\t%s\n' "$card" "$prev" > "$STATE"
+            pactl set-card-profile "$card" "$HEADSET_PROFILE"
+        fi
+        # Wait for the source to appear (the profile switch is async, ~2 s max).
+        for _ in $(seq 1 20); do
+            source_name=$(card_source "$card")
+            [[ -n "${source_name:-}" ]] && { echo "$source_name"; exit 0; }
+            sleep 0.1
+        done
+        exit 0 ;;
+    down)
+        [[ -f "$STATE" ]] || exit 0
+        IFS=$'\t' read -r card prev < "$STATE"
+        rm -f "$STATE"
+        if [[ -n "${card:-}" && -n "${prev:-}" ]]; then
+            pactl set-card-profile "$card" "$prev" || true
+        fi ;;
+    *)
+        echo "Usage: sayit-bt [up|down]" >&2
+        exit 1 ;;
+esac
