@@ -26,7 +26,7 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SPEECH_LANGUAGE="${SPEECH_LANGUAGE:-sv}"
 
 case "$SPEECH_LANGUAGE" in
-    sv) DEFAULT_TEXT="Hej Claude, kan du öppna readme-filen och visa innehållet?" ;;
+    sv) DEFAULT_TEXT="Hej, kan du öppna readme-filen och visa innehållet?" ;;
     *)  DEFAULT_TEXT="Hello, can you open the readme file and show its contents?" ;;
 esac
 TEST_TEXT="${1:-$DEFAULT_TEXT}"
