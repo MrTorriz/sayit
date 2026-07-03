@@ -51,7 +51,12 @@ While `sayit` is a general-purpose dictation tool, it is tailored specifically t
 
 ### Text injection on KWin/Wayland (ydotool)
 
-KWin (Plasma 6) does **not** expose the virtual-keyboard protocol, so `wtype` fails with `Compositor does not support the virtual keyboard protocol`. Use `ydotool` (uinput) instead. `ydotoold` must be running with its socket accessible to your user:
+KWin (Plasma 6) does **not** expose the virtual-keyboard protocol, causing `wtype` to fail with `Compositor does not support the virtual keyboard protocol`. Use `ydotool` (uinput) instead.
+
+<details>
+<summary><b>🔧 Click here for KWin/Wayland setup instructions</b></summary>
+
+The `ydotoold` daemon must be running with its socket accessible to your user. Set up a systemd override:
 
 ```bash
 sudo mkdir -p /etc/systemd/system/ydotool.service.d
@@ -64,9 +69,14 @@ sudo systemctl daemon-reload
 sudo systemctl enable --now ydotool.service
 ```
 
-Replace `1000:1000` with your `id -u`:`id -g` if different. `sayit-inject` reads `YDOTOOL_SOCKET` (default `/run/.ydotool_socket`) and falls back to wtype/xdotool on compositors where they work (wlroots/X11).
+> [!NOTE]
+> Replace `1000:1000` with your active UID/GID (`id -u`:`id -g`) if they differ. `sayit-inject` reads `YDOTOOL_SOCKET` (defaulting to `/run/.ydotool_socket`) and falls back automatically to `wtype` (wlroots) or `xdotool` (X11) depending on your session.
 
-**Non-ASCII characters:** `ydotool type` sends keycodes according to the US layout, so characters like `å/ä/ö` and `?` are dropped or wrong on other layouts. sayit therefore injects primarily via the clipboard: `wl-copy` puts the text on the clipboard + primary selection, and Shift+Insert pastes it verbatim — layout-independent, works in terminals, editors and browsers. Your previous clipboard is saved and restored automatically ~1 s after pasting (content as bytes — MIME types for e.g. images are not preserved).
+</details>
+
+> [!IMPORTANT]
+> **Layout Independence (Non-ASCII Characters):**
+> Traditional synthetic typing tools (`ydotool type`) send keycodes according to the US layout. This drops or mangles non-ASCII characters (`å/ä/ö`, symbols) on other layouts. To fix this, `sayit` injects text by copying it to the clipboard, sending `Shift+Insert` to paste it instantly, and automatically restoring your previous clipboard content (at bytes level) ~1 second later. This ensures exact, layout-independent pasting across terminals, editors, and browsers.
 
 ## Installation
 
@@ -107,7 +117,9 @@ Turn a Logitech mouse thumb button into push-to-talk via [Solaar](https://github
 2. Copy the example to `~/.config/solaar/rules.yaml` (fix the paths), restart Solaar.
 3. The rules run `sayit start` on press and `sayit stop` on release.
 
-On a Bluetooth mic the microphone takes ~1 s to wake up — hold for a moment before speaking. `sayit` has a race guard so a quick release does not miss the recording.
+> [!TIP]
+> On Bluetooth microphones (e.g. AirPods), the mic takes about 1 second to wake up. It is recommended to hold the button for a brief moment before you start speaking. `sayit` includes a race guard so that a very quick press-and-release does not lose or corrupt the recording.
+
 
 ### Global hotkey (toggle)
 
@@ -267,6 +279,7 @@ The service runs `bin/sayit-daemon`, which sources `.env` and starts `whisper-se
 | Recording starts but never stops              | Check that `$XDG_RUNTIME_DIR/sayit.pid` exists and points to a live process           |
 | Bluetooth headset records from the wrong mic  | Verify the headset is connected; try `./bin/sayit-bt up` (should print `bluez_input.…`) |
 | Headset stuck in phone-quality audio          | Run `./bin/sayit-bt down` to force A2DP back after an abnormally aborted recording    |
+| Solaar button does not trigger dictation      | Run `systemctl --user status solaar.service` and verify Solaar is running in your graphical session. |
 
 Run `./bin/test-pipeline` for an end-to-end check with a synthetic voice (no microphone needed).
 
