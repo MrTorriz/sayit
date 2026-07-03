@@ -32,14 +32,14 @@ flowchart LR
 | **Measurable**      | Built-in stats: words dictated, speaking WPM, and time saved vs typing             |
 | **Bluetooth-aware** | Auto-switches headsets (e.g. AirPods) to their mic profile and back                |
 
-## Showcase: Developer Productivity & Use Cases
+## Use cases
 
-While `sayit` is a general-purpose dictation tool, it is tailored specifically to accelerate software engineering workflows:
+General-purpose dictation, tuned for software engineering workflows:
 
-*   **Semantic Git Commits:** Dictate commit messages instantly into your terminal (e.g., `feat(ui): add responsive sidebar layout`).
-*   **Inline Documentation:** Dictate code comments, docstrings, and architecture notes while keeping your eyes on the code.
-*   **Conversing with AI Assistants:** Dictate prompts directly to CLI-based AI tools (like Claude Code) or web LLMs. Speaking is up to 3x faster than typing.
-*   **RSI Prevention & Accessibility:** Give your wrists a break. Dictate long emails, Slack/Discord messages, and design documents hands-free.
+- **Git commits** — dictate commit messages straight into the terminal (e.g. `feat(ui): add responsive sidebar layout`)
+- **Documentation** — dictate code comments, docstrings and architecture notes while keeping your eyes on the code
+- **AI assistants** — dictate prompts to CLI tools like Claude Code or to web LLMs; speaking is roughly 3x faster than typing
+- **RSI prevention & accessibility** — dictate long emails, chat messages and design documents hands-free
 
 ## Requirements
 
@@ -283,16 +283,6 @@ The service runs `bin/sayit-daemon`, which sources `.env` and starts `whisper-se
 
 Run `./bin/test-pipeline` for an end-to-end check with a synthetic voice (no microphone needed).
 
-## Engineering & Architecture Highlights
-
-For recruiters and software engineers reviewing this repository, `sayit` showcases pragmatic engineering decisions applied to real-world Linux desktop integration:
-
-*   **Robust State Machine & Race Guards:** Shell scripts often fail under rapid input. `sayit` handles rapid click/release actions by polling and waiting for background processes to initialize (e.g., verifying the PID file and waiting for PipeWire to open the recording stream).
-*   **Layout-Independent Text Delivery:** Traditional synthetic typing (`ydotool type`) maps to US-layout keycodes. This drops or mangles non-ASCII characters (`å/ä/ö`, symbols) on other layouts. `sayit-inject` resolves this by copying to the clipboard, sending a `Shift+Insert` key combination, and restoring the user's previous clipboard content (bytes-level) ~1 second later.
-*   **Dynamic Bluetooth Profile Switching:** Bluetooth headsets typically use the high-quality playback profile (A2DP) which lacks a microphone channel. `sayit-bt` dynamically identifies active Bluetooth audio devices, switches them to the HSP/HFP profile for the recording duration, and reverts to A2DP immediately afterwards.
-*   **Graceful Fallbacks:** The transcription pipeline is designed for resilience. If the systemd-managed `whisper-server` daemon is not running, `sayit-transcribe` instantly falls back to a cold-start `whisper-cli` call. Similarly, text injection falls back from `ydotool` to `wtype` (Wayland) or `xdotool` (X11) depending on the environment.
-*   **Automated Testing Suite:** The codebase is fully validated. In addition to a static analysis pipeline (`shellcheck` + `bash -n` syntax validation), it includes a complete test suite written in [Bats](https://github.com/bats-core/bats-core) that mocks system interfaces to verify the state machine, replacement wordlist engine, and statistics reporter.
-
 ## Project structure
 
 ```text
@@ -301,8 +291,10 @@ sayit/
 ├── LICENSE                             # MIT
 ├── CONTRIBUTING.md                     # dev setup, style rules, PR checklist
 ├── .env.example                        # configuration template
-├── .github/                            # CI (shellcheck + bash -n), issue/PR templates
-├── docs/demo.svg                       # animated demo shown at the top of this README
+├── .github/                            # CI (shellcheck + bash -n + bats), issue/PR templates
+├── docs/
+│   ├── ARCHITECTURE.md                 # pipeline, components, latency profile, design decisions
+│   └── demo.svg                        # animated demo shown at the top of this README
 ├── bin/
 │   ├── sayit                         # toggle/hold: record + transcribe + inject
 │   ├── sayit-bt                      # Bluetooth headset A2DP <-> headset-mic switching
@@ -312,6 +304,7 @@ sayit/
 │   ├── sayit-inject                  # wl-copy + Shift+Insert / ydotool / wtype / xdotool
 │   ├── sayit-history                 # history & statistics (time saved)
 │   ├── sayit-learn                   # self-growing wordlist (learn from mistakes)
+│   ├── sayit-wordlist                # one-pass wordlist replacement engine (perl)
 │   └── test-pipeline                   # smoke test with espeak-ng
 ├── config/
 │   ├── wordlist.example.tsv            # starter wordlist (copied to ~/.config/sayit/)
@@ -319,6 +312,7 @@ sayit/
 │   ├── kglobalshortcuts.example        # example KDE global shortcut
 │   ├── solaar-rules.example.yaml       # example mouse-button hold-to-talk
 │   └── systemd/sayit-daemon.service  # daemon mode (whisper-server)
+├── tests/                              # bats test suite (history, learn, wordlist)
 └── models/                             # GGML models + Silero VAD (gitignored)
 ```
 
@@ -328,11 +322,15 @@ sayit/
 - **Why a wordlist + initial prompt instead of fine-tuning?** Recurring mistranscriptions are highly personal (project names, brand names). A TSV file and a decoder prompt fix 95% of them with zero training cost, and `sayit-learn` makes adding a rule a two-second operation.
 - **Why push-to-talk instead of a wake word?** Deliberate scope: push-to-talk is more reliable, more private, and has no idle CPU cost.
 
+A deeper walkthrough — pipeline, components, latency profile and the reasoning
+behind each design decision — lives in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+
 ## Contributing
 
 Bug reports, fixes and focused features are welcome — see
 [CONTRIBUTING.md](CONTRIBUTING.md) for the dev setup, style rules and the
-pre-PR checklist.
+pre-PR checklist. CI runs `bash -n`, `shellcheck` and the
+[Bats](https://github.com/bats-core/bats-core) test suite on every push and PR.
 
 ## License
 
