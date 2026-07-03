@@ -10,7 +10,8 @@ models/*.gguf
 # Configuration with user-specific paths
 .env
 
-# Local (untracked) Claude Code context
+# Local (untracked) agent/editor context
+CLAUDE.md
 CLAUDE.local.md
 ANTIGRAVITY.md
 .claude/

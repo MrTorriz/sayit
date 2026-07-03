@@ -38,7 +38,7 @@ General-purpose dictation, tuned for software engineering workflows:
 
 - **Git commits** — dictate commit messages straight into the terminal (e.g. `feat(ui): add responsive sidebar layout`)
 - **Documentation** — dictate code comments, docstrings and architecture notes while keeping your eyes on the code
-- **AI assistants** — dictate prompts to CLI tools like Claude Code or to web LLMs; speaking is roughly 3x faster than typing
+- **Chat & prompts** — dictate prompts and long messages into CLI tools and web chat apps; speaking is roughly 3x faster than typing
 - **RSI prevention & accessibility** — dictate long emails, chat messages and design documents hands-free
 
 ## Requirements
