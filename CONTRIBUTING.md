@@ -26,7 +26,8 @@ cd sayit
 1. `shellcheck bin/* install.sh` — must be clean (CI enforces this).
 2. `bash -n` on every changed script.
 3. `./bin/test-pipeline` still passes.
-4. README and script header comments updated if behavior or flags changed.
+4. `bats tests/` passes successfully (requires `bats` installed, verified in CI).
+5. README, docs/ARCHITECTURE.md, and script header comments are updated if behavior or flags changed.
 
 Keep PRs focused on one change. Describe what changed and why in the
 description — reviewers should not have to reverse-engineer intent from the

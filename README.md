@@ -2,7 +2,7 @@
 
 > Push-to-talk dictation for Linux. Hold a key, speak, release — your words are typed into whatever window has focus. 100% local, no cloud, no API keys.
 
-[![lint](https://github.com/MrTorriz/sayit/actions/workflows/lint.yml/badge.svg)](https://github.com/MrTorriz/sayit/actions/workflows/lint.yml)
+[![ci](https://github.com/MrTorriz/sayit/actions/workflows/ci.yml/badge.svg)](https://github.com/MrTorriz/sayit/actions/workflows/ci.yml)
 [![license: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![platform: Linux](https://img.shields.io/badge/platform-Linux-informational)](#requirements)
 [![100% local](https://img.shields.io/badge/speech--to--text-100%25_local-success)](#design-notes)
