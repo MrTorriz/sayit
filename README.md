@@ -152,17 +152,17 @@ Bind `bin/sayit` to any free key. On KDE: System Settings → Shortcuts → Cust
 ./bin/sayit-history --clear      # empty the history
 ```
 
+<p align="center">
+  <img src="docs/history_list.png" alt="sayit-history terminal screenshot showing formatted list with absolute numbers" width="720">
+</p>
+
 History lives in `~/.local/share/sayit/history.jsonl` (one JSON line per entry). The listing shows each entry's **absolute line number**, so the same N works directly with `--copy` and `--inject`.
 
 `--stat` estimates **time saved** by comparing your speaking time against how long the same number of words would take to type at `TYPING_WPM` words/min (default 40, adjustable in `.env`):
 
-```text
-Entries:         142
-Total words:     1749
-Speaking time:   15.5 min (113 words/min spoken)
-Typing time est: 43.7 min (at 40 words/min keyboard)
-Time saved:      28.2 min  (speaking vs typing)
-```
+<p align="center">
+  <img src="docs/history_stat.png" alt="sayit-history stat terminal screenshot showing speak/type speed comparison and time saved" width="720">
+</p>
 
 ### Bluetooth headsets
 
