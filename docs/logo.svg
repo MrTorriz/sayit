@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 96 96" width="96" height="96" role="img" aria-label="sayit logo: a waveform ending in a full stop">
+  <!-- Three baseline-aligned waveform bars ending in a full stop: speech
+       becoming a written sentence. Self-contained, no external resources.
+       The mark color follows the viewer's theme via prefers-color-scheme. -->
+  <style>
+    .m { fill: #1f2328; }
+    @media (prefers-color-scheme: dark) { .m { fill: #e6edf3; } }
+  </style>
+  <rect class="m" x="14" y="30" width="12" height="44" rx="6"/>
+  <rect class="m" x="34" y="10" width="12" height="64" rx="6"/>
+  <rect class="m" x="54" y="38" width="12" height="36" rx="6"/>
+  <circle class="m" cx="80" cy="68" r="6"/>
+</svg>

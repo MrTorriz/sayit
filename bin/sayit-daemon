@@ -51,8 +51,17 @@ ARGV=(
 )
 
 # Optional: suppress specific recurring junk tokens (regex). Empty = off.
+# Only forwarded when this whisper-server build supports the flag — older
+# builds exit on unknown arguments (with status 0, defeating Restart=on-failure),
+# which would kill daemon mode permanently the moment the option is set.
 SUPPRESS_REGEX="${SUPPRESS_REGEX:-}"
-[[ -n "$SUPPRESS_REGEX" ]] && ARGV+=(--suppress-regex "$SUPPRESS_REGEX")
+if [[ -n "$SUPPRESS_REGEX" ]]; then
+    if "$WHISPER_SERVER" --help 2>&1 | grep -q -- --suppress-regex; then
+        ARGV+=(--suppress-regex "$SUPPRESS_REGEX")
+    else
+        echo "warning: this whisper-server lacks --suppress-regex; SUPPRESS_REGEX applies to the CLI fallback only" >&2
+    fi
+fi
 
 # VAD: filters out non-speech before the model sees it -> less hallucination.
 # Only enabled when VAD_MODEL exists on disk.

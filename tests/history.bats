@@ -93,3 +93,60 @@ now() { date +%Y-%m-%dT%H:%M:%S; }
     run "$HISTORY" --bogus
     [ "$status" -eq 1 ]
 }
+
+@test "a corrupt line does not break the listing; entries after it still show" {
+    add_entry "$(now)" 1 2 "before"
+    echo 'THIS IS NOT JSON {broken' >> "$HIST_FILE"
+    add_entry "$(now)" 1 2 "after"
+    run "$HISTORY"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *before* ]]
+    [[ "$output" == *after* ]]
+    [[ "$output" != *Traceback* ]]
+}
+
+@test "a corrupt line does not break --stat" {
+    add_entry "$(now)" 60 80 "healthy"
+    echo '{truncated' >> "$HIST_FILE"
+    run "$HISTORY" --stat
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"Total words:     80"* ]]
+    [[ "$output" != *Traceback* ]]
+}
+
+@test "corrupt lines are counted in a warning without leaking content" {
+    add_entry "$(now)" 1 2 "fine"
+    echo 'secret-looking {garbage' >> "$HIST_FILE"
+    run "$HISTORY"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"corrupt"* ]]
+    [[ "$output" != *"secret-looking"* ]]
+}
+
+@test "--copy on a corrupt line fails cleanly without a traceback" {
+    echo 'not json' > "$HIST_FILE"
+    run "$HISTORY" --copy 1
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"Corrupt entry"* ]]
+    [[ "$output" != *Traceback* ]]
+}
+
+@test "an entry missing optional keys does not crash the listing" {
+    printf '{"time": "%s", "text": "no words key"}\n' "$(now)" >> "$HIST_FILE"
+    run "$HISTORY"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"no words key"* ]]
+}
+
+@test "a valid-JSON non-object line is treated as corrupt" {
+    add_entry "$(now)" 1 2 "fine"
+    echo 'null' >> "$HIST_FILE"
+    echo '[1, 2]' >> "$HIST_FILE"
+    run "$HISTORY"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *fine* ]]
+    [[ "$output" == *corrupt* ]]
+    run "$HISTORY" --stat
+    [ "$status" -eq 0 ]
+    [[ "$output" != *Traceback* ]]
+}
