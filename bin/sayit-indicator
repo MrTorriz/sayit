@@ -2,8 +2,9 @@
 # sayit-indicator — persistent "recording" indicator via desktop notifications
 #
 # Usage:
-#   sayit-indicator show    # show a persistent recording notification
-#   sayit-indicator hide    # remove it (safe to call when none is shown)
+#   sayit-indicator show [source]   # show the recording indicator; source =
+#                                   # the PipeWire source being recorded
+#   sayit-indicator hide            # remove it (safe when none is shown)
 #
 # Behavior:
 #   - Uses a non-expiring notification (notify-send --print-id, -t 0) as a
@@ -11,12 +12,18 @@
 #     $XDG_RUNTIME_DIR/sayit.indicator so hide can close exactly that
 #     notification through the standard org.freedesktop.Notifications D-Bus
 #     interface (gdbus). Theme icons render correctly in both light and dark.
+#   - Additionally starts sayit-meter, a live microphone meter in Plasma's
+#     on-screen display (animated sayit mark or glyph waveform), so you can
+#     SEE that dictation hears you while you speak. Its PID is kept in
+#     $XDG_RUNTIME_DIR/sayit.meter; hide stops it.
 #   - show replaces a previous indicator (--replace-id) instead of stacking.
 #   - Fallbacks: notify-send without --print-id (libnotify < 0.8) degrades to
 #     a short transient notification and hide becomes a no-op; a missing
-#     notify-send or gdbus is silently tolerated. The indicator must never
-#     break the recording pipeline.
-#   - Called by bin/sayit; disable entirely with RECORDING_INDICATOR=0 in .env.
+#     notify-send, gdbus or Plasma OSD is silently tolerated. The indicator
+#     must never break the recording pipeline.
+#   - Called by bin/sayit. The toggles are independent and live here:
+#     RECORDING_INDICATOR=0 disables the notification, RECORDING_METER=0 the
+#     meter. hide always stops both regardless of the toggles.
 #
 # Exit codes:
 #   0  Normal flow (including all fallback paths)
@@ -24,11 +31,52 @@
 
 set -euo pipefail
 
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck source=/dev/null
+[[ -f "$REPO_ROOT/.env" ]] && source "$REPO_ROOT/.env"
+
 RUN_DIR="${XDG_RUNTIME_DIR:-/tmp}"
 ID_FILE="$RUN_DIR/sayit.indicator"
+METER_PID_FILE="$RUN_DIR/sayit.meter"
+
+# Notification icon: the sayit mark when its theme icons are installed
+# (install.sh), in the tone matching the desktop's color scheme; otherwise a
+# standard theme icon. The portal answer "uint32 1" = prefer dark UI -> the
+# light-glyph default variant; anything else -> the -light (dark-glyph) one.
+notification_icon() {
+    local root="${XDG_DATA_HOME:-$HOME/.local/share}/icons/hicolor/scalable/apps"
+    if [[ ! -f "$root/sayit.svg" ]]; then
+        printf 'audio-input-microphone'
+        return 0
+    fi
+    local suffix="" reply
+    # Short timeout: a wedged portal must never stall the show path.
+    reply=$(gdbus call --session --timeout 1 \
+        --dest org.freedesktop.portal.Desktop \
+        --object-path /org/freedesktop/portal/desktop \
+        --method org.freedesktop.portal.Settings.Read \
+        org.freedesktop.appearance color-scheme 2>/dev/null) || reply=""
+    [[ -z "$reply" || "$reply" == *"uint32 1"* ]] || suffix="-light"
+    # A missing tone variant falls back to the base mark (verified above).
+    [[ -f "$root/sayit$suffix.svg" ]] || suffix=""
+    printf 'sayit%s' "$suffix"
+}
 
 show() {
+    # Live meter in Plasma's OSD (feedback that the mic hears you).
+    # Replaces any previous meter instead of stacking a second one.
+    if [[ "${RECORDING_METER:-1}" != "0" ]]; then
+        stop_meter
+        "$REPO_ROOT/bin/sayit-meter" "${1:-}" >/dev/null 2>&1 &
+        printf '%s\n' "$!" > "$METER_PID_FILE"
+        disown
+    fi
+
+    # The persistent notification half — independent of the meter.
+    [[ "${RECORDING_INDICATOR:-1}" == "0" ]] && return 0
     command -v notify-send >/dev/null || return 0
+    local icon
+    icon=$(notification_icon)
     # The persistent indicator needs gdbus to be closable again: without it,
     # degrade to a short transient cue instead of an unclosable notification.
     if command -v gdbus >/dev/null; then
@@ -36,18 +84,31 @@ show() {
         prev=$(cat "$ID_FILE" 2>/dev/null || true)
         [[ "$prev" =~ ^[0-9]+$ ]] || prev=0
         # -t 0 = never expire; -r replaces our previous indicator (no stacking).
-        if id=$(notify-send -p -r "$prev" -t 0 -i audio-input-microphone \
+        if id=$(notify-send -p -r "$prev" -t 0 -i "$icon" \
                 "sayit" "Recording" 2>/dev/null) && [[ "$id" =~ ^[0-9]+$ ]]; then
             printf '%s\n' "$id" > "$ID_FILE"
             return 0
         fi
     fi
     # No gdbus, or notify-send without --print-id: a short transient cue.
-    notify-send -t 1500 -i audio-input-microphone "sayit" "Recording" \
+    notify-send -t 1500 -i "$icon" "sayit" "Recording" \
         2>/dev/null || true
 }
 
+# Stop a running meter (identity-checked via its command line, so a recycled
+# PID is never signalled).
+stop_meter() {
+    local mpid cmdline
+    mpid=$(cat "$METER_PID_FILE" 2>/dev/null || true)
+    rm -f "$METER_PID_FILE"
+    [[ "$mpid" =~ ^[0-9]+$ ]] || return 0
+    cmdline=$(tr '\0' ' ' < "/proc/$mpid/cmdline" 2>/dev/null) || return 0
+    [[ "$cmdline" == *sayit-meter* ]] || return 0
+    kill "$mpid" 2>/dev/null || true
+}
+
 hide() {
+    stop_meter
     local id
     id=$(cat "$ID_FILE" 2>/dev/null || true)
     [[ "$id" =~ ^[0-9]+$ ]] || { rm -f "$ID_FILE"; return 0; }
@@ -62,7 +123,7 @@ hide() {
 }
 
 case "${1:-}" in
-    show) show ;;
+    show) show "${2:-}" ;;
     hide) hide ;;
     *)
         echo "Usage: sayit-indicator [show|hide]" >&2

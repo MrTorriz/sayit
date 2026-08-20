@@ -1,0 +1,149 @@
+#!/usr/bin/env bash
+# sayit-meter — live microphone feedback in Plasma's on-screen display
+#
+# Usage:
+#   sayit-meter [source]
+#
+# Arguments:
+#   source  (optional) PipeWire source to meter — the same one the recorder
+#           uses. Empty = the default microphone.
+#
+# Behavior:
+#   - Opens its OWN low-rate capture stream (PipeWire sources allow multiple
+#     concurrent readers, so the actual recording is unaffected), computes the
+#     microphone level ~8 times per second and renders it in Plasma's native
+#     OSD (org.kde.osdService.showText) — visible feedback that dictation
+#     hears you, without stealing focus or opening a window.
+#   - Two styles (RECORDING_METER_STYLE in .env):
+#       mark  (default) the sayit logo mark IS the meter: its bars follow the
+#             voice level through the sayit-level-0..7 theme icons, and while
+#             you are silent the red dot pulses — "microphone open, waiting".
+#             Falls back to wave when the icons are not installed (install.sh
+#             installs them). Icon tone (light/dark UI) is chosen once at
+#             start via the desktop portal's color-scheme setting.
+#       wave  a scrolling bar waveform drawn with block glyphs.
+#   - The audio samples are used ONLY to compute a level; nothing is stored
+#     or logged. Runs until killed (sayit-indicator hide), until the capture
+#     stream ends, or for at most 120 s as a safety cap; the OSD is hidden on
+#     every exit path.
+#   - Silently does nothing when pw-cat, gdbus or the Plasma OSD service is
+#     unavailable — the meter is feedback only and must never break dictation.
+#
+# Exit codes:
+#   0  Always
+
+set -euo pipefail
+
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck source=/dev/null
+[[ -f "$REPO_ROOT/.env" ]] && source "$REPO_ROOT/.env"
+
+SOURCE="${1:-}"
+
+command -v pw-cat >/dev/null || exit 0
+command -v gdbus >/dev/null || exit 0
+
+# Per-call timeout: a wedged plasmashell must never pin the meter for the
+# 25 s D-Bus default.
+OSD=(gdbus call --session --timeout 3 --dest org.kde.plasmashell
+     --object-path /org/kde/osdService --method)
+
+# One probe: no Plasma OSD service means nothing to draw on.
+"${OSD[@]}" org.freedesktop.DBus.Peer.Ping >/dev/null 2>&1 || exit 0
+
+# Icon tone for the current desktop theme, via the portal's color-scheme:
+# 1 = prefer dark UI -> light glyphs (the default icon variant), and a
+# missing portal answer is treated the same; anything else (light, no
+# preference) -> the -light (dark-glyph) variant.
+SUFFIX=""
+REPLY=$(gdbus call --session --timeout 1 \
+    --dest org.freedesktop.portal.Desktop \
+    --object-path /org/freedesktop/portal/desktop \
+    --method org.freedesktop.portal.Settings.Read \
+    org.freedesktop.appearance color-scheme 2>/dev/null) || REPLY=""
+[[ -z "$REPLY" || "$REPLY" == *"uint32 1"* ]] || SUFFIX="-light"
+
+ICON_ROOT="${XDG_DATA_HOME:-$HOME/.local/share}/icons/hicolor/scalable"
+
+# The mark needs its complete icon set (levels 0-7 + idle) in the chosen
+# tone — probing all nine keeps a partially installed set from producing
+# blank OSD frames at some levels only.
+mark_icons_present() {
+    local l
+    for l in 0 1 2 3 4 5 6 7; do
+        [[ -f "$ICON_ROOT/status/sayit-level-$l$SUFFIX.svg" ]] || return 1
+    done
+    [[ -f "$ICON_ROOT/status/sayit-idle$SUFFIX.svg" ]]
+}
+
+# A missing tone variant falls back to the base set — the same rule the
+# notification icon uses in sayit and sayit-indicator.
+if [[ -n "$SUFFIX" ]] && ! mark_icons_present; then
+    SUFFIX=""
+fi
+
+# Style: the animated mark needs its theme icons; fall back to the glyph
+# waveform without them so the meter never disappears entirely.
+STYLE="${RECORDING_METER_STYLE:-mark}"
+if [[ "$STYLE" != "wave" ]]; then
+    mark_icons_present || STYLE="wave"
+fi
+STATIC_ICON="audio-input-microphone"
+[[ -f "$ICON_ROOT/apps/sayit$SUFFIX.svg" ]] && STATIC_ICON="sayit$SUFFIX"
+
+trap '"${OSD[@]}" org.kde.osdService.hide >/dev/null 2>&1 || true' EXIT
+
+ARGS=(--record --raw --rate 8000 --channels 1 --format s16)
+[[ -n "$SOURCE" ]] && ARGS+=(--target "$SOURCE")
+
+# The pipeline runs in the background: a foreground pipeline would block
+# signal traps until it ends, making the stop kill a no-op. Killing the
+# python end starves pw-cat via SIGPIPE, closing the capture stream.
+# The stop signal can also land BEFORE the pipeline exists, so the trap is
+# armed first, guarded for an empty PIPE_PID — and the handler must exit by
+# itself: an interrupted wait on a pipeline job otherwise resumes waiting
+# for remaining pipeline members.
+PIPE_PID=""
+trap '{ [[ -z "$PIPE_PID" ]] || kill "$PIPE_PID" 2>/dev/null; } || true; exit 0' INT TERM HUP
+pw-cat "${ARGS[@]}" - 2>/dev/null | python3 -c '
+import array, math, os, subprocess, sys
+
+STYLE, SUFFIX, STATIC_ICON = sys.argv[1:4]
+OSD = sys.argv[4:]
+PPID = os.getppid()
+GLYPHS = "▁▂▃▄▅▆▇█"
+# RMS thresholds (s16 samples) -> level 0..7; roughly log-spaced over the
+# range of quiet room noise up to loud speech on a 16 kHz/mSBC microphone.
+LEVELS = [90, 200, 450, 900, 1800, 3500, 7000]
+hist = [0] * 12
+frames = 0
+while frames < 960:                       # safety cap: ~120 s at 8 fps
+    if os.getppid() != PPID:              # meter shell died mid-signal
+        break                             # -> never run on as an orphan
+    data = sys.stdin.buffer.read(2000)    # 125 ms at 8 kHz s16 mono
+    if len(data) < 4:
+        break
+    samples = array.array("h", data[: len(data) // 2 * 2])
+    rms = math.sqrt(sum(x * x for x in samples) / len(samples))
+    level = sum(1 for t in LEVELS if rms >= t)
+    if STYLE == "mark":
+        # The mark IS the meter: bar heights follow the voice level; in
+        # silence the red dot pulses (~0.6 s) as the "mic is open" cue.
+        if level == 0 and (frames // 5) % 2:
+            icon = "sayit-idle" + SUFFIX
+        else:
+            icon = "sayit-level-%d%s" % (level, SUFFIX)
+        text = "sayit"
+    else:
+        hist = hist[1:] + [level]
+        icon = STATIC_ICON
+        text = "".join(GLYPHS[l] for l in hist)
+    subprocess.run(
+        OSD + ["org.kde.osdService.showText", icon, text],
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
+    frames += 1
+' "$STYLE" "$SUFFIX" "$STATIC_ICON" "${OSD[@]}" &
+PIPE_PID=$!
+wait "$PIPE_PID" 2>/dev/null || true
+
+exit 0

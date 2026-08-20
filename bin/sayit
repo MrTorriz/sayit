@@ -53,6 +53,29 @@ mark() {
         "$1" "${2:-}" >> "$RUN_DIR/sayit-profile.csv"
 }
 
+# Notification icon, resolved once per invocation on first use: the sayit
+# mark when its theme icons are installed (tone via the portal color-scheme,
+# "uint32 1" = dark UI -> the light-glyph default variant), else a standard
+# theme icon. Lazy so invocations without icons never pay the D-Bus call.
+SAYIT_ICON=""
+resolve_notify_icon() {
+    [[ -n "$SAYIT_ICON" ]] && return 0
+    SAYIT_ICON="audio-input-microphone"
+    local root="${XDG_DATA_HOME:-$HOME/.local/share}/icons/hicolor/scalable/apps"
+    if [[ -f "$root/sayit.svg" ]]; then
+        local suffix="" reply
+        # Short timeout: a wedged portal must never stall a notification.
+        reply=$(gdbus call --session --timeout 1 \
+            --dest org.freedesktop.portal.Desktop \
+            --object-path /org/freedesktop/portal/desktop \
+            --method org.freedesktop.portal.Settings.Read \
+            org.freedesktop.appearance color-scheme 2>/dev/null) || reply=""
+        [[ -z "$reply" || "$reply" == *"uint32 1"* ]] || suffix="-light"
+        [[ -f "$root/sayit$suffix.svg" ]] || suffix=""
+        SAYIT_ICON="sayit$suffix"
+    fi
+}
+
 notify() {
     command -v notify-send >/dev/null || return 0
     # The notification body is parsed as markup by the server: escape it so
@@ -67,12 +90,15 @@ notify() {
     # but libnotify < 0.8 rejects the flag — probe before using it.
     local eflag=()
     notify-send --help 2>/dev/null | grep -q -- --transient && eflag=(-e)
-    notify-send "${eflag[@]}" -t 1500 -i audio-input-microphone "sayit" "$body" || true
+    resolve_notify_icon
+    notify-send "${eflag[@]}" -t 1500 -i "$SAYIT_ICON" "sayit" "$body" || true
 }
 
+# The feedback toggles (RECORDING_INDICATOR for the notification,
+# RECORDING_METER for the OSD meter) live inside sayit-indicator itself, so
+# the two stay independent and hide always reaches a running meter.
 indicator() {
-    [[ "${RECORDING_INDICATOR:-1}" == "0" ]] && return 0
-    "$REPO_ROOT/bin/sayit-indicator" "$1" 2>/dev/null || true
+    "$REPO_ROOT/bin/sayit-indicator" "$@" 2>/dev/null || true
 }
 
 # A PID from a state file is only trusted while its command line names the
@@ -220,7 +246,17 @@ start_recording() {
         return 0
     fi
     notify "Recording"
-    indicator show
+    indicator show "$SOURCE"
+    # A very quick release can claim and stop this session while we were
+    # still between the liveness check and the show above — its hide then
+    # ran before our show and nothing would ever take the feedback down
+    # (the meter would keep an OSD and its own capture stream alive with
+    # no recording behind them). Re-check ownership: if the session is no
+    # longer ours, the stop that took it has already passed its hide, so
+    # hiding here cannot race it.
+    if [[ "$(cat "$SESSION_FILE" 2>/dev/null)" != "$pid"$'\t'"$wav"$'\t'"$start" ]]; then
+        indicator hide
+    fi
 }
 
 stop_and_inject() {

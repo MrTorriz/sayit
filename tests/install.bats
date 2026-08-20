@@ -6,13 +6,15 @@
 
 setup() {
     SANDBOX="$BATS_TEST_TMPDIR/repo"
-    mkdir -p "$SANDBOX/config"
+    mkdir -p "$SANDBOX/config" "$SANDBOX/icons"
     cp "$BATS_TEST_DIRNAME/../install.sh" "$SANDBOX/"
     cp "$BATS_TEST_DIRNAME/../.env.example" "$SANDBOX/"
     cp "$BATS_TEST_DIRNAME/../config/wordlist.example.tsv" "$SANDBOX/config/"
+    cp "$BATS_TEST_DIRNAME/../icons/"*.svg "$SANDBOX/icons/"
 
     export HOME="$BATS_TEST_TMPDIR/home"
     export XDG_CONFIG_HOME="$HOME/.config"
+    export XDG_DATA_HOME="$HOME/.local/share"
     mkdir -p "$HOME"
 
     INSTALL="$SANDBOX/install.sh"
@@ -65,6 +67,29 @@ setup() {
     [[ "$output" == *"MODEL_PATH"* ]]
     [[ "$output" == *"ggml-kb-whisper-large-q5_0.bin"* ]]
     [[ "$output" == *"restart"* ]]
+}
+
+@test "theme icons are installed into the hicolor theme" {
+    run "$INSTALL" "${SKIP[@]}"
+    [ "$status" -eq 0 ]
+    [ -f "$XDG_DATA_HOME/icons/hicolor/scalable/apps/sayit.svg" ]
+    [ -f "$XDG_DATA_HOME/icons/hicolor/scalable/apps/sayit-light.svg" ]
+    [ -f "$XDG_DATA_HOME/icons/hicolor/scalable/status/sayit-level-7.svg" ]
+    [ -f "$XDG_DATA_HOME/icons/hicolor/scalable/status/sayit-idle-light.svg" ]
+}
+
+@test "a repo without icons/ warns but still succeeds" {
+    rm -rf "$SANDBOX/icons"
+    run "$INSTALL" "${SKIP[@]}"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"icons/ missing"* ]]
+}
+
+@test "an incomplete icons/ warns but never aborts the installation" {
+    rm "$SANDBOX/icons/sayit-level-"*.svg
+    run "$INSTALL" "${SKIP[@]}"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"icons/ is incomplete"* ]]
 }
 
 @test "a non-git whisper.cpp directory aborts with a clear message before any network use" {
