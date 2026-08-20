@@ -3,8 +3,10 @@
 #
 # Verifies system packages (Fedora/Debian/Ubuntu/Arch), builds whisper.cpp at
 # a pinned release (with Vulkan when available), downloads a Whisper model +
-# the Silero VAD model with sha256 verification, creates .env and seeds the
-# user wordlist. Re-running is safe: existing artifacts are left untouched.
+# the Silero VAD model with sha256 verification, creates .env, seeds the
+# user wordlist and installs the sayit theme icons. Re-running is safe:
+# existing artifacts are left untouched (the theme icons are re-copied —
+# they carry no user content).
 #
 # Flags:
 #   -y, --yes           answer yes to all prompts
@@ -298,6 +300,31 @@ if [[ ! -f "$WORDLIST_FILE" ]]; then
     log "Seeded wordlist at $WORDLIST_FILE"
 else
     log "Wordlist already exists at $WORDLIST_FILE — left untouched"
+fi
+
+# 5b. Install the theme icons (notification mark + OSD meter levels). These
+# are sayit's own namespaced files, so re-copying on every run is the upgrade
+# path — no user content lives here.
+ICON_ROOT="${XDG_DATA_HOME:-$HOME/.local/share}/icons/hicolor/scalable"
+if [[ -d "$REPO_ROOT/icons" ]]; then
+    mkdir -p "$ICON_ROOT/apps" "$ICON_ROOT/status"
+    # An incomplete icons/ must degrade like a missing one (the scripts fall
+    # back by themselves), never abort the installation — hence || below.
+    ICONS_OK=1
+    cp "$REPO_ROOT/icons/sayit.svg" "$REPO_ROOT/icons/sayit-light.svg" \
+        "$ICON_ROOT/apps/" 2>/dev/null || ICONS_OK=0
+    cp "$REPO_ROOT/icons/sayit-level-"*.svg "$REPO_ROOT/icons/sayit-idle"*.svg \
+        "$ICON_ROOT/status/" 2>/dev/null || ICONS_OK=0
+    if [[ $ICONS_OK -eq 1 ]]; then
+        # Nudge the theme directory mtime so running desktops refresh their
+        # icon cache and pick the icons up without a re-login.
+        touch "${ICON_ROOT%/scalable}"
+        log "Theme icons installed to $ICON_ROOT"
+    else
+        warn "icons/ is incomplete — the meter falls back to the waveform style and notifications to a generic icon"
+    fi
+else
+    warn "icons/ missing from the repo — notifications and the OSD meter fall back to a generic icon"
 fi
 
 # 6. Verify that Vulkan sees a GPU

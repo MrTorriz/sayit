@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 96 96">
+  <!-- sayit theme icon, generated from the docs/logo.svg geometry; installed by install.sh -->
+  <rect x="14" y="30" width="12" height="44" rx="6" fill="#e6edf3"/>
+  <rect x="34" y="10" width="12" height="64" rx="6" fill="#e6edf3"/>
+  <rect x="54" y="38" width="12" height="36" rx="6" fill="#e6edf3"/>
+  <circle cx="80" cy="68" r="6" fill="#da4453"/>
+</svg>

@@ -52,6 +52,7 @@ sequenceDiagram
 | `sayit-wordlist` | Pure text transform: stdin to stdout, TSV rules (unit-tested) |
 | `sayit-inject` | Text delivery with a fallback chain per compositor, clipboard hygiene |
 | `sayit-indicator` | Persistent recording indicator (notification-based, safe fallbacks) |
+| `sayit-meter` | Live microphone meter in Plasma's OSD — animated logo mark or glyph waveform; feedback only |
 | `sayit-history` | Read side of `history.jsonl`: listing, stats, re-inject; corrupt-line tolerant |
 | `sayit-learn` | Write side of the wordlist: add/undo/list with dedup |
 
@@ -67,6 +68,7 @@ logout); only history and the wordlist persist.
 | `$XDG_RUNTIME_DIR/sayit-<pid>.wav` | The recording in progress — unique per session, so back-to-back dictations never overwrite each other |
 | `$XDG_RUNTIME_DIR/sayit.bt` | Card name + previous audio profile, written by `sayit-bt up`, consumed by `down` (explains the "stuck in phone-quality audio" failure mode) |
 | `$XDG_RUNTIME_DIR/sayit.indicator` | Notification ID of the visible recording indicator |
+| `$XDG_RUNTIME_DIR/sayit.meter` | PID of the running OSD meter — identity-checked against its command line before it is ever signalled |
 | `$XDG_RUNTIME_DIR/sayit-last-error.log` | Error classes from failed stages (never dictated text) |
 | `$XDG_RUNTIME_DIR/sayit-profile.csv` | Per-stage timestamps when `SAYIT_PROFILE=1` (timing data only) |
 | `$XDG_DATA_HOME/sayit/history.jsonl` | One JSON object per dictation |
@@ -192,6 +194,21 @@ is removed on stop, cancel and every failure path. Missing tools or an old
 libnotify degrade it to a transient notification or a no-op; it never takes
 focus, never blocks injection, and can be disabled with
 `RECORDING_INDICATOR=0`.
+
+The live meter takes the same idea further. While recording, `sayit-meter`
+opens its own low-rate PipeWire capture (sources allow concurrent readers,
+so the recording itself is untouched), reduces the audio to a single level
+about 8 times per second, and renders it in Plasma's OSD. By default the
+sayit mark IS the meter: its bars follow the voice level through a small
+series of pre-rendered theme icons (`sayit-level-0..7`), and a red dot
+pulses while you are silent — "microphone open, waiting".
+`RECORDING_METER_STYLE="wave"` draws a scrolling glyph waveform instead.
+The icon tone (light/dark variant) is chosen once at start through the
+desktop portal's color-scheme setting, because hicolor-installed icons are
+not recolored by the theme. Every layer degrades silently: missing icons
+fall back to the glyph waveform, a missing OSD service, `gdbus` or `pw-cat`
+means no meter at all, and the dictation pipeline never notices either way.
+The samples are used only for the level computation; no audio is stored.
 
 ### Deliberate non-goals
 

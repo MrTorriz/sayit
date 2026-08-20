@@ -72,10 +72,11 @@ echo "inject" >> "$STUB_LOG"
 exit 0
 EOF
 
-    # Stub: sayit-indicator — logs show/hide.
+    # Stub: sayit-indicator — logs show/hide with all arguments, so source
+    # forwarding is verifiable.
     cat > "$SANDBOX/bin/sayit-indicator" <<'EOF'
 #!/usr/bin/env bash
-echo "indicator $1" >> "$STUB_LOG"
+echo "indicator $*" >> "$STUB_LOG"
 exit 0
 EOF
 
@@ -105,6 +106,8 @@ session_wav() { cut -f2 "$SESSION"; }
     [ -f "$wav" ]
     [ ! -f "$INTENT" ]
     grep -q "Recording" "$STUB_CTL/notify.log"
+    # Without installed theme icons the notifications use the generic icon.
+    grep -q -- "-i audio-input-microphone" "$STUB_CTL/notify.log"
     "$SAYIT" cancel
 }
 
@@ -117,14 +120,31 @@ session_wav() { cut -f2 "$SESSION"; }
     [ -n "$ind_line" ]
     [ "$bt_line" -lt "$rec_line" ]
     [ "$rec_line" -lt "$ind_line" ]
+    # The recording source must reach the indicator (and thus the meter),
+    # so the meter listens to the SAME microphone as the recording.
+    grep -q "indicator show stub-source" "$STUB_LOG"
     "$SAYIT" cancel
 }
 
-@test "RECORDING_INDICATOR=0 disables the indicator" {
-    RECORDING_INDICATOR=0 "$SAYIT" start
-    ! grep -q "indicator" "$STUB_LOG"
-    RECORDING_INDICATOR=0 "$SAYIT" stop
-    ! grep -q "indicator" "$STUB_LOG"
+@test "feedback toggles are delegated to sayit-indicator, which is always dispatched" {
+    # The RECORDING_INDICATOR/RECORDING_METER toggles live inside
+    # sayit-indicator (tested in indicator.bats); sayit must dispatch
+    # regardless so hide always reaches a running meter.
+    RECORDING_INDICATOR=0 RECORDING_METER=0 "$SAYIT" start
+    grep -q "indicator show" "$STUB_LOG"
+    RECORDING_INDICATOR=0 RECORDING_METER=0 "$SAYIT" stop
+    grep -q "indicator hide" "$STUB_LOG"
+}
+
+@test "notifications use the sayit mark icon when the theme icons are installed" {
+    mkdir -p "$XDG_DATA_HOME/icons/hicolor/scalable/apps"
+    touch "$XDG_DATA_HOME/icons/hicolor/scalable/apps/sayit.svg"
+    # Deterministic portal answer (dark scheme) instead of the real gdbus.
+    printf '#!/usr/bin/env bash\n[[ "$*" == *color-scheme* ]] && echo "(<<uint32 1>>,)"\nexit 0\n' > "$STUBBIN/gdbus"
+    chmod +x "$STUBBIN/gdbus"
+    "$SAYIT" start
+    grep -q -- "-i sayit sayit" "$STUB_CTL/notify.log"
+    "$SAYIT" cancel
 }
 
 @test "second start while recording is a guarded no-op" {

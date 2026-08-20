@@ -31,7 +31,7 @@ flowchart LR
 | **Local**           | No cloud service, no API key, no telemetry — audio never leaves your machine       |
 | **Fast**            | Vulkan GPU inference + a warm model daemon: a short sentence transcribes in ~1.6 s ([measured](#performance)) |
 | **Works anywhere**  | Layout-independent text injection — terminals, editors, browsers, Wayland and X11  |
-| **Push-to-talk**    | Toggle (hotkey) and hold-to-talk (mouse button via Solaar) modes, with a recording indicator |
+| **Push-to-talk**    | Toggle (hotkey) and hold-to-talk (mouse button via Solaar) modes, with a live voice meter and recording indicator |
 | **Learns your vocabulary** | Teach it your terms: `sayit-learn "get hub" "GitHub"`                        |
 | **Measurable**      | Built-in stats, latency profiling and a reproducible benchmark harness             |
 | **Bluetooth-aware** | Auto-switches headsets (e.g. AirPods) to their mic profile and back                |
@@ -112,9 +112,14 @@ Bind `bin/sayit` to any free key. On KDE: System Settings → Shortcuts → Cust
 2. Speak
 3. Press again → stops, transcribes, pastes into the focused window
 
-### Recording indicator
+### Recording indicator and live meter
 
-While the microphone is live, sayit shows a persistent notification as a recording indicator; it appears when capture actually starts (after any Bluetooth profile switch) and is removed on stop, cancel and failure. Disable it with `RECORDING_INDICATOR=0` in `.env`.
+While the microphone is live, sayit shows two pieces of feedback:
+
+- **A live meter in Plasma's OSD** — by default the sayit mark itself is the meter: its bars follow your voice level and the red dot pulses while you are silent, so you can see that dictation hears you. Set `RECORDING_METER_STYLE="wave"` in `.env` for a scrolling bar waveform instead, or `RECORDING_METER=0` to turn the meter off. The meter opens its own low-rate PipeWire stream (the recording is unaffected), uses the audio only to compute a level, and silently disappears on desktops without the Plasma OSD service.
+- **A persistent notification** as the recording indicator; it appears when capture actually starts (after any Bluetooth profile switch) and is removed on stop, cancel and failure. Disable it with `RECORDING_INDICATOR=0` in `.env`.
+
+Both use the sayit theme icons that `install.sh` installs (light/dark variants following the desktop color scheme) and fall back to a generic microphone icon — and the meter to the waveform style — without them.
 
 ### Manual
 
@@ -231,6 +236,8 @@ Everything lives in `.env` (created by `install.sh` from [`.env.example`](.env.e
 | `TYPING_WPM`      | `40`                             | Assumed typing speed for the time-saved statistic   |
 | `WORDLIST`        | `~/.config/sayit/wordlist.tsv`   | Replacement wordlist (grown by `sayit-learn`)       |
 | `RECORDING_INDICATOR` | `1`                          | Persistent recording indicator; `0` = off           |
+| `RECORDING_METER` | `1`                              | Live microphone meter in the Plasma OSD; `0` = off  |
+| `RECORDING_METER_STYLE` | `mark`                     | `mark` = animated logo mark; `wave` = scrolling bar waveform |
 
 `SPEECH_LANGUAGE` and `INITIAL_PROMPT` apply per dictation. `THREADS`, `BEAM` and `VAD_MODEL` apply immediately to the CLI fallback but are fixed at server start for the daemon — run `systemctl --user restart sayit-daemon.service` after changing them. `SUPPRESS_REGEX` always applies to the CLI fallback; it is forwarded to the daemon only when the installed `whisper-server` build supports the flag.
 
@@ -337,6 +344,8 @@ See [SECURITY.md](SECURITY.md) for the security model and how to report issues.
 | whisper.cpp broken after an OS upgrade        | `./install.sh --rebuild`                                                                |
 | No notifications                              | Install `libnotify` (`notify-send`)                                                     |
 | Recording indicator never disappears          | `./bin/sayit-indicator hide` removes it manually                                        |
+| No meter in the OSD while recording           | The meter needs Plasma's OSD service (`plasmashell`) and `gdbus`; check `RECORDING_METER` in `.env` |
+| Meter shows a waveform or a generic icon instead of the mark | Install the theme icons: `./install.sh --skip-packages --skip-build --skip-model` |
 | Recording starts but never stops              | Check `$XDG_RUNTIME_DIR/sayit.session` — it must name a live `pw-record` process        |
 | Bluetooth headset records from the wrong mic  | Verify the headset is connected; try `./bin/sayit-bt up` (should print `bluez_input.…`) |
 | Headset stuck in phone-quality audio          | Run `./bin/sayit-bt down` to force A2DP back after an abnormally aborted recording      |
@@ -357,7 +366,9 @@ sayit/
 ├── docs/
 │   ├── ARCHITECTURE.md                 # pipeline, components, latency profile, design decisions
 │   ├── logo.svg                        # project mark (theme-aware SVG)
-│   └── demo.svg                        # animated demo shown at the top of this README
+│   ├── demo.svg                        # animated demo shown at the top of this README
+│   ├── history_list.png                # screenshot: sayit-history list view
+│   └── history_stat.png                # screenshot: sayit-history statistics view
 ├── bin/
 │   ├── sayit                           # session state machine: record + transcribe + inject
 │   ├── sayit-bt                        # Bluetooth headset A2DP <-> headset-mic switching
@@ -366,10 +377,12 @@ sayit/
 │   ├── sayit-daemon                    # wrapper: whisper-server with .env flags
 │   ├── sayit-inject                    # wl-copy + Shift+Insert / ydotool / wtype / xdotool
 │   ├── sayit-indicator                 # persistent recording indicator (notification-based)
+│   ├── sayit-meter                     # live microphone meter in the Plasma OSD (animated mark / waveform)
 │   ├── sayit-history                   # history & statistics (time saved)
 │   ├── sayit-learn                     # self-growing wordlist (learn from mistakes)
 │   ├── sayit-wordlist                  # wordlist replacement engine (perl)
 │   └── test-pipeline                   # smoke test with espeak-ng
+├── icons/                              # theme icons: notification mark + OSD meter levels (light/dark)
 ├── config/
 │   ├── wordlist.example.tsv            # starter wordlist (copied to ~/.config/sayit/)
 │   ├── sayit.desktop                   # KDE application entry template
