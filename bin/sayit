@@ -8,15 +8,26 @@
 #   sayit cancel    # discard the current recording without transcribing
 #
 # Behavior:
-#   - PID, start timestamp and WAV live in $XDG_RUNTIME_DIR (or /tmp)
+#   - Each recording session has its own WAV file and one session state file
+#     in $XDG_RUNTIME_DIR (or /tmp): sayit.session holds pid<TAB>wav<TAB>start.
+#     stop/cancel claim the session atomically, so overlapping invocations can
+#     never signal the wrong process or read another session's WAV.
+#   - A short-lived intent marker (sayit.starting) covers the window while
+#     start is still switching the Bluetooth profile; stop/cancel wait for it.
+#   - PIDs from state files are only trusted after a process-identity check,
+#     so a recycled PID is never signalled.
 #   - Transcribed text is injected into the focused window via sayit-inject
 #   - Every successful transcription is logged to
 #     $XDG_DATA_HOME/sayit/history.jsonl
-#   - Status notifications via notify-send (when available)
+#   - Status notifications via notify-send (when available); a persistent
+#     recording indicator (sayit-indicator) is shown once the microphone is
+#     actually live. Disable it with RECORDING_INDICATOR=0 in .env.
+#   - Transcription errors are summarized in a notification and appended to
+#     $XDG_RUNTIME_DIR/sayit-last-error.log (error class only — never text).
 #
 # Exit codes:
 #   0  Normal flow (including empty results — "Empty result" is notified)
-#   1  Unknown argument
+#   1  Unknown argument, or the recorder failed to start
 
 set -euo pipefail
 
@@ -24,100 +35,296 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # shellcheck source=/dev/null
 [[ -f "$REPO_ROOT/.env" ]] && source "$REPO_ROOT/.env"
 
-PID_FILE="${XDG_RUNTIME_DIR:-/tmp}/sayit.pid"
-START_FILE="${XDG_RUNTIME_DIR:-/tmp}/sayit.start"
-WAV_FILE="${XDG_RUNTIME_DIR:-/tmp}/sayit.wav"
-SOURCE_FILE="${XDG_RUNTIME_DIR:-/tmp}/sayit.source"
+RUN_DIR="${XDG_RUNTIME_DIR:-/tmp}"
+SESSION_FILE="$RUN_DIR/sayit.session"
+INTENT_FILE="$RUN_DIR/sayit.starting"
+ERROR_LOG="$RUN_DIR/sayit-last-error.log"
 HIST="${XDG_DATA_HOME:-$HOME/.local/share}/sayit/history.jsonl"
 
 MODE="${1:-toggle}"
 
+# Optional latency profiling (SAYIT_PROFILE=1): appends run id, wall clock,
+# monotonic uptime, stage and a numeric extra as CSV. Never any dictated text.
+mark() {
+    [[ -n "${SAYIT_PROFILE:-}" ]] || return 0
+    local up
+    read -r up _ < /proc/uptime
+    printf '%s,%s,%s,%s,%s\n' "${SAYIT_PROFILE_RUN:-0}" "${EPOCHREALTIME/,/.}" "$up" \
+        "$1" "${2:-}" >> "$RUN_DIR/sayit-profile.csv"
+}
+
 notify() {
     command -v notify-send >/dev/null || return 0
-    notify-send -t 1500 -i audio-input-microphone "sayit" "$1" || true
+    # The notification body is parsed as markup by the server: escape it so
+    # dictated text containing & or < renders literally instead of vanishing.
+    local body="$1"
+    # Quoted replacements: & is otherwise special under bash 5.2's default
+    # patsub_replacement shopt and would expand to the matched string.
+    body="${body//&/"&amp;"}"
+    body="${body//</"&lt;"}"
+    body="${body//>/"&gt;"}"
+    # --transient keeps dictation snippets out of the notification history,
+    # but libnotify < 0.8 rejects the flag — probe before using it.
+    local eflag=()
+    notify-send --help 2>/dev/null | grep -q -- --transient && eflag=(-e)
+    notify-send "${eflag[@]}" -t 1500 -i audio-input-microphone "sayit" "$body" || true
+}
+
+indicator() {
+    [[ "${RECORDING_INDICATOR:-1}" == "0" ]] && return 0
+    "$REPO_ROOT/bin/sayit-indicator" "$1" 2>/dev/null || true
+}
+
+# A PID from a state file is only trusted while its command line names the
+# session's own (unique) WAV path — true both before exec (the sayit-record
+# wrapper) and after (pw-record's outfile argument). Guards against PID
+# recycling: a reused PID, even another recorder, is never signalled.
+is_recorder() {
+    local pid="${1:-0}" wav="${2:-}" cmdline
+    [[ -n "$wav" ]] || return 1
+    cmdline=$(tr '\0' ' ' < "/proc/$pid/cmdline" 2>/dev/null) || return 1
+    [[ "$cmdline" == *"$wav"* ]]
+}
+
+# Atomically claim the current session (mv: exactly one stop/cancel wins).
+# Sets REC_PID, REC_WAV, REC_START. Fails when no valid session exists.
+claim_session() {
+    local claimed="$SESSION_FILE.claimed.$$"
+    mv "$SESSION_FILE" "$claimed" 2>/dev/null || return 1
+    IFS=$'\t' read -r REC_PID REC_WAV REC_START < "$claimed" || true
+    rm -f "$claimed"
+    [[ "${REC_PID:-}" =~ ^[0-9]+$ && -n "${REC_WAV:-}" ]] || return 1
+}
+
+# Stop the recorder (identity-checked) and wait, bounded, until it has
+# actually exited — pw-record must drain buffers and finalize the WAV header
+# before the file can be transcribed or deleted. SIGINT first (pw-record's
+# graceful path); SIGTERM as a fallback, since SIGINT can arrive ignored
+# through exotic spawn chains while SIGTERM never does. Both signals were
+# verified to leave a finalized, valid WAV.
+stop_recorder() {
+    is_recorder "${REC_PID:-0}" "${REC_WAV:-}" || return 0
+    kill -INT "$REC_PID" 2>/dev/null || true
+    # Generous SIGINT window (~2 s): a recorder that received the signal and
+    # is flushing must never be interrupted mid-finalization by the fallback.
+    for _ in $(seq 1 100); do
+        kill -0 "$REC_PID" 2>/dev/null || return 0
+        sleep 0.02
+    done
+    kill -TERM "$REC_PID" 2>/dev/null || true
+    for _ in $(seq 1 50); do
+        kill -0 "$REC_PID" 2>/dev/null || return 0
+        sleep 0.02
+    done
+}
+
+# Remove an intent marker whose owning start process no longer exists (a
+# crashed start). A marker with unreadable/invalid content is also removed.
+clear_dead_intent() {
+    local owner
+    owner=$(cat "$INTENT_FILE" 2>/dev/null) || return 0
+    if [[ ! "$owner" =~ ^[0-9]+$ ]] || ! kill -0 "$owner" 2>/dev/null; then
+        rm -f "$INTENT_FILE"
+    fi
+}
+
+# Wait for a session while a start is still in flight (hold-mode: the release
+# can arrive during the Bluetooth switch). Returns as soon as the session
+# exists, or immediately when no start is in progress; an intent left behind
+# by a crashed start is cleared instead of being waited on.
+await_session() {
+    for _ in $(seq 1 30); do
+        [[ -f "$SESSION_FILE" ]] && return 0
+        clear_dead_intent
+        [[ -f "$INTENT_FILE" ]] || return 0
+        sleep 0.1
+    done
 }
 
 start_recording() {
-    [[ -f "$PID_FILE" ]] && kill -0 "$(cat "$PID_FILE")" 2>/dev/null && return 0
-    notify "Recording"
+    mark start.enter
+    # Refuse when a session is already live; clean up leftovers of a crash.
+    if [[ -f "$SESSION_FILE" ]]; then
+        local pid wav
+        IFS=$'\t' read -r pid wav _ < "$SESSION_FILE" || true
+        if is_recorder "${pid:-}" "${wav:-}"; then
+            notify "Already recording"
+            return 0
+        fi
+        rm -f "$SESSION_FILE"
+        [[ -n "${wav:-}" ]] && rm -f "$wav"
+    fi
+
+    # Claim the start intent atomically (noclobber) so two concurrent starts
+    # can never spawn two recorders. The marker holds the owner's PID: it is
+    # only ever reclaimed when that owner no longer exists, so a start that is
+    # merely slow (wedged PipeWire, suspend/resume) is never taken over.
+    if ! (set -C; echo "$$" > "$INTENT_FILE") 2>/dev/null; then
+        clear_dead_intent
+        (set -C; echo "$$" > "$INTENT_FILE") 2>/dev/null || return 0
+    fi
+
+    # Remove files orphaned by crashed sessions (unique names, tmpfs).
+    find "$RUN_DIR" -maxdepth 1 \
+        \( -name 'sayit-*.wav' -o -name 'sayit.session.claimed.*' \
+           -o -name 'sayit.session.tmp.*' -o -name 'sayit.terr.*' \
+           -o -name 'sayit-clipboard.*' \) \
+        -mmin +60 -delete 2>/dev/null || true
+
     # Switch a connected Bluetooth headset to its headset profile so the mic
-    # becomes available; the source name is saved and passed to sayit-record.
-    # Empty when no Bluetooth headset is connected -> default mic.
+    # becomes available. Empty when no Bluetooth headset is connected.
     SOURCE=$("$REPO_ROOT/bin/sayit-bt" up 2>/dev/null || true)
-    printf '%s' "$SOURCE" > "$SOURCE_FILE"
-    date +%s.%N > "$START_FILE"
-    "$REPO_ROOT/bin/sayit-record" "$WAV_FILE" "$SOURCE" &
-    echo $! > "$PID_FILE"
+    mark bt_up.end
+
+    # Defensive ownership re-check after the (long) Bluetooth switch: with the
+    # owner-PID model a live start cannot lose its intent, so a mismatch means
+    # something external interfered — back off without touching shared state.
+    [[ "$(cat "$INTENT_FILE" 2>/dev/null)" == "$$" ]] || return 0
+
+    local wav="$RUN_DIR/sayit-$$.wav" start pid
+    start=$(date +%s.%N)
+    # Detach the recorder's stdio from the caller (Solaar/hotkey handler):
+    # its stderr goes to the error log, never to the caller's pipes.
+    # Job control (set -m) gives the child a default SIGINT disposition —
+    # async children of a non-interactive shell otherwise ignore SIGINT,
+    # which would make the stop signal a no-op for shell-based recorders.
+    set -m
+    "$REPO_ROOT/bin/sayit-record" "$wav" "$SOURCE" >/dev/null 2>>"$ERROR_LOG" &
+    pid=$!
+    set +m
     disown
+    mark record.spawned "$pid"
+
+    # Publish the session immediately, then verify. If this process were
+    # killed mid-verification, the recorder is still reachable through the
+    # session file — never an orphaned hot microphone.
+    printf '%s\t%s\t%s\n' "$pid" "$wav" "$start" > "$SESSION_FILE.tmp.$$"
+    mv "$SESSION_FILE.tmp.$$" "$SESSION_FILE"
+    rm -f "$INTENT_FILE"
+    mark session.written
+
+    # Verify the recorder actually came up — exec pw-record dies instantly
+    # when PipeWire is down or the recording source is bad.
+    sleep 0.3
+    if ! kill -0 "$pid" 2>/dev/null; then
+        # Retract OUR session only (compare-then-claim): if a concurrent stop
+        # already claimed it, that stop owns the outcome and we back off.
+        if [[ "$(cat "$SESSION_FILE" 2>/dev/null)" == "$pid"$'\t'"$wav"$'\t'"$start" ]] \
+            && mv "$SESSION_FILE" "$SESSION_FILE.claimed.$$" 2>/dev/null; then
+            rm -f "$SESSION_FILE.claimed.$$" "$wav"
+            indicator hide
+            "$REPO_ROOT/bin/sayit-bt" down 2>/dev/null || true
+            notify "Recording failed to start — check the microphone"
+            return 1
+        fi
+        return 0
+    fi
+    notify "Recording"
+    indicator show
 }
 
 stop_and_inject() {
-    # Race guard: in hold-mode the release may arrive while start is still
-    # switching the Bluetooth profile (PID not written yet). Wait up to ~3 s.
-    for _ in $(seq 1 30); do
-        [[ -f "$PID_FILE" ]] && break
-        sleep 0.1
-    done
-    [[ -f "$PID_FILE" ]] || return 0
-    REC_PID=$(cat "$PID_FILE")
-    rm -f "$PID_FILE"
-    kill -INT "$REC_PID" 2>/dev/null || true
-    wait "$REC_PID" 2>/dev/null || true
-
-    # Restore the headset's previous profile (A2DP) once recording is done.
-    rm -f "$SOURCE_FILE"
-    "$REPO_ROOT/bin/sayit-bt" down 2>/dev/null || true
-
-    # Compute recording duration (guard against an empty/corrupt start file)
-    DURATION=0
-    if [[ -f "$START_FILE" ]]; then
-        START=$(cat "$START_FILE")
-        rm -f "$START_FILE"
-        if [[ "$START" =~ ^[0-9]+(\.[0-9]+)?$ ]]; then
-            END=$(date +%s.%N)
-            DURATION=$(awk "BEGIN { printf \"%.2f\", $END - $START }")
-        fi
-    fi
-
-    notify "Transcribing..."
-    TEXT=$("$REPO_ROOT/bin/sayit-transcribe" "$WAV_FILE" || true)
-    rm -f "$WAV_FILE"
-
-    if [[ -n "${TEXT// }" ]]; then
-        WORDS=$(echo "$TEXT" | wc -w)
-        if "$REPO_ROOT/bin/sayit-inject" "$TEXT"; then
-            notify "Done ($WORDS words): ${TEXT:0:60}"
-        else
-            notify "Injection failed — text in clipboard/stdout"
-        fi
-
-        # Append to history
-        mkdir -p "$(dirname "$HIST")"
-        python3 -c "
-import json, sys, datetime
-print(json.dumps({
-    'time': datetime.datetime.now().isoformat(timespec='seconds'),
-    'seconds': float(sys.argv[2]),
-    'words': int(sys.argv[3]),
-    'text': sys.argv[1]
-}, ensure_ascii=False))
-" "$TEXT" "$DURATION" "$WORDS" >> "$HIST"
-    else
-        notify "Empty result"
-    fi
-}
-
-cancel_recording() {
-    if [[ ! -f "$PID_FILE" ]]; then
+    mark stop.enter
+    # Arm the crash guard before touching the session: from here on a signal
+    # must not leave a hot microphone or a stuck audio profile. The trap is
+    # narrow on purpose — it never hides the indicator (a newer session may
+    # own it by then) and is dropped as soon as the recorder is down.
+    trap 'stop_recorder 2>/dev/null || true;
+          "$REPO_ROOT/bin/sayit-bt" down 2>/dev/null || true; exit 130' INT TERM HUP
+    await_session
+    if ! claim_session; then
+        trap - INT TERM HUP
+        indicator hide
         notify "No recording in progress"
         return 0
     fi
-    REC_PID=$(cat "$PID_FILE")
-    rm -f "$PID_FILE" "$START_FILE" "$SOURCE_FILE"
-    kill -INT "$REC_PID" 2>/dev/null || true
-    wait "$REC_PID" 2>/dev/null || true
-    rm -f "$WAV_FILE"
+    mark session.claimed
+    # The session is claimed: give release feedback immediately. A follow-up
+    # start shows its own indicator no earlier than 0.3 s from now, so this
+    # hide can never race a newer session's show.
+    indicator hide
+
+    stop_recorder
+    mark record.killed
+    END=$(date +%s.%N)
+
+    # Restore the headset's previous profile (A2DP) once recording is done.
     "$REPO_ROOT/bin/sayit-bt" down 2>/dev/null || true
+    mark bt_down.end
+    # Recorder stopped and profile restored — nothing hot remains to protect.
+    trap - INT TERM HUP
+
+    notify "Transcribing..."
+    local terr trc=0
+    terr="$RUN_DIR/sayit.terr.$$"
+    mark transcribe.begin
+    TEXT=$("$REPO_ROOT/bin/sayit-transcribe" "$REC_WAV" 2>"$terr") || trc=$?
+    mark transcribe.end "${#TEXT}"
+    rm -f "$REC_WAV"
+
+    if [[ -n "${TEXT// }" ]]; then
+        WORDS=$(printf '%s\n' "$TEXT" | wc -w)
+        if "$REPO_ROOT/bin/sayit-inject" "$TEXT"; then
+            notify "Done ($WORDS words): ${TEXT:0:60}"
+        else
+            notify "Injection failed — recover with: sayit-history --inject"
+        fi
+        mark inject.end
+
+        # Append to history. The text goes via stdin (not argv) and the
+        # duration is computed in python: float() always parses the period
+        # decimal that date +%s.%N produces, regardless of locale.
+        mkdir -p "$(dirname "$HIST")"
+        if ! printf '%s' "$TEXT" | python3 -c "
+import json, sys, datetime
+try:
+    seconds = round(float(sys.argv[2]) - float(sys.argv[1]), 2)
+    if seconds < 0:
+        seconds = 0.0
+except ValueError:
+    seconds = 0.0
+print(json.dumps({
+    'time': datetime.datetime.now().isoformat(timespec='seconds'),
+    'seconds': seconds,
+    'words': int(sys.argv[3]),
+    'text': sys.stdin.read()
+}, ensure_ascii=False))
+" "${REC_START:-0}" "$END" "$WORDS" >> "$HIST"; then
+            notify "History write failed"
+        fi
+        mark history.done
+    elif (( trc != 0 )); then
+        # Surface the error class (never dictated text) instead of a
+        # misleading "Empty result".
+        local why
+        why=$(tail -n 1 "$terr" 2>/dev/null || true)
+        {
+            printf '%s stop: sayit-transcribe exit %s\n' \
+                "$(date -Iseconds)" "$trc"
+            cat "$terr" 2>/dev/null
+        } >> "$ERROR_LOG" || true
+        notify "Transcription failed: ${why:-exit $trc (see sayit-last-error.log)}"
+    else
+        notify "Empty result"
+    fi
+    rm -f "$terr"
+}
+
+cancel_recording() {
+    trap 'stop_recorder 2>/dev/null || true;
+          "$REPO_ROOT/bin/sayit-bt" down 2>/dev/null || true; exit 130' INT TERM HUP
+    await_session
+    if ! claim_session; then
+        trap - INT TERM HUP
+        indicator hide
+        notify "No recording in progress"
+        return 0
+    fi
+    indicator hide
+    stop_recorder
+    rm -f "$REC_WAV"
+    "$REPO_ROOT/bin/sayit-bt" down 2>/dev/null || true
+    trap - INT TERM HUP
     notify "Recording cancelled — nothing injected"
 }
 
@@ -129,7 +336,15 @@ case "$MODE" in
     cancel)
         cancel_recording ;;
     toggle|"")
-        if [[ -f "$PID_FILE" ]] && kill -0 "$(cat "$PID_FILE")" 2>/dev/null; then
+        # Only treat the session as "recording" if its PID still names our
+        # recorder — a stale session from a crash means: start fresh instead
+        # (start_recording cleans up the leftovers).
+        live=""
+        if [[ -f "$SESSION_FILE" ]]; then
+            IFS=$'\t' read -r tpid twav _ < "$SESSION_FILE" || true
+            is_recorder "${tpid:-}" "${twav:-}" && live=1
+        fi
+        if [[ -n "$live" || -f "$INTENT_FILE" ]]; then
             stop_and_inject
         else
             start_recording

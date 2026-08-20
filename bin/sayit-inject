@@ -15,14 +15,29 @@
 #   Clipboard pasting preserves the exact text. Shift+Insert pastes in
 #   terminals (Konsole et al.), Qt/GTK editors and browsers.
 #
-#   Fallbacks when wl-copy/ydotool are missing: ydotool type (ASCII-safe),
-#   wtype (wlroots), xdotool (X11). KWin lacks the virtual-keyboard protocol
-#   -> wtype does not work there.
+#   Clipboard hygiene:
+#   - A previous PLAIN-TEXT clipboard is saved and restored ~1 s after
+#     pasting, but only if the clipboard still holds the dictated text —
+#     anything the user copied meanwhile is never overwritten.
+#   - A non-text clipboard (image, files) or one tagged by a password manager
+#     (x-kde-passwordManagerHint) is never read, saved or re-offered: a
+#     bytes-level round trip would strip its MIME type or its do-not-store
+#     hint. The dictated text then simply stays on the clipboard.
+#   - The PRIMARY selection is cleared after the paste window, so the
+#     dictation cannot be middle-click pasted indefinitely.
+#
+#   Fallbacks when wl-copy/ydotool are missing: on X11, xdotool type
+#   (layout-aware) is preferred; otherwise ydotool type (ASCII-safe) and
+#   wtype (wlroots). KWin lacks the virtual-keyboard protocol -> wtype does
+#   not work there, and xdotool is skipped on Wayland (it can only reach
+#   XWayland windows and reports false success elsewhere).
 #   ydotool talks to ydotoold via YDOTOOL_SOCKET (default /run/.ydotool_socket).
 #
 # Exit codes:
 #   0  Text injected
-#   1  No injector succeeded (the text is printed to stdout as a fallback)
+#   1  No injector succeeded. The text is echoed to stdout only on an
+#      interactive terminal — never into pipelines/journals (it remains
+#      recoverable via sayit-history --inject).
 
 set -euo pipefail
 
@@ -30,49 +45,92 @@ TEXT="${1:?Usage: sayit-inject <text>}"
 
 export YDOTOOL_SOCKET="${YDOTOOL_SOCKET:-/run/.ydotool_socket}"
 
+mark() {
+    [[ -n "${SAYIT_PROFILE:-}" ]] || return 0
+    local up
+    read -r up _ < /proc/uptime
+    printf '%s,%s,%s,%s,%s\n' "${SAYIT_PROFILE_RUN:-0}" "${EPOCHREALTIME/,/.}" "$up" \
+        "$1" "${2:-}" >> "${XDG_RUNTIME_DIR:-/tmp}/sayit-profile.csv"
+}
+
 # Try an injector; return its exit code without tripping the script (set -e).
 attempt() { "$@" 2>/dev/null; }
 
 # Clipboard + Shift+Insert: put the text on both the clipboard and the primary
 # selection so pasting works regardless of which selection the app reads, then
-# press Shift+Insert (keycodes: 42=leftshift, 110=insert). The previous
-# clipboard is saved beforehand and restored ~1 s after pasting (in the
-# background, so dictation is not delayed). NOTE: restoration is text/bytes —
-# MIME types for e.g. images are not preserved.
+# press Shift+Insert (keycodes: 42=leftshift, 110=insert).
 inject_clipboard() {
     command -v wl-copy >/dev/null && command -v ydotool >/dev/null || return 1
 
-    # Save the current clipboard (bytes). Empty/unavailable clipboard -> no file.
-    local saved=""
+    # Decide whether the current clipboard is safe to save and restore.
+    # Only a plain-text clipboard without a password-manager hint qualifies.
+    local types="" saved=""
     if command -v wl-paste >/dev/null; then
-        saved=$(mktemp "${XDG_RUNTIME_DIR:-/tmp}/sayit-clipboard.XXXXXX")
-        wl-paste -n > "$saved" 2>/dev/null || { rm -f "$saved"; saved=""; }
+        types=$(wl-paste --list-types 2>/dev/null || true)
+        if [[ "$types" == *x-kde-passwordManagerHint* ]]; then
+            :   # sensitive: never read it, never re-offer it stripped of its hint
+        elif [[ -n "$types" && "$types" != *text/plain* ]]; then
+            :   # non-text (image/files): a bytes save/restore would corrupt it
+        else
+            saved=$(mktemp "${XDG_RUNTIME_DIR:-/tmp}/sayit-clipboard.XXXXXX")
+            wl-paste -n > "$saved" 2>/dev/null || { rm -f "$saved"; saved=""; }
+        fi
     fi
+    mark i.saved
 
     printf '%s' "$TEXT" | wl-copy 2>/dev/null || { rm -f "$saved"; return 1; }
     printf '%s' "$TEXT" | wl-copy --primary 2>/dev/null || true
+    mark i.copied
     attempt ydotool key 42:1 110:1 110:0 42:0
     local rc=$?
+    mark i.pasted "$rc"
 
-    # Restore the previous clipboard once the target app has read the paste.
-    if [[ -n "$saved" ]]; then
-        ( sleep 1; wl-copy < "$saved" 2>/dev/null; rm -f "$saved" ) &
-        disown
-    fi
+    # After the paste window: restore the previous clipboard only if it still
+    # holds our dictation (anything else means the user changed it), and clear
+    # the primary selection so the dictation is not middle-click pastable
+    # indefinitely — but only while primary still holds our text, so a
+    # selection the user made meanwhile is never destroyed.
+    (
+        sleep 1
+        if [[ -n "$saved" ]]; then
+            if [[ "$(wl-paste -n 2>/dev/null)" == "$TEXT" ]]; then
+                wl-copy < "$saved" 2>/dev/null || true
+            fi
+            rm -f "$saved"
+        fi
+        if [[ "$(wl-paste --primary -n 2>/dev/null)" == "$TEXT" ]]; then
+            wl-copy --primary --clear 2>/dev/null || true
+        fi
+    ) &
+    disown
     return $rc
 }
 
 if inject_clipboard; then
     exit 0
-elif command -v ydotool >/dev/null && attempt ydotool type --key-delay 0 --key-hold 2 -- "$TEXT"; then
+fi
+
+# On X11, xdotool types with the real layout (å/ä/ö intact) — prefer it over
+# the US-keycode-based ydotool type. On Wayland it only reaches XWayland
+# windows and returns success regardless, so it is skipped there.
+if [[ "${XDG_SESSION_TYPE:-}" == "x11" ]] && command -v xdotool >/dev/null \
+    && attempt xdotool type --clearmodifiers -- "$TEXT"; then
     exit 0
-elif command -v wtype >/dev/null && attempt wtype -- "$TEXT"; then
+fi
+if command -v ydotool >/dev/null \
+    && attempt ydotool type --key-delay 0 --key-hold 2 -- "$TEXT"; then
     exit 0
-elif command -v xdotool >/dev/null && attempt xdotool type --clearmodifiers -- "$TEXT"; then
+fi
+if command -v wtype >/dev/null && attempt wtype -- "$TEXT"; then
     exit 0
 fi
 
 echo "No text injector succeeded — check that ydotool.service is running" \
-     "(systemctl status ydotool) or install wl-clipboard/wtype/xdotool" >&2
-echo "$TEXT"
+     "(systemctl status ydotool) or install wl-clipboard/wtype/xdotool." \
+     "The text is saved in history: sayit-history --inject" >&2
+# Print the text only on an interactive terminal. Under Solaar/systemd,
+# stdout feeds the journal — dictated content must never end up there.
+if [[ -t 1 ]]; then
+    echo "$TEXT"
+fi
 exit 1

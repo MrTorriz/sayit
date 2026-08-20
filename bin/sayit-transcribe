@@ -8,14 +8,24 @@
 #   file.wav  16 kHz mono PCM file (same format as sayit-record produces)
 #
 # Behavior:
-#   - Reads configuration from .env (MODEL_PATH, WHISPER_CLI, SPEECH_LANGUAGE,
-#     THREADS, BEAM, VAD_MODEL, INITIAL_PROMPT, DAEMON_PORT)
+#   - Daemon first: POSTs to a warm whisper-server when it responds. The CLI
+#     fallback (whisper-cli, cold start) runs ONLY on a transport failure —
+#     an empty transcription from a healthy daemon is authoritative (silence)
+#     and is never re-run. whisper-cli and the model file are required only
+#     for the fallback path, never while the daemon serves.
+#   - Reads configuration from .env. SPEECH_LANGUAGE and INITIAL_PROMPT apply
+#     per request on both paths; THREADS, BEAM and VAD_MODEL apply to the CLI
+#     fallback — the daemon fixes them at server start (restart
+#     sayit-daemon.service after changing them). SUPPRESS_REGEX applies to the
+#     CLI fallback, and to the daemon only when the whisper-server build
+#     supports the flag. SAYIT_MODEL overrides MODEL_PATH on both paths.
 #   - Applies the wordlist as case-insensitive word-boundary replacements
-#   - Prints normalized text on stdout (no newlines, tabs or status lines)
+#   - Prints normalized text on stdout (no newlines, tabs or status lines).
+#     stderr carries error classes only — never transcribed text.
 #
 # Exit codes:
 #   0  Successful transcription (even when the result is empty)
-#   1  File missing, or whisper-cli/model not installed
+#   1  File missing, or transcription failed on both the daemon and CLI paths
 
 set -euo pipefail
 
@@ -27,10 +37,9 @@ WAV="${1:?Usage: sayit-transcribe <file.wav>}"
 [[ -f "$WAV" ]] || { echo "File not found: $WAV" >&2; exit 1; }
 
 WHISPER_CLI="${WHISPER_CLI:-$HOME/.local/bin/whisper-cli}"
-[[ -x "$WHISPER_CLI" ]] || { echo "whisper-cli missing — run install.sh" >&2; exit 1; }
-
-MODEL="${MODEL_PATH:-$REPO_ROOT/models/ggml-kb-whisper-medium-q5_0.bin}"
-[[ -f "$MODEL" ]] || { echo "Model missing: $MODEL — run install.sh" >&2; exit 1; }
+# SAYIT_MODEL (environment variable) wins over .env:MODEL_PATH — same
+# precedence as sayit-daemon, so A/B model switching stays consistent.
+MODEL="${SAYIT_MODEL:-${MODEL_PATH:-$REPO_ROOT/models/ggml-kb-whisper-medium-q5_0.bin}}"
 
 SPEECH_LANGUAGE="${SPEECH_LANGUAGE:-sv}"
 THREADS="${THREADS:-8}"
@@ -44,22 +53,41 @@ LLM_CLEANUP="${LLM_CLEANUP:-0}"
 LLM_MODEL="${LLM_MODEL:-gemma2:2b}"
 LLM_URL="${LLM_URL:-http://127.0.0.1:11434/api/generate}"
 
-# Prefer a warm daemon (whisper-server) when it responds — the model is already
-# in RAM/GPU, so the ~0.8 s model load per call disappears. Falls back to
-# whisper-cli (cold start) when the server is not running.
-transcribe_daemon() {
-    command -v curl >/dev/null || return 1
-    # VAD/beam/flash-attn are set at server start (sayit-daemon); the prompt
-    # is sent per request to prime spelling of domain terms and names.
-    curl -sf -m 30 \
-        -F file=@"$WAV" \
-        -F language="$SPEECH_LANGUAGE" \
-        -F prompt="$INITIAL_PROMPT" \
-        -F response_format=text \
-        "$DAEMON_URL" 2>/dev/null
+mark() {
+    [[ -n "${SAYIT_PROFILE:-}" ]] || return 0
+    local up
+    read -r up _ < /proc/uptime
+    printf '%s,%s,%s,%s,%s\n' "${SAYIT_PROFILE_RUN:-0}" "${EPOCHREALTIME/,/.}" "$up" \
+        "$1" "${2:-}" >> "${XDG_RUNTIME_DIR:-/tmp}/sayit-profile.csv"
 }
 
+# Warm daemon (whisper-server): the model is already in RAM/GPU, so the model
+# load per call disappears. VAD/beam/flash-attn are server-start settings; the
+# prompt is sent per request (--form-string keeps a value starting with @ or <
+# literal — curl -F would treat it as a file reference).
+transcribe_daemon() {
+    command -v curl >/dev/null || return 1
+    # Deadline scales with the audio length (16 kHz mono s16 = 32000 bytes/s)
+    # so a hung or busy server cannot stall a short dictation for long.
+    local bytes deadline
+    bytes=$(stat -c %s "$WAV" 2>/dev/null || echo 0)
+    deadline=$(( bytes / 32000 + 10 ))
+    # The prompt field is sent even when empty: older whisper-server builds
+    # only reset request params after a successful request, so an explicit
+    # empty value is the safe way to clear any previous prompt.
+    local args=( -sf --connect-timeout 2 -m "$deadline"
+                 -F file=@"$WAV"
+                 --form-string language="$SPEECH_LANGUAGE"
+                 --form-string prompt="$INITIAL_PROMPT"
+                 --form-string response_format=text )
+    curl "${args[@]}" "$DAEMON_URL" 2>/dev/null
+}
+
+# Cold CLI fallback. whisper-cli and the model file are checked here — not up
+# front — so a healthy daemon keeps working without them.
 transcribe_cli() {
+    [[ -x "$WHISPER_CLI" ]] || { echo "whisper-cli missing — run install.sh" >&2; return 1; }
+    [[ -f "$MODEL" ]] || { echo "Model missing: $MODEL — run install.sh" >&2; return 1; }
     # -nt: no timestamps; -np: no status lines; -fa: flash attention;
     # -bs: beam search (more accurate than greedy); --vad: filter non-speech;
     # -sns: suppress non-speech tokens (e.g. [music], brackets, noise).
@@ -96,8 +124,23 @@ except Exception:
 PYEOF
 }
 
-RAW=$(transcribe_daemon || true)
-[[ -z "${RAW// }" || "$RAW" == *"<|"*"|>"* ]] && RAW=$(transcribe_cli || true)
+# Daemon first. A transport failure (connection refused, timeout, HTTP error)
+# triggers the CLI fallback; an EMPTY 200 response is a real "no speech"
+# answer and must not cost a second, cold transcription of the same silence.
+mark t.daemon.begin
+daemon_rc=0
+RAW=$(transcribe_daemon) || daemon_rc=$?
+mark t.daemon.end "$daemon_rc"
+if (( daemon_rc != 0 )); then
+    cli_rc=0
+    mark t.cli.begin
+    RAW=$(transcribe_cli) || cli_rc=$?
+    mark t.cli.end "$cli_rc"
+    if (( cli_rc != 0 )); then
+        echo "transcription failed: daemon unreachable (curl exit $daemon_rc), CLI fallback failed (exit $cli_rc)" >&2
+        exit 1
+    fi
+fi
 
 # Normalize: strip special tokens (<|nospeech|> etc.), trim, join lines
 RAW=$(printf '%s' "$RAW" \
@@ -118,5 +161,6 @@ WORDLIST="${WORDLIST:-${XDG_CONFIG_HOME:-$HOME/.config}/sayit/wordlist.tsv}"
 if [[ -f "$WORDLIST" && -n "${RAW// }" ]]; then
     RAW=$(printf '%s' "$RAW" | "$REPO_ROOT/bin/sayit-wordlist" "$WORDLIST")
 fi
+mark t.wordlist.end
 
 printf '%s' "$RAW"

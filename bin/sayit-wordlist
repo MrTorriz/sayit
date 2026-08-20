@@ -9,8 +9,9 @@
 #
 # Behavior:
 #   - Replacements are case-insensitive and anchored on word boundaries.
-#   - All rules are applied in ONE pass, sorted longest original first, so
-#     multi-word rules win over substrings regardless of line order.
+#   - Rules are applied sequentially, sorted longest original first, so
+#     multi-word rules win over substrings regardless of line order. Note
+#     that a replacement can itself be matched by a later (shorter) rule.
 #   - Originals are matched literally (regex metacharacters are escaped).
 #   - UTF-8 aware: word boundaries are correct around non-ASCII letters.
 #   - A missing or unreadable wordlist passes the input through unchanged.
@@ -22,9 +23,10 @@ set -euo pipefail
 
 TSV="${1:?Usage: sayit-wordlist <wordlist.tsv> < input}"
 
-# One perl pass: rules are sorted longest-first so multi-word rules win over
-# substrings regardless of line order in the file. -CSD + UTF-8 reading keeps
-# \b correct around non-ASCII letters (otherwise they count as non-word chars).
+# Rules are sorted longest-first so multi-word rules win over substrings
+# regardless of line order in the file, then applied as one substitution per
+# rule. -CSD + UTF-8 reading keeps \b correct around non-ASCII letters
+# (otherwise they count as non-word chars).
 exec perl -CSD -e '
     my $tsv = shift;
     open my $fh, "<:encoding(UTF-8)", $tsv

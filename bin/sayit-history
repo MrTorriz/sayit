@@ -34,12 +34,20 @@ mkdir -p "$(dirname "$HIST")"
 touch "$HIST"
 
 # Extract the text field of the entry at absolute line N; error if missing.
+# A malformed line yields a clean one-line error instead of a traceback.
 entry_text() {
     local n="$1" line
     [[ "$n" =~ ^[0-9]+$ ]] || { echo "Invalid line number: $n" >&2; exit 1; }
     line=$(sed -n "${n}p" "$HIST")
     [[ -n "$line" ]] || { echo "No entry on line $n" >&2; exit 1; }
-    printf '%s' "$line" | python3 -c 'import json,sys; print(json.loads(sys.stdin.read())["text"])'
+    printf '%s' "$line" | python3 -c '
+import json, sys
+try:
+    print(json.loads(sys.stdin.read())["text"])
+except (ValueError, KeyError, TypeError):
+    print("Corrupt entry on line " + sys.argv[1], file=sys.stderr)
+    sys.exit(1)
+' "$n"
 }
 
 case "${1:-}" in
@@ -65,11 +73,21 @@ if period:
 total_words = 0
 total_sec = 0
 n = 0
+bad = 0
 with open(sys.argv[1]) as f:
     for line in f:
         line = line.strip()
         if not line: continue
-        d = json.loads(line)
+        # A corrupt line (crash mid-append, manual edit) must not take the
+        # whole history down: skip it and report a count, never its content.
+        try:
+            d = json.loads(line)
+        except ValueError:
+            bad += 1
+            continue
+        if not isinstance(d, dict):
+            bad += 1
+            continue
         if cutoff is not None:
             try:
                 t = datetime.datetime.fromisoformat(d.get("time", ""))
@@ -80,6 +98,9 @@ with open(sys.argv[1]) as f:
         total_words += d.get("words", 0)
         total_sec += d.get("seconds", 0)
         n += 1
+
+if bad:
+    print(f"Warning: skipped {bad} corrupt history line(s)", file=sys.stderr)
 
 if n == 0:
     print(f"No entries{' within ' + period if period else ''}")
@@ -138,12 +159,27 @@ path, count = sys.argv[1], int(sys.argv[2])
 with open(path) as f:
     lines = f.read().splitlines()
 start = max(0, len(lines) - count)
+bad = 0
 for i, line in enumerate(lines[start:], start + 1):
     line = line.strip()
     if not line:
         continue
-    d = json.loads(line)
-    print(f"{i:3} [{d['time']}] ({d['words']} words) {d['text'][:80]}")
+    # Corrupt or partial lines are skipped (counted below) so one bad line
+    # never hides the healthy entries around it.
+    try:
+        d = json.loads(line)
+    except ValueError:
+        bad += 1
+        continue
+    if not isinstance(d, dict):
+        bad += 1
+        continue
+    time_ = d.get("time", "?")
+    words = d.get("words", "?")
+    text = str(d.get("text", ""))[:80]
+    print(f"{i:3} [{time_}] ({words} words) {text}")
+if bad:
+    print(f"Warning: skipped {bad} corrupt history line(s)", file=sys.stderr)
 EOF
         ;;
 esac

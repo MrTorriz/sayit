@@ -14,11 +14,12 @@ jobs:
       - uses: actions/checkout@v4
       - name: Syntax check (bash -n)
         run: |
-          for f in bin/* install.sh; do
+          for f in bin/* install.sh tests/*.sh; do
+            [ -e "$f" ] || continue
             bash -n "$f"
           done
       - name: shellcheck
-        run: shellcheck bin/* install.sh
+        run: shellcheck bin/* install.sh tests/*.sh
 
   test:
     runs-on: ubuntu-latest

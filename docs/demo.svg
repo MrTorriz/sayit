@@ -48,7 +48,7 @@
 
   <!-- 3: transcribed -->
   <g class="l3">
-    <text x="28" y="134"><tspan class="grn">✓</tspan><tspan class="txt" dx="8">transcribed in 1.3 s</tspan><tspan class="dim" dx="10">(whisper.cpp · Vulkan · local)</tspan></text>
+    <text x="28" y="134"><tspan class="grn">✓</tspan><tspan class="txt" dx="8">transcribed in 1.6 s</tspan><tspan class="dim" dx="10">(whisper.cpp · Vulkan · median)</tspan></text>
   </g>
 
   <!-- 4: text injected into focused window -->

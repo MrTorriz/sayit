@@ -23,10 +23,12 @@ cd sayit
 
 ## Before opening a PR
 
-1. `shellcheck bin/* install.sh` — must be clean (CI enforces this).
+1. `shellcheck bin/* install.sh tests/*.sh` — must be clean (CI enforces this).
 2. `bash -n` on every changed script.
 3. `./bin/test-pipeline` still passes.
-4. `bats tests/` passes successfully (requires `bats` installed, verified in CI).
+4. `bats tests/` passes successfully (requires bats-core >= 1.5; the suite
+   relies on `BATS_TEST_TMPDIR` and PATH-stubbed system tools — no microphone,
+   clipboard, daemon or Bluetooth device is touched).
 5. README, docs/ARCHITECTURE.md, and script header comments are updated if behavior or flags changed.
 
 Keep PRs focused on one change. Describe what changed and why in the

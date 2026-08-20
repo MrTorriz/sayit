@@ -1,0 +1,70 @@
+#!/usr/bin/env bash
+# sayit-indicator — persistent "recording" indicator via desktop notifications
+#
+# Usage:
+#   sayit-indicator show    # show a persistent recording notification
+#   sayit-indicator hide    # remove it (safe to call when none is shown)
+#
+# Behavior:
+#   - Uses a non-expiring notification (notify-send --print-id, -t 0) as a
+#     small, focus-free recording indicator. The notification ID is kept in
+#     $XDG_RUNTIME_DIR/sayit.indicator so hide can close exactly that
+#     notification through the standard org.freedesktop.Notifications D-Bus
+#     interface (gdbus). Theme icons render correctly in both light and dark.
+#   - show replaces a previous indicator (--replace-id) instead of stacking.
+#   - Fallbacks: notify-send without --print-id (libnotify < 0.8) degrades to
+#     a short transient notification and hide becomes a no-op; a missing
+#     notify-send or gdbus is silently tolerated. The indicator must never
+#     break the recording pipeline.
+#   - Called by bin/sayit; disable entirely with RECORDING_INDICATOR=0 in .env.
+#
+# Exit codes:
+#   0  Normal flow (including all fallback paths)
+#   1  Unknown argument
+
+set -euo pipefail
+
+RUN_DIR="${XDG_RUNTIME_DIR:-/tmp}"
+ID_FILE="$RUN_DIR/sayit.indicator"
+
+show() {
+    command -v notify-send >/dev/null || return 0
+    # The persistent indicator needs gdbus to be closable again: without it,
+    # degrade to a short transient cue instead of an unclosable notification.
+    if command -v gdbus >/dev/null; then
+        local prev id
+        prev=$(cat "$ID_FILE" 2>/dev/null || true)
+        [[ "$prev" =~ ^[0-9]+$ ]] || prev=0
+        # -t 0 = never expire; -r replaces our previous indicator (no stacking).
+        if id=$(notify-send -p -r "$prev" -t 0 -i audio-input-microphone \
+                "sayit" "Recording" 2>/dev/null) && [[ "$id" =~ ^[0-9]+$ ]]; then
+            printf '%s\n' "$id" > "$ID_FILE"
+            return 0
+        fi
+    fi
+    # No gdbus, or notify-send without --print-id: a short transient cue.
+    notify-send -t 1500 -i audio-input-microphone "sayit" "Recording" \
+        2>/dev/null || true
+}
+
+hide() {
+    local id
+    id=$(cat "$ID_FILE" 2>/dev/null || true)
+    [[ "$id" =~ ^[0-9]+$ ]] || { rm -f "$ID_FILE"; return 0; }
+    # Keep the ID file when gdbus is unavailable right now: the next show can
+    # then still replace the notification instead of stacking a new one.
+    command -v gdbus >/dev/null || return 0
+    rm -f "$ID_FILE"
+    gdbus call --session --dest org.freedesktop.Notifications \
+        --object-path /org/freedesktop/Notifications \
+        --method org.freedesktop.Notifications.CloseNotification \
+        "$id" >/dev/null 2>&1 || true
+}
+
+case "${1:-}" in
+    show) show ;;
+    hide) hide ;;
+    *)
+        echo "Usage: sayit-indicator [show|hide]" >&2
+        exit 1 ;;
+esac
