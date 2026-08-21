@@ -117,26 +117,28 @@ if [[ $SKIP_PACKAGES -eq 0 ]]; then
     # ydotool + wl-clipboard: primary injection (clipboard + Shift+Insert)
     # jq: sayit-bt (Bluetooth profile switching), libnotify: notifications
     # wtype: injection fallback on wlroots (not KWin), espeak-ng: test-pipeline
+    # python3-gobject + GTK 3 + gtk-layer-shell: the overlay meter style
+    # (without them the meter falls back to the Plasma OSD styles)
     PM=""
     if command -v dnf >/dev/null 2>&1; then
         PM="dnf"
         REQUIRED=(cmake gcc-c++ git curl pipewire-utils ydotool wl-clipboard jq libnotify)
         VULKAN=(mesa-vulkan-drivers vulkan-tools vulkan-headers vulkan-loader-devel glslc spirv-headers-devel)
-        OPTIONAL=(wtype espeak-ng)
+        OPTIONAL=(wtype espeak-ng python3-gobject gtk3 gtk-layer-shell)
         pkg_installed() { rpm -q "$1" >/dev/null 2>&1; }
         pkg_install() { sudo dnf install -y "$@"; }
     elif command -v apt-get >/dev/null 2>&1; then
         PM="apt"
         REQUIRED=(cmake g++ git curl pipewire-bin ydotool wl-clipboard jq libnotify-bin)
         VULKAN=(mesa-vulkan-drivers vulkan-tools libvulkan-dev glslc spirv-headers)
-        OPTIONAL=(wtype espeak-ng)
+        OPTIONAL=(wtype espeak-ng python3-gi gir1.2-gtk-3.0 gir1.2-gtklayershell-0.1)
         pkg_installed() { dpkg -s "$1" >/dev/null 2>&1; }
         pkg_install() { sudo apt-get install -y "$@"; }
     elif command -v pacman >/dev/null 2>&1; then
         PM="pacman"
         REQUIRED=(cmake gcc git curl pipewire ydotool wl-clipboard jq libnotify)
         VULKAN=(vulkan-tools vulkan-headers vulkan-icd-loader shaderc spirv-headers)
-        OPTIONAL=(wtype espeak-ng)
+        OPTIONAL=(wtype espeak-ng python-gobject gtk3 gtk-layer-shell)
         pkg_installed() { pacman -Qi "$1" >/dev/null 2>&1; }
         pkg_install() { sudo pacman -S --needed --noconfirm "$@"; }
     fi
@@ -147,7 +149,8 @@ if [[ $SKIP_PACKAGES -eq 0 ]]; then
         warn "  required: cmake, a C++ compiler, git, PipeWire tools (pw-record),"
         warn "            ydotool, wl-clipboard, jq, libnotify (notify-send)"
         warn "  for GPU:  Vulkan drivers + headers, glslc, SPIR-V headers"
-        warn "  optional: wtype (wlroots fallback), espeak-ng (test-pipeline)"
+        warn "  optional: wtype (wlroots fallback), espeak-ng (test-pipeline),"
+        warn "            python3-gobject + GTK 3 + gtk-layer-shell (overlay meter)"
         die "Cannot verify packages on this distribution"
     fi
 
@@ -157,7 +160,7 @@ if [[ $SKIP_PACKAGES -eq 0 ]]; then
         pkg_installed "$pkg" || MISSING+=("$pkg")
     done
     for pkg in "${OPTIONAL[@]}"; do
-        pkg_installed "$pkg" || warn "Optional package missing: $pkg (wtype = wlroots fallback, espeak-ng = test-pipeline)"
+        pkg_installed "$pkg" || warn "Optional package missing: $pkg (wtype = wlroots fallback, espeak-ng = test-pipeline, the GTK/layer-shell trio = overlay meter)"
     done
 
     if [[ ${#MISSING[@]} -gt 0 ]]; then

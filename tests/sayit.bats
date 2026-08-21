@@ -126,6 +126,22 @@ session_wav() { cut -f2 "$SESSION"; }
     "$SAYIT" cancel
 }
 
+@test "a configured AUDIO_SOURCE is used directly and leaves Bluetooth alone" {
+    # A dedicated microphone must never drag a connected headset into its
+    # call profile: that wrecks playback and captures the wrong mic.
+    printf 'AUDIO_SOURCE="alsa_input.usb-Test_Mic-00.mono-fallback"\n' > "$SANDBOX/.env"
+    "$SAYIT" start
+    ! grep -q "bt up" "$STUB_LOG"
+    grep -q "indicator show alsa_input.usb-Test_Mic-00.mono-fallback" "$STUB_LOG"
+    "$SAYIT" cancel
+}
+
+@test "without AUDIO_SOURCE the Bluetooth switch still runs" {
+    "$SAYIT" start
+    grep -q "bt up" "$STUB_LOG"
+    "$SAYIT" cancel
+}
+
 @test "feedback toggles are delegated to sayit-indicator, which is always dispatched" {
     # The RECORDING_INDICATOR/RECORDING_METER toggles live inside
     # sayit-indicator (tested in indicator.bats); sayit must dispatch

@@ -52,7 +52,8 @@ sequenceDiagram
 | `sayit-wordlist` | Pure text transform: stdin to stdout, TSV rules (unit-tested) |
 | `sayit-inject` | Text delivery with a fallback chain per compositor, clipboard hygiene |
 | `sayit-indicator` | Persistent recording indicator (notification-based, safe fallbacks) |
-| `sayit-meter` | Live microphone meter in Plasma's OSD — animated logo mark or glyph waveform; feedback only |
+| `sayit-meter` | Live voice meter: picks a style, owns the capture stream and its cleanup; feedback only |
+| `sayit-overlay` | The overlay style — sayit's own click-through pill, drawn through layer-shell (the one Python script) |
 | `sayit-history` | Read side of `history.jsonl`: listing, stats, re-inject; corrupt-line tolerant |
 | `sayit-learn` | Write side of the wordlist: add/undo/list with dedup |
 
@@ -68,11 +69,12 @@ logout); only history and the wordlist persist.
 | `$XDG_RUNTIME_DIR/sayit-<pid>.wav` | The recording in progress — unique per session, so back-to-back dictations never overwrite each other |
 | `$XDG_RUNTIME_DIR/sayit.bt` | Card name + previous audio profile, written by `sayit-bt up`, consumed by `down` (explains the "stuck in phone-quality audio" failure mode) |
 | `$XDG_RUNTIME_DIR/sayit.indicator` | Notification ID of the visible recording indicator |
-| `$XDG_RUNTIME_DIR/sayit.meter` | PID of the running OSD meter — identity-checked against its command line before it is ever signalled |
+| `$XDG_RUNTIME_DIR/sayit.meter` | PID of the running meter — identity-checked against its command line before it is ever signalled |
 | `$XDG_RUNTIME_DIR/sayit-last-error.log` | Error classes from failed stages (never dictated text) |
 | `$XDG_RUNTIME_DIR/sayit-profile.csv` | Per-stage timestamps when `SAYIT_PROFILE=1` (timing data only) |
 | `$XDG_DATA_HOME/sayit/history.jsonl` | One JSON object per dictation |
 | `$XDG_CONFIG_HOME/sayit/wordlist.tsv` | User vocabulary, grown by `sayit-learn` |
+| `$XDG_CONFIG_HOME/sayit/overlay-position` | Where the overlay pill sits, written by `sayit-overlay --place` |
 
 PIDs read back from state files are trusted only after an identity check:
 the process's command line must name the session's own (unique) WAV path,
@@ -197,18 +199,42 @@ focus, never blocks injection, and can be disabled with
 
 The live meter takes the same idea further. While recording, `sayit-meter`
 opens its own low-rate PipeWire capture (sources allow concurrent readers,
-so the recording itself is untouched), reduces the audio to a single level
-about 8 times per second, and renders it in Plasma's OSD. By default the
-sayit mark IS the meter: its bars follow the voice level through a small
-series of pre-rendered theme icons (`sayit-level-0..7`), and a red dot
-pulses while you are silent — "microphone open, waiting".
-`RECORDING_METER_STYLE="wave"` draws a scrolling glyph waveform instead.
-The icon tone (light/dark variant) is chosen once at start through the
-desktop portal's color-scheme setting, because hicolor-installed icons are
-not recolored by the theme. Every layer degrades silently: missing icons
-fall back to the glyph waveform, a missing OSD service, `gdbus` or `pw-cat`
-means no meter at all, and the dictation pipeline never notices either way.
-The samples are used only for the level computation; no audio is stored.
+so the recording itself is untouched) and reduces the audio to a single
+level about 8 times per second. The sayit mark IS the meter: its bars
+follow the voice level and the dot burns red while the microphone is open.
+The samples are used only for that computation; no audio is stored.
+
+Three styles render it, each falling back to the next when its
+requirements are missing, so the meter degrades instead of vanishing:
+
+- **`overlay`** (default) — `sayit-overlay` draws sayit's own pill through
+  the layer-shell protocol. It owns its appearance rather than borrowing a
+  desktop's, it never takes focus, its input region is *empty* so clicks
+  pass through to the window underneath, and it can be dragged anywhere
+  (`--place`) with the position remembered. Needs Wayland with layer-shell
+  and the GTK bindings; without them the meter drops to the OSD styles.
+- **`mark`** — the same mark in Plasma's on-screen display, animated
+  through pre-rendered theme icons (`sayit-level-0..7` plus an idle frame
+  whose dot pulses). The icon tone is chosen once at start through the
+  desktop portal's color-scheme setting, because hicolor-installed icons
+  are not recolored by the theme. The full set is probed before this style
+  is chosen: a half-installed set would otherwise blank out single frames.
+- **`wave`** — a scrolling glyph waveform in the same OSD, the style that
+  needs nothing but the OSD itself.
+
+### Stopping a capture that ignores SIGPIPE
+
+The meter runs `pw-cat | renderer`, and the obvious cleanup — kill the
+renderer, let the writer die of SIGPIPE — is wrong here: `pw-cat` blocks
+SIGPIPE (visible in its `SigIgn` mask), so it survives a vanished reader
+and keeps the microphone open indefinitely as an orphan. In a dictation
+tool that is a privacy defect, not an untidiness.
+
+So the pipeline is spawned under job control (`set -m`), which puts it in
+its own process group, and every exit path — signal, stop from
+`sayit-indicator hide`, the renderer finishing on its own, the 120 s safety
+cap — signals that whole group. One kill takes down the renderer and the
+capture together, and the group never includes anything else.
 
 ### Deliberate non-goals
 

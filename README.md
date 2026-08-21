@@ -116,10 +116,27 @@ Bind `bin/sayit` to any free key. On KDE: System Settings → Shortcuts → Cust
 
 While the microphone is live, sayit shows two pieces of feedback:
 
-- **A live meter in Plasma's OSD** — by default the sayit mark itself is the meter: its bars follow your voice level and the red dot pulses while you are silent, so you can see that dictation hears you. Set `RECORDING_METER_STYLE="wave"` in `.env` for a scrolling bar waveform instead, or `RECORDING_METER=0` to turn the meter off. The meter opens its own low-rate PipeWire stream (the recording is unaffected), uses the audio only to compute a level, and silently disappears on desktops without the Plasma OSD service.
-- **A persistent notification** as the recording indicator; it appears when capture actually starts (after any Bluetooth profile switch) and is removed on stop, cancel and failure. Disable it with `RECORDING_INDICATOR=0` in `.env`.
+- **A live voice meter** — the sayit mark itself is the meter: its bars follow your voice level and the dot burns red while the microphone is open, so you can see that dictation hears you. By default it is drawn as a small pill of sayit's own above your other windows (`RECORDING_METER_STYLE="overlay"`); clicks pass straight through it, so it can never be in the way. Put it wherever you like:
 
-Both use the sayit theme icons that `install.sh` installs (light/dark variants following the desktop color scheme) and fall back to a generic microphone icon — and the meter to the waveform style — without them.
+  ```bash
+  ./bin/sayit-overlay --place    # drag the pill, Enter or Escape saves
+  ```
+
+  The position is remembered in `~/.config/sayit/overlay-position`.
+
+- **A persistent notification** as the recording indicator; it appears when capture actually starts (after any Bluetooth profile switch) and is removed on stop, cancel and failure.
+
+The two are independent: `RECORDING_METER=0` turns off the meter, `RECORDING_INDICATOR=0` the notification.
+
+The meter opens its own low-rate PipeWire stream (the recording is unaffected) and uses the audio only to compute a level — nothing is stored. It has three styles, each falling back to the next when its requirements are missing, so it degrades instead of disappearing:
+
+| `RECORDING_METER_STYLE` | What you get | Needs |
+|---|---|---|
+| `overlay` (default) | sayit's own pill, freely positionable, click-through | Wayland with layer-shell, plus the GTK bindings `install.sh` lists as optional |
+| `mark` | the animated mark in Plasma's on-screen display | Plasma OSD + the theme icons `install.sh` installs |
+| `wave` | a scrolling bar waveform in the same OSD | Plasma OSD |
+
+The notification and the OSD styles use the sayit theme icons (light/dark variants following the desktop color scheme) and fall back to a generic microphone icon without them.
 
 ### Manual
 
@@ -237,7 +254,7 @@ Everything lives in `.env` (created by `install.sh` from [`.env.example`](.env.e
 | `WORDLIST`        | `~/.config/sayit/wordlist.tsv`   | Replacement wordlist (grown by `sayit-learn`)       |
 | `RECORDING_INDICATOR` | `1`                          | Persistent recording indicator; `0` = off           |
 | `RECORDING_METER` | `1`                              | Live microphone meter in the Plasma OSD; `0` = off  |
-| `RECORDING_METER_STYLE` | `mark`                     | `mark` = animated logo mark; `wave` = scrolling bar waveform |
+| `RECORDING_METER_STYLE` | `overlay`                  | `overlay` = sayit's own pill; `mark` = animated mark in the Plasma OSD; `wave` = waveform in the OSD |
 
 `SPEECH_LANGUAGE` and `INITIAL_PROMPT` apply per dictation. `THREADS`, `BEAM` and `VAD_MODEL` apply immediately to the CLI fallback but are fixed at server start for the daemon — run `systemctl --user restart sayit-daemon.service` after changing them. `SUPPRESS_REGEX` always applies to the CLI fallback; it is forwarded to the daemon only when the installed `whisper-server` build supports the flag.
 
@@ -344,8 +361,10 @@ See [SECURITY.md](SECURITY.md) for the security model and how to report issues.
 | whisper.cpp broken after an OS upgrade        | `./install.sh --rebuild`                                                                |
 | No notifications                              | Install `libnotify` (`notify-send`)                                                     |
 | Recording indicator never disappears          | `./bin/sayit-indicator hide` removes it manually                                        |
-| No meter in the OSD while recording           | The meter needs Plasma's OSD service (`plasmashell`) and `gdbus`; check `RECORDING_METER` in `.env` |
+| No meter at all while recording               | Check `RECORDING_METER` in `.env`; `./bin/sayit-overlay --check` reports whether the overlay style can run here |
+| Meter falls back to the Plasma OSD instead of the pill | The overlay needs a Wayland session with layer-shell plus `python3-gobject`, GTK 3 and `gtk-layer-shell` — see the optional packages in `install.sh` |
 | Meter shows a waveform or a generic icon instead of the mark | Install the theme icons: `./install.sh --skip-packages --skip-build --skip-model` |
+| The pill sits in the wrong place              | `./bin/sayit-overlay --place`, drag it, then press Enter                                |
 | Recording starts but never stops              | Check `$XDG_RUNTIME_DIR/sayit.session` — it must name a live `pw-record` process        |
 | Bluetooth headset records from the wrong mic  | Verify the headset is connected; try `./bin/sayit-bt up` (should print `bluez_input.…`) |
 | Headset stuck in phone-quality audio          | Run `./bin/sayit-bt down` to force A2DP back after an abnormally aborted recording      |
@@ -377,7 +396,8 @@ sayit/
 │   ├── sayit-daemon                    # wrapper: whisper-server with .env flags
 │   ├── sayit-inject                    # wl-copy + Shift+Insert / ydotool / wtype / xdotool
 │   ├── sayit-indicator                 # persistent recording indicator (notification-based)
-│   ├── sayit-meter                     # live microphone meter in the Plasma OSD (animated mark / waveform)
+│   ├── sayit-meter                     # live voice meter: picks a style and owns the capture
+│   ├── sayit-overlay                   # the overlay style: sayit's own click-through pill (Python)
 │   ├── sayit-history                   # history & statistics (time saved)
 │   ├── sayit-learn                     # self-growing wordlist (learn from mistakes)
 │   ├── sayit-wordlist                  # wordlist replacement engine (perl)

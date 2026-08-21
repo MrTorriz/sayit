@@ -19,6 +19,6 @@ build/
 *.swo
 .DS_Store
 
-# Python cache (in case helper scripts are introduced)
+# Python cache (bin/sayit-overlay)
 __pycache__/
 *.pyc

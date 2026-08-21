@@ -197,9 +197,16 @@ start_recording() {
            -o -name 'sayit-clipboard.*' \) \
         -mmin +60 -delete 2>/dev/null || true
 
-    # Switch a connected Bluetooth headset to its headset profile so the mic
-    # becomes available. Empty when no Bluetooth headset is connected.
-    SOURCE=$("$REPO_ROOT/bin/sayit-bt" up 2>/dev/null || true)
+    # A configured AUDIO_SOURCE means a dedicated microphone is in use, so
+    # leave Bluetooth alone: switching a connected headset to its call
+    # profile would wreck playback quality and hand us the wrong microphone.
+    # Otherwise switch the headset to its headset profile so its mic becomes
+    # available — empty when no Bluetooth headset is connected.
+    if [[ -n "${AUDIO_SOURCE:-}" ]]; then
+        SOURCE="$AUDIO_SOURCE"
+    else
+        SOURCE=$("$REPO_ROOT/bin/sayit-bt" up 2>/dev/null || true)
+    fi
     mark bt_up.end
 
     # Defensive ownership re-check after the (long) Bluetooth switch: with the
