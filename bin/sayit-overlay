@@ -1,0 +1,346 @@
+#!/usr/bin/env python3
+# sayit-overlay — compact voice meter in a small always-on-top pill
+#
+# Usage:
+#   sayit-overlay              # read raw audio on stdin and render the meter
+#   sayit-overlay --place      # move the pill: drag it, Enter/Escape saves
+#   sayit-overlay --check      # exit 0 only if this desktop can host it
+#   sayit-overlay --print-position
+#
+# Input:
+#   Raw mono 16-bit little-endian PCM at 8 kHz on stdin (what sayit-meter
+#   pipes in from pw-cat). The samples are used ONLY to compute a level;
+#   nothing is stored or logged. End of stream ends the overlay.
+#
+# Behavior:
+#   - Draws its own borderless window through the layer-shell protocol, so it
+#     floats above normal windows without ever taking focus. In normal mode
+#     the window has an EMPTY input region: clicks pass straight through to
+#     whatever is underneath, so the pill can never be in the way.
+#   - The sayit mark is the meter: the three bars follow the voice level and
+#     the dot pulses red while the microphone is open but silent.
+#   - Position is remembered in $XDG_CONFIG_HOME/sayit/overlay-position
+#     (default ~/.config/sayit/). Without one it starts bottom centre.
+#   - Exits silently when the desktop cannot host it (no Wayland session, no
+#     layer-shell support, missing bindings) — sayit-meter then falls back to
+#     the Plasma OSD styles. Feedback must never break dictation.
+#
+# This is the one script in bin/ that is Python rather than bash: it owns a
+# drawn window and an animation loop, which bash cannot express.
+#
+# Exit codes:
+#   0  Always, except --check on a desktop that cannot host the overlay
+#   1  --check only: no Wayland session, missing bindings, or no display
+
+import math
+import os
+import struct
+import sys
+import threading
+
+WIDTH, HEIGHT, RADIUS = 150, 40, 20
+BORDER = 1.5
+EDGE_MARGIN = 8                     # keeps the pill off the very screen edge
+FPS_MS = 33                         # ~30 fps redraw, independent of audio rate
+CHUNK = 2000                        # 125 ms of 8 kHz s16 mono
+EASE = 0.35                         # level smoothing per frame
+PLACE_TIMEOUT_FRAMES = 180 * 1000 // FPS_MS   # --place gives up after 3 min
+# RMS thresholds (s16 samples) -> level 0..7, matching bin/sayit-meter.
+LEVELS = [90, 200, 450, 900, 1800, 3500, 7000]
+
+# Bar geometry: (x offset from the mark centre, min height, max height).
+BARS = [(-10.4, 5.8, 17.3), (-2.3, 8.1, 25.3), (5.8, 4.6, 13.8)]
+MARK_CX, MARK_BASE = 30.0, HEIGHT / 2 + 12.6
+DOT_R = 2.6
+
+
+def config_path():
+    base = os.environ.get("XDG_CONFIG_HOME") or os.path.expanduser("~/.config")
+    return os.path.join(base, "sayit", "overlay-position")
+
+
+def read_position():
+    """Saved pill position, or None when unset/unreadable/malformed."""
+    pos = {}
+    try:
+        with open(config_path(), encoding="utf-8") as fh:
+            for line in fh:
+                line = line.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                key, _, value = line.partition("=")
+                try:
+                    pos[key.strip()] = int(value.strip())
+                except ValueError:
+                    return None
+    except OSError:
+        return None
+    if "x" in pos and "y" in pos:
+        return pos["x"], pos["y"]
+    return None
+
+
+def write_position(x, y):
+    path = config_path()
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        tmp = path + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as fh:
+            fh.write("# sayit overlay position, in pixels from the top-left\n"
+                     "# corner of the screen. Move it with: sayit-overlay --place\n"
+                     "x=%d\ny=%d\n" % (x, y))
+        os.replace(tmp, path)
+    except OSError:
+        pass                        # a read-only home must not break dictation
+
+
+def rounded_rect(cr, x, y, w, h, r):
+    r = min(r, w / 2, h / 2)
+    cr.new_sub_path()
+    cr.arc(x + w - r, y + r, r, -math.pi / 2, 0)
+    cr.arc(x + w - r, y + h - r, r, 0, math.pi / 2)
+    cr.arc(x + r, y + h - r, r, math.pi / 2, math.pi)
+    cr.arc(x + r, y + r, r, math.pi, 3 * math.pi / 2)
+    cr.close_path()
+
+
+class Overlay:
+    def __init__(self, gtk, layer_shell, gdk, pango, pangocairo, place_mode):
+        self.Gtk, self.GtkLayerShell = gtk, layer_shell
+        self.Gdk, self.Pango, self.PangoCairo = gdk, pango, pangocairo
+        self.place_mode = place_mode
+        self.level = 0.0             # target, from the audio stream
+        self.shown = 0.0             # eased value actually drawn
+        self.frame = 0
+        self.drag = None
+
+        self.win = gtk.Window()
+        layer_shell.init_for_window(self.win)
+        layer_shell.set_layer(self.win, layer_shell.Layer.OVERLAY)
+        # Anchoring to two adjacent edges turns the margins into a plain
+        # top-left position, which is what a freely moved pill needs.
+        layer_shell.set_anchor(self.win, layer_shell.Edge.TOP, True)
+        layer_shell.set_anchor(self.win, layer_shell.Edge.LEFT, True)
+        # ON_DEMAND while placing: clicking the pill focuses it, so Enter or
+        # Escape works — but the keyboard is never held hostage if this
+        # process hangs. NONE otherwise: the meter takes no input at all.
+        layer_shell.set_keyboard_mode(
+            self.win,
+            layer_shell.KeyboardMode.ON_DEMAND if place_mode
+            else layer_shell.KeyboardMode.NONE)
+
+        self.win.set_app_paintable(True)
+        visual = self.win.get_screen().get_rgba_visual()
+        if visual is not None:
+            self.win.set_visual(visual)
+        self.win.set_size_request(WIDTH, HEIGHT)
+        self.win.connect("draw", self.on_draw)
+        self.win.connect("realize", self.on_realize)
+
+        if place_mode:
+            self.win.add_events(gdk.EventMask.BUTTON_PRESS_MASK
+                                | gdk.EventMask.BUTTON_RELEASE_MASK
+                                | gdk.EventMask.POINTER_MOTION_MASK)
+            self.win.connect("button-press-event", self.on_press)
+            self.win.connect("button-release-event", self.on_release)
+            self.win.connect("motion-notify-event", self.on_motion)
+            self.win.connect("key-press-event", self.on_key)
+
+        self.x, self.y = self.start_position()
+        self.apply_position()
+
+    # -- geometry ---------------------------------------------------------
+    def monitor_size(self):
+        display = self.Gdk.Display.get_default()
+        monitor = (display.get_primary_monitor()
+                   or display.get_monitor(0)) if display else None
+        if monitor is None:
+            return 1920, 1080
+        geo = monitor.get_workarea()
+        return geo.width, geo.height
+
+    def start_position(self):
+        saved = read_position()
+        mw, mh = self.monitor_size()
+        if saved is not None:
+            return self.clamp(saved[0], saved[1], mw, mh)
+        return (mw - WIDTH) // 2, mh - HEIGHT - 120
+
+    def clamp(self, x, y, mw=None, mh=None):
+        if mw is None:
+            mw, mh = self.monitor_size()
+        x = max(EDGE_MARGIN, min(x, mw - WIDTH - EDGE_MARGIN))
+        y = max(EDGE_MARGIN, min(y, mh - HEIGHT - EDGE_MARGIN))
+        return int(x), int(y)
+
+    def apply_position(self):
+        self.GtkLayerShell.set_margin(self.win, self.GtkLayerShell.Edge.LEFT, self.x)
+        self.GtkLayerShell.set_margin(self.win, self.GtkLayerShell.Edge.TOP, self.y)
+
+    def on_realize(self, _widget):
+        if self.place_mode:
+            return
+        # Empty input region: every click passes through to the window below.
+        import cairo
+        window = self.win.get_window()
+        if window is not None:
+            window.input_shape_combine_region(cairo.Region(), 0, 0)
+
+    # -- dragging (--place only) -----------------------------------------
+    def on_press(self, _w, event):
+        self.drag = (event.x, event.y)
+        return True
+
+    def on_motion(self, _w, event):
+        if self.drag is None:
+            return False
+        # Wayland gives no global pointer position: move by the delta inside
+        # the window, which stays correct as the window follows along.
+        self.x, self.y = self.clamp(self.x + event.x - self.drag[0],
+                                    self.y + event.y - self.drag[1])
+        self.apply_position()
+        return True
+
+    def on_release(self, _w, _event):
+        self.drag = None
+        write_position(self.x, self.y)
+        return True
+
+    def on_key(self, _w, event):
+        name = self.Gdk.keyval_name(event.keyval)
+        if name in ("Escape", "Return", "KP_Enter", "space", "q"):
+            write_position(self.x, self.y)
+            self.Gtk.main_quit()
+        return True
+
+    # -- drawing ----------------------------------------------------------
+    def on_draw(self, _widget, cr):
+        import cairo
+        cr.set_operator(cairo.Operator.SOURCE)
+        cr.set_source_rgba(0, 0, 0, 0)
+        cr.paint()
+        cr.set_operator(cairo.Operator.OVER)
+
+        rounded_rect(cr, BORDER / 2, BORDER / 2,
+                     WIDTH - BORDER, HEIGHT - BORDER, RADIUS)
+        cr.set_source_rgb(0, 0, 0)
+        cr.fill_preserve()
+        cr.set_source_rgb(1, 1, 1)
+        cr.set_line_width(BORDER)
+        cr.stroke()
+
+        for dx, low, high in BARS:
+            height = low + (high - low) * self.shown / 7.0
+            width = 3.9
+            rounded_rect(cr, MARK_CX + dx, MARK_BASE - height,
+                         width, height, width / 2)
+            cr.set_source_rgb(1, 1, 1)
+            cr.fill()
+
+        # The dot pulses while the mic is open but silent, and burns steady
+        # red as soon as the level rises: "open" vs "hearing you".
+        alpha = 1.0
+        if self.level < 0.5:
+            alpha = 0.45 + 0.55 * (0.5 + 0.5 * math.sin(self.frame / 7.0))
+        cr.arc(MARK_CX + 14.4, MARK_BASE - DOT_R - 0.3, DOT_R, 0, 2 * math.pi)
+        cr.set_source_rgba(1.0, 0.30, 0.30, alpha)
+        cr.fill()
+
+        layout = self.PangoCairo.create_layout(cr)
+        layout.set_font_description(self.Pango.FontDescription("monospace 11"))
+        layout.set_text("sayit", -1)
+        _ink, log = layout.get_pixel_extents()
+        cr.move_to(58, (HEIGHT - log.height) / 2)
+        cr.set_source_rgb(1, 1, 1)
+        self.PangoCairo.show_layout(cr, layout)
+        return False
+
+    def tick(self):
+        self.frame += 1
+        if self.place_mode:                 # demo motion while positioning
+            self.level = 3.5 + 3.5 * math.sin(self.frame / 9.0)
+            if self.frame > PLACE_TIMEOUT_FRAMES:   # left open by mistake
+                write_position(self.x, self.y)
+                self.Gtk.main_quit()
+                return False
+        self.shown += (self.level - self.shown) * EASE
+        self.win.queue_draw()
+        return True
+
+    # -- audio ------------------------------------------------------------
+    def read_audio(self):
+        """Blocking reader thread: raw PCM in, level out. Never keeps audio."""
+        stream = sys.stdin.buffer
+        while True:
+            data = stream.read(CHUNK)
+            if not data or len(data) < 4:
+                break
+            count = len(data) // 2
+            samples = struct.unpack("<%dh" % count, data[:count * 2])
+            rms = math.sqrt(sum(s * s for s in samples) / count)
+            self.level = float(sum(1 for t in LEVELS if rms >= t))
+        from gi.repository import GLib
+        GLib.idle_add(self.Gtk.main_quit)
+
+    def run(self):
+        import gi
+        from gi.repository import GLib
+        self.win.show_all()
+        GLib.timeout_add(FPS_MS, self.tick)
+        try:                                # GLibUnix since pygobject 3.52
+            gi.require_version("GLibUnix", "2.0")
+            from gi.repository import GLibUnix
+            add_signal = GLibUnix.signal_add
+        except (ImportError, ValueError):
+            add_signal = GLib.unix_signal_add
+        for sig in (2, 15, 1):              # INT, TERM, HUP
+            add_signal(GLib.PRIORITY_DEFAULT, sig, self.quit)
+        if not self.place_mode:
+            thread = threading.Thread(target=self.read_audio, daemon=True)
+            thread.start()
+        self.Gtk.main()
+
+    def quit(self, *_args):
+        self.Gtk.main_quit()
+        return False
+
+
+def main():
+    args = sys.argv[1:]
+    if "--print-position" in args:
+        saved = read_position()
+        print("%d %d" % saved if saved else "unset")
+        return 0
+    place_mode = "--place" in args
+    check_only = "--check" in args
+
+    if not os.environ.get("WAYLAND_DISPLAY"):
+        return 1 if check_only else 0       # not a Wayland session: no overlay
+    try:
+        import gi
+        gi.require_version("Gtk", "3.0")
+        gi.require_version("Gdk", "3.0")
+        gi.require_version("GtkLayerShell", "0.1")
+        gi.require_version("PangoCairo", "1.0")
+        from gi.repository import (Gdk, Gtk, GtkLayerShell,  # noqa: F401
+                                   Pango, PangoCairo)
+        import cairo                        # noqa: F401
+    except (ImportError, ValueError):
+        return 1 if check_only else 0       # bindings missing: silent no-op
+
+    if not Gtk.init_check()[0]:
+        return 1 if check_only else 0
+    if check_only:
+        return 0                            # everything needed is present
+    try:
+        Overlay(Gtk, GtkLayerShell, Gdk, Pango, PangoCairo, place_mode).run()
+    except Exception:                       # never fail the dictation pipeline
+        if os.environ.get("SAYIT_DEBUG"):
+            import traceback
+            traceback.print_exc()
+        return 0
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

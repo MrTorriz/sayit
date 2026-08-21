@@ -1,8 +1,9 @@
 #!/usr/bin/env bats
-# Tests for bin/sayit-meter — the OSD meter. Runs against a sandboxed copy of
-# bin/ (no .env), with pw-cat and gdbus as PATH stubs and XDG_DATA_HOME
-# pointed at a sandbox so installed theme icons on the developer machine can
-# never leak in. Synthetic PCM only, no microphone, no real OSD.
+# Tests for bin/sayit-meter — style selection, fallbacks and capture cleanup.
+# Runs against a sandboxed copy of bin/ (no .env), with pw-cat, gdbus and
+# sayit-overlay as stubs and XDG_DATA_HOME pointed at a sandbox so installed
+# theme icons on the developer machine can never leak in. Synthetic PCM only,
+# no microphone, no real OSD, no real window.
 
 setup() {
     SANDBOX="$BATS_TEST_TMPDIR/sandbox"
@@ -20,13 +21,13 @@ setup() {
     mkdir -p "$STUBBIN"
 
     # pw-cat stub: emits synthetic s16 PCM on stdout, then ends the stream.
-    # Loud mode = full-scale noise; long = 12 frames of silence (enough for
-    # the idle-dot pulse to toggle); default = 4 frames of digital silence.
+    # forever = runs until signalled (models a live capture);
+    # loud = full-scale noise; long = 12 frames of silence; default = 4.
     cat > "$STUBBIN/pw-cat" <<'EOF'
 #!/usr/bin/env bash
 echo "pw-cat $*" >> "$STUB_CTL/calls.log"
 if [[ -f "$STUB_CTL/pw-cat.forever" ]]; then
-    # Die on SIGPIPE like the real pw-cat when the reader goes away.
+    printf '%s\n' "$$" > "$STUB_CTL/pw-cat.pid"
     while :; do head -c 2000 /dev/zero || exit 0; sleep 0.05; done
 elif [[ -f "$STUB_CTL/pw-cat.loud" ]]; then
     head -c 8000 /dev/urandom
@@ -60,6 +61,23 @@ EOF
     chmod +x "$STUBBIN"/*
     export PATH="$STUBBIN:$PATH"
 
+    # Stub: sayit-overlay — --check reports availability from a control file;
+    # otherwise it drains stdin so the pipeline behaves like the real one.
+    cat > "$SANDBOX/bin/sayit-overlay" <<'EOF'
+#!/usr/bin/env bash
+if [[ "$1" == "--check" ]]; then
+    echo "overlay-check" >> "$STUB_CTL/calls.log"
+    [[ -f "$STUB_CTL/overlay-unavailable" ]] && exit 1
+    exit 0
+fi
+echo "overlay-start" >> "$STUB_CTL/calls.log"
+[[ -f "$STUB_CTL/overlay-exits-now" ]] && exit 0
+trap 'echo overlay-stop >> "$STUB_CTL/calls.log"; exit 0' INT TERM
+cat >/dev/null
+exit 0
+EOF
+    chmod +x "$SANDBOX/bin/sayit-overlay"
+
     METER="$SANDBOX/bin/sayit-meter"
     ICON_DIR="$XDG_DATA_HOME/icons/hicolor/scalable"
 }
@@ -83,85 +101,36 @@ install_icons() {
     done
 }
 
-@test "loud audio without icons renders tall waveform frames and hides the OSD at stream end" {
-    touch "$STUB_CTL/pw-cat.loud"
+@test "the overlay is the default style and never touches the OSD" {
     run "$METER"
     [ "$status" -eq 0 ]
-    [ "$(grep -c "showText" "$STUB_CTL/calls.log")" -ge 3 ]
-    grep "showText" "$STUB_CTL/calls.log" | tail -1 | grep -q "█"
-    tail -1 "$STUB_CTL/calls.log" | grep -q "hide"
+    grep -q "overlay-start" "$STUB_CTL/calls.log"
+    ! grep -q "showText" "$STUB_CTL/calls.log"
+    ! grep -q "osdService.hide" "$STUB_CTL/calls.log"
 }
 
-@test "silence without icons renders the floor glyph, never a full bar" {
-    run "$METER"
-    [ "$status" -eq 0 ]
-    grep -q "showText" "$STUB_CTL/calls.log"
-    ! grep "showText" "$STUB_CTL/calls.log" | grep -q "█"
-}
-
-@test "with theme icons the mark is the meter: level icons plus the wordmark" {
+@test "an unavailable overlay falls back to the mark in the OSD" {
+    touch "$STUB_CTL/overlay-unavailable"
     install_icons
     touch "$STUB_CTL/pw-cat.loud"
     run "$METER"
     [ "$status" -eq 0 ]
+    ! grep -q "overlay-start" "$STUB_CTL/calls.log"
     grep -q "showText sayit-level-7 sayit" "$STUB_CTL/calls.log"
-    ! grep "showText" "$STUB_CTL/calls.log" | grep -q "█"
 }
 
-@test "silence with icons pulses the idle dot" {
-    install_icons
-    touch "$STUB_CTL/pw-cat.long"
-    run "$METER"
-    [ "$status" -eq 0 ]
-    grep -q "showText sayit-level-0 sayit" "$STUB_CTL/calls.log"
-    grep -q "showText sayit-idle sayit" "$STUB_CTL/calls.log"
-}
-
-@test "a light color scheme picks the -light icon variant" {
-    install_icons
-    touch "$STUB_CTL/light-scheme" "$STUB_CTL/pw-cat.loud"
-    run "$METER"
-    [ "$status" -eq 0 ]
-    grep -q "showText sayit-level-7-light sayit" "$STUB_CTL/calls.log"
-}
-
-@test "a light scheme with only the base icons falls back to the base mark set" {
-    install_icons ""
-    touch "$STUB_CTL/light-scheme" "$STUB_CTL/pw-cat.loud"
-    run "$METER"
-    [ "$status" -eq 0 ]
-    grep -q "showText sayit-level-7 sayit" "$STUB_CTL/calls.log"
-    ! grep -q -- "-light" "$STUB_CTL/calls.log"
-}
-
-@test "an incomplete level set falls back to the waveform, never blank frames" {
-    install_icons
-    rm "$ICON_DIR/status/sayit-level-5.svg" "$ICON_DIR/status/sayit-level-5-light.svg"
-    touch "$STUB_CTL/pw-cat.loud"
+@test "an unavailable overlay without icons falls back to the waveform" {
+    touch "$STUB_CTL/overlay-unavailable" "$STUB_CTL/pw-cat.loud"
     run "$METER"
     [ "$status" -eq 0 ]
     grep "showText" "$STUB_CTL/calls.log" | tail -1 | grep -q "█"
-    ! grep -q "sayit-level" "$STUB_CTL/calls.log"
 }
 
-@test "RECORDING_METER_STYLE=wave forces the waveform and uses the mark as its icon" {
-    install_icons
-    printf 'RECORDING_METER_STYLE="wave"\n' > "$SANDBOX/.env"
-    touch "$STUB_CTL/pw-cat.loud"
+@test "an unknown style in .env falls back to the default instead of guessing" {
+    printf 'RECORDING_METER_STYLE="bogus"\n' > "$SANDBOX/.env"
     run "$METER"
     [ "$status" -eq 0 ]
-    grep "showText" "$STUB_CTL/calls.log" | tail -1 | grep -q "█"
-    grep -q "showText sayit ▁" "$STUB_CTL/calls.log"
-    ! grep -q "sayit-level" "$STUB_CTL/calls.log"
-}
-
-@test "mark style without installed icons falls back to the waveform" {
-    printf 'RECORDING_METER_STYLE="mark"\n' > "$SANDBOX/.env"
-    touch "$STUB_CTL/pw-cat.loud"
-    run "$METER"
-    [ "$status" -eq 0 ]
-    grep "showText" "$STUB_CTL/calls.log" | tail -1 | grep -q "█"
-    ! grep -q "sayit-level" "$STUB_CTL/calls.log"
+    grep -q "overlay-start" "$STUB_CTL/calls.log"
 }
 
 @test "the recording source is forwarded to the capture stream" {
@@ -170,18 +139,30 @@ install_icons() {
     grep -q -- "--target bluez_input.stub" "$STUB_CTL/calls.log"
 }
 
-@test "a kill stops the meter, its stream and hides the OSD" {
+@test "a renderer that exits on its own takes the capture down with it" {
+    # Regression: pw-cat ignores SIGPIPE, so a finished renderer used to
+    # leave it running as an orphan with the microphone still open.
+    touch "$STUB_CTL/pw-cat.forever" "$STUB_CTL/overlay-exits-now"
+    "$METER" >/dev/null 2>&1 &
+    mpid=$!
+    sleep 1.5
+    wait "$mpid" 2>/dev/null || true
+    sleep 0.5
+    [ -f "$STUB_CTL/pw-cat.pid" ]
+    ! kill -0 "$(cat "$STUB_CTL/pw-cat.pid")" 2>/dev/null
+}
+
+@test "a kill stops the meter, the renderer and the capture stream" {
     touch "$STUB_CTL/pw-cat.forever"
     "$METER" >/dev/null 2>&1 &
     mpid=$!
-    sleep 0.8
+    sleep 1
     kill "$mpid"
     wait "$mpid" 2>/dev/null || true
     sleep 0.5
-    ! pgrep -f "$STUBBIN/pw-cat" >/dev/null
-    # Not tail -1: an in-flight showText forked just before the kill may
-    # append after the EXIT trap's hide line.
-    grep -q "org.kde.osdService.hide" "$STUB_CTL/calls.log"
+    ! kill -0 "$mpid" 2>/dev/null
+    [ -f "$STUB_CTL/pw-cat.pid" ]
+    ! kill -0 "$(cat "$STUB_CTL/pw-cat.pid")" 2>/dev/null
 }
 
 @test "missing pw-cat is a silent no-op" {
@@ -194,7 +175,60 @@ install_icons() {
     [ ! -f "$STUB_CTL/calls.log" ]
 }
 
-@test "an unavailable OSD service is a silent no-op" {
+# --- the OSD styles, reached explicitly ----------------------------------
+
+@test "wave style renders a scrolling waveform and hides the OSD at the end" {
+    printf 'RECORDING_METER_STYLE="wave"\n' > "$SANDBOX/.env"
+    touch "$STUB_CTL/pw-cat.loud"
+    run "$METER"
+    [ "$status" -eq 0 ]
+    [ "$(grep -c "showText" "$STUB_CTL/calls.log")" -ge 3 ]
+    grep "showText" "$STUB_CTL/calls.log" | tail -1 | grep -q "█"
+    grep -q "osdService.hide" "$STUB_CTL/calls.log"
+}
+
+@test "mark style with icons animates the mark, silence pulses the idle dot" {
+    printf 'RECORDING_METER_STYLE="mark"\n' > "$SANDBOX/.env"
+    install_icons
+    touch "$STUB_CTL/pw-cat.long"
+    run "$METER"
+    [ "$status" -eq 0 ]
+    grep -q "showText sayit-level-0 sayit" "$STUB_CTL/calls.log"
+    grep -q "showText sayit-idle sayit" "$STUB_CTL/calls.log"
+}
+
+@test "a light color scheme picks the -light icon variant" {
+    printf 'RECORDING_METER_STYLE="mark"\n' > "$SANDBOX/.env"
+    install_icons
+    touch "$STUB_CTL/light-scheme" "$STUB_CTL/pw-cat.loud"
+    run "$METER"
+    [ "$status" -eq 0 ]
+    grep -q "showText sayit-level-7-light sayit" "$STUB_CTL/calls.log"
+}
+
+@test "a light scheme with only the base icons falls back to the base set" {
+    printf 'RECORDING_METER_STYLE="mark"\n' > "$SANDBOX/.env"
+    install_icons ""
+    touch "$STUB_CTL/light-scheme" "$STUB_CTL/pw-cat.loud"
+    run "$METER"
+    [ "$status" -eq 0 ]
+    grep -q "showText sayit-level-7 sayit" "$STUB_CTL/calls.log"
+    ! grep -q -- "-light" "$STUB_CTL/calls.log"
+}
+
+@test "an incomplete level set falls back to the waveform, never blank frames" {
+    printf 'RECORDING_METER_STYLE="mark"\n' > "$SANDBOX/.env"
+    install_icons
+    rm "$ICON_DIR/status/sayit-level-5.svg" "$ICON_DIR/status/sayit-level-5-light.svg"
+    touch "$STUB_CTL/pw-cat.loud"
+    run "$METER"
+    [ "$status" -eq 0 ]
+    grep "showText" "$STUB_CTL/calls.log" | tail -1 | grep -q "█"
+    ! grep -q "sayit-level" "$STUB_CTL/calls.log"
+}
+
+@test "an unavailable OSD service is a silent no-op for the OSD styles" {
+    printf 'RECORDING_METER_STYLE="wave"\n' > "$SANDBOX/.env"
     touch "$STUB_CTL/no-osd"
     run "$METER"
     [ "$status" -eq 0 ]

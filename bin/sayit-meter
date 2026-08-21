@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# sayit-meter — live microphone feedback in Plasma's on-screen display
+# sayit-meter — live microphone feedback while dictating
 #
 # Usage:
 #   sayit-meter [source]
@@ -10,24 +10,24 @@
 #
 # Behavior:
 #   - Opens its OWN low-rate capture stream (PipeWire sources allow multiple
-#     concurrent readers, so the actual recording is unaffected), computes the
-#     microphone level ~8 times per second and renders it in Plasma's native
-#     OSD (org.kde.osdService.showText) — visible feedback that dictation
-#     hears you, without stealing focus or opening a window.
-#   - Two styles (RECORDING_METER_STYLE in .env):
-#       mark  (default) the sayit logo mark IS the meter: its bars follow the
-#             voice level through the sayit-level-0..7 theme icons, and while
-#             you are silent the red dot pulses — "microphone open, waiting".
-#             Falls back to wave when the icons are not installed (install.sh
-#             installs them). Icon tone (light/dark UI) is chosen once at
-#             start via the desktop portal's color-scheme setting.
-#       wave  a scrolling bar waveform drawn with block glyphs.
+#     concurrent readers, so the actual recording is unaffected) and turns it
+#     into visible feedback that dictation hears you, without stealing focus.
+#   - Three styles, chosen with RECORDING_METER_STYLE in .env:
+#       overlay (default) a small pill drawn by bin/sayit-overlay: the sayit
+#               mark animates with your voice, click-through so it is never
+#               in the way, and freely positionable (sayit-overlay --place).
+#               Needs a Wayland session with layer-shell support.
+#       mark    the sayit mark in Plasma's on-screen display, animated
+#               through the sayit-level-0..7 theme icons that install.sh
+#               installs. Icon tone follows the desktop color scheme.
+#       wave    a scrolling bar waveform in the same Plasma OSD.
+#     Each style falls back to the next when its requirements are missing, so
+#     the meter degrades instead of disappearing.
 #   - The audio samples are used ONLY to compute a level; nothing is stored
 #     or logged. Runs until killed (sayit-indicator hide), until the capture
-#     stream ends, or for at most 120 s as a safety cap; the OSD is hidden on
-#     every exit path.
-#   - Silently does nothing when pw-cat, gdbus or the Plasma OSD service is
-#     unavailable — the meter is feedback only and must never break dictation.
+#     stream ends, or for at most 120 s as a safety cap in the OSD styles.
+#   - Silently does nothing when no style can run — the meter is feedback
+#     only and must never break dictation.
 #
 # Exit codes:
 #   0  Always
@@ -41,28 +41,22 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SOURCE="${1:-}"
 
 command -v pw-cat >/dev/null || exit 0
-command -v gdbus >/dev/null || exit 0
 
-# Per-call timeout: a wedged plasmashell must never pin the meter for the
-# 25 s D-Bus default.
-OSD=(gdbus call --session --timeout 3 --dest org.kde.plasmashell
-     --object-path /org/kde/osdService --method)
+STYLE="${RECORDING_METER_STYLE:-overlay}"
+# An unknown value in .env must not silently pick an arbitrary style.
+[[ "$STYLE" =~ ^(overlay|mark|wave)$ ]] || STYLE="overlay"
 
-# One probe: no Plasma OSD service means nothing to draw on.
-"${OSD[@]}" org.freedesktop.DBus.Peer.Ping >/dev/null 2>&1 || exit 0
+# --- style selection: each step falls through to the next -----------------
 
-# Icon tone for the current desktop theme, via the portal's color-scheme:
-# 1 = prefer dark UI -> light glyphs (the default icon variant), and a
-# missing portal answer is treated the same; anything else (light, no
-# preference) -> the -light (dark-glyph) variant.
+# The overlay draws its own window and needs neither gdbus nor Plasma.
+if [[ "$STYLE" == "overlay" ]]; then
+    "$REPO_ROOT/bin/sayit-overlay" --check 2>/dev/null || STYLE="mark"
+fi
+
+OSD=()
+OSD_ACTIVE=0
 SUFFIX=""
-REPLY=$(gdbus call --session --timeout 1 \
-    --dest org.freedesktop.portal.Desktop \
-    --object-path /org/freedesktop/portal/desktop \
-    --method org.freedesktop.portal.Settings.Read \
-    org.freedesktop.appearance color-scheme 2>/dev/null) || REPLY=""
-[[ -z "$REPLY" || "$REPLY" == *"uint32 1"* ]] || SUFFIX="-light"
-
+STATIC_ICON="audio-input-microphone"
 ICON_ROOT="${XDG_DATA_HOME:-$HOME/.local/share}/icons/hicolor/scalable"
 
 # The mark needs its complete icon set (levels 0-7 + idle) in the chosen
@@ -76,36 +70,90 @@ mark_icons_present() {
     [[ -f "$ICON_ROOT/status/sayit-idle$SUFFIX.svg" ]]
 }
 
-# A missing tone variant falls back to the base set — the same rule the
-# notification icon uses in sayit and sayit-indicator.
-if [[ -n "$SUFFIX" ]] && ! mark_icons_present; then
-    SUFFIX=""
+if [[ "$STYLE" != "overlay" ]]; then
+    # Both OSD styles need gdbus and a live Plasma OSD service to draw on.
+    command -v gdbus >/dev/null || exit 0
+    # Per-call timeout: a wedged plasmashell must never pin the meter for the
+    # 25 s D-Bus default.
+    OSD=(gdbus call --session --timeout 3 --dest org.kde.plasmashell
+         --object-path /org/kde/osdService --method)
+    "${OSD[@]}" org.freedesktop.DBus.Peer.Ping >/dev/null 2>&1 || exit 0
+
+    # Icon tone for the current desktop theme, via the portal's color-scheme:
+    # 1 = prefer dark UI -> light glyphs (the default icon variant), and a
+    # missing portal answer is treated the same; anything else (light, no
+    # preference) -> the -light (dark-glyph) variant.
+    REPLY=$(gdbus call --session --timeout 1 \
+        --dest org.freedesktop.portal.Desktop \
+        --object-path /org/freedesktop/portal/desktop \
+        --method org.freedesktop.portal.Settings.Read \
+        org.freedesktop.appearance color-scheme 2>/dev/null) || REPLY=""
+    [[ -z "$REPLY" || "$REPLY" == *"uint32 1"* ]] || SUFFIX="-light"
+
+    # A missing tone variant falls back to the base set — the same rule the
+    # notification icon uses in sayit and sayit-indicator.
+    if [[ -n "$SUFFIX" ]] && ! mark_icons_present; then
+        SUFFIX=""
+    fi
+    if [[ "$STYLE" != "wave" ]]; then
+        mark_icons_present || STYLE="wave"
+    fi
+    [[ -f "$ICON_ROOT/apps/sayit$SUFFIX.svg" ]] && STATIC_ICON="sayit$SUFFIX"
+
+    # Only the OSD styles draw there, so only they may clear it on exit:
+    # hiding an OSD we never showed would dismiss someone else's.
+    OSD_ACTIVE=1
 fi
 
-# Style: the animated mark needs its theme icons; fall back to the glyph
-# waveform without them so the meter never disappears entirely.
-STYLE="${RECORDING_METER_STYLE:-mark}"
-if [[ "$STYLE" != "wave" ]]; then
-    mark_icons_present || STYLE="wave"
-fi
-STATIC_ICON="audio-input-microphone"
-[[ -f "$ICON_ROOT/apps/sayit$SUFFIX.svg" ]] && STATIC_ICON="sayit$SUFFIX"
-
-trap '"${OSD[@]}" org.kde.osdService.hide >/dev/null 2>&1 || true' EXIT
+# --- capture and render ---------------------------------------------------
 
 ARGS=(--record --raw --rate 8000 --channels 1 --format s16)
 [[ -n "$SOURCE" ]] && ARGS+=(--target "$SOURCE")
 
 # The pipeline runs in the background: a foreground pipeline would block
-# signal traps until it ends, making the stop kill a no-op. Killing the
-# python end starves pw-cat via SIGPIPE, closing the capture stream.
+# signal traps until it ends, making the stop kill a no-op.
+#
+# It must also be stopped as a WHOLE. pw-cat ignores SIGPIPE (its signal mask
+# has SIGPIPE blocked), so killing only the renderer does NOT starve the
+# capture: pw-cat survives as an orphan with the microphone still open, for
+# as long as the session lives. Job control (set -m) puts the pipeline in its
+# own process group, which lets one signal take down pw-cat and the renderer
+# together — on every exit path, including the normal end of the stream.
+#
 # The stop signal can also land BEFORE the pipeline exists, so the trap is
-# armed first, guarded for an empty PIPE_PID — and the handler must exit by
-# itself: an interrupted wait on a pipeline job otherwise resumes waiting
-# for remaining pipeline members.
+# armed first, guarded for empty state — and the handler must exit by itself:
+# an interrupted wait on a pipeline job otherwise resumes waiting for the
+# remaining pipeline members.
 PIPE_PID=""
-trap '{ [[ -z "$PIPE_PID" ]] || kill "$PIPE_PID" 2>/dev/null; } || true; exit 0' INT TERM HUP
-pw-cat "${ARGS[@]}" - 2>/dev/null | python3 -c '
+PIPE_PGID=""
+
+# shellcheck disable=SC2329  # invoked from the traps below
+stop_capture() {
+    if [[ -n "$PIPE_PGID" ]]; then
+        kill -- -"$PIPE_PGID" 2>/dev/null || true
+    elif [[ -n "$PIPE_PID" ]]; then
+        kill "$PIPE_PID" 2>/dev/null || true
+    fi
+}
+
+# shellcheck disable=SC2329  # invoked from the traps below
+cleanup() {
+    stop_capture
+    if [[ $OSD_ACTIVE -eq 1 ]]; then
+        "${OSD[@]}" org.kde.osdService.hide >/dev/null 2>&1 || true
+    fi
+    return 0
+}
+
+trap cleanup EXIT
+trap 'cleanup; exit 0' INT TERM HUP
+
+set -m
+if [[ "$STYLE" == "overlay" ]]; then
+    pw-cat "${ARGS[@]}" - 2>/dev/null \
+        | "$REPO_ROOT/bin/sayit-overlay" >/dev/null 2>&1 &
+else
+    pw-cat "${ARGS[@]}" - 2>/dev/null | python3 -c '
 import array, math, os, subprocess, sys
 
 STYLE, SUFFIX, STATIC_ICON = sys.argv[1:4]
@@ -142,8 +190,15 @@ while frames < 960:                       # safety cap: ~120 s at 8 fps
         OSD + ["org.kde.osdService.showText", icon, text],
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
     frames += 1
-' "$STYLE" "$SUFFIX" "$STATIC_ICON" "${OSD[@]}" &
+'  "$STYLE" "$SUFFIX" "$STATIC_ICON" "${OSD[@]}" &
+fi
 PIPE_PID=$!
+set +m
+# Group id of the pipeline, for the whole-group stop above. An empty answer
+# just falls back to signalling the renderer alone.
+PIPE_PGID=$(ps -o pgid= -p "$PIPE_PID" 2>/dev/null | tr -d ' ') || PIPE_PGID=""
+[[ "$PIPE_PGID" =~ ^[0-9]+$ ]] || PIPE_PGID=""
+
 wait "$PIPE_PID" 2>/dev/null || true
 
 exit 0
