@@ -36,7 +36,6 @@ import math
 import os
 import struct
 import sys
-import threading
 
 WIDTH, HEIGHT, RADIUS = 150, 40, 20
 BORDER = 1.5
@@ -108,7 +107,10 @@ class Overlay:
     def __init__(self, gtk, layer_shell, gdk, pango, pangocairo, place_mode):
         self.Gtk, self.GtkLayerShell = gtk, layer_shell
         self.Gdk, self.Pango, self.PangoCairo = gdk, pango, pangocairo
+        from gi.repository import GLib
+        self.GLib = GLib
         self.place_mode = place_mode
+        self.buf = b""               # partial PCM between reads
         self.level = 0.0             # target, from the audio stream
         self.shown = 0.0             # eased value actually drawn
         self.frame = 0
@@ -268,19 +270,32 @@ class Overlay:
         return True
 
     # -- audio ------------------------------------------------------------
-    def read_audio(self):
-        """Blocking reader thread: raw PCM in, level out. Never keeps audio."""
-        stream = sys.stdin.buffer
-        while True:
-            data = stream.read(CHUNK)
-            if not data or len(data) < 4:
-                break
-            count = len(data) // 2
-            samples = struct.unpack("<%dh" % count, data[:count * 2])
+    def on_audio(self, fd, condition):
+        """Raw PCM in, level out; never keeps audio. Deliberately runs in the
+        main loop rather than a reader thread: a thread parked in a blocking
+        stdin read holds that stream's lock, and the interpreter then dies
+        with a fatal error at shutdown instead of exiting when told to."""
+        if condition & (self.GLib.IOCondition.HUP | self.GLib.IOCondition.ERR):
+            self.Gtk.main_quit()
+            return False
+        try:
+            chunk = os.read(fd, CHUNK)
+        except BlockingIOError:
+            return True
+        except OSError:
+            self.Gtk.main_quit()
+            return False
+        if not chunk:                       # end of stream: recording stopped
+            self.Gtk.main_quit()
+            return False
+        self.buf += chunk
+        while len(self.buf) >= CHUNK:
+            block, self.buf = self.buf[:CHUNK], self.buf[CHUNK:]
+            count = len(block) // 2
+            samples = struct.unpack("<%dh" % count, block[:count * 2])
             rms = math.sqrt(sum(s * s for s in samples) / count)
             self.level = float(sum(1 for t in LEVELS if rms >= t))
-        from gi.repository import GLib
-        GLib.idle_add(self.Gtk.main_quit)
+        return True
 
     def run(self):
         import gi
@@ -290,14 +305,19 @@ class Overlay:
         try:                                # GLibUnix since pygobject 3.52
             gi.require_version("GLibUnix", "2.0")
             from gi.repository import GLibUnix
-            add_signal = GLibUnix.signal_add
+            add_signal, add_fd = GLibUnix.signal_add, GLibUnix.fd_add_full
         except (ImportError, ValueError):
-            add_signal = GLib.unix_signal_add
+            add_signal, add_fd = GLib.unix_signal_add, GLib.unix_fd_add_full
         for sig in (2, 15, 1):              # INT, TERM, HUP
             add_signal(GLib.PRIORITY_DEFAULT, sig, self.quit)
         if not self.place_mode:
-            thread = threading.Thread(target=self.read_audio, daemon=True)
-            thread.start()
+            fd = sys.stdin.fileno()
+            os.set_blocking(fd, False)
+            add_fd(
+                GLib.PRIORITY_DEFAULT, fd,
+                GLib.IOCondition.IN | GLib.IOCondition.HUP
+                | GLib.IOCondition.ERR,
+                self.on_audio)
         self.Gtk.main()
 
     def quit(self, *_args):
