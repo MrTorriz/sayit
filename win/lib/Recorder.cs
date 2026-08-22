@@ -199,10 +199,6 @@ namespace Sayit
             return -2; // caller reports "configured device not found"
         }
 
-        /// Capture until stopEvent is signalled or maxSeconds elapses.
-        /// Writes a complete RIFF/WAVE file. Returns the number of sample frames.
-        /// peakAmplitude reports the loudest absolute sample seen (0..32767) so the
-        /// caller can detect a silent capture path.
         /// Where the live level is published while recording, or null to skip it.
         /// The recording indicator reads this rather than opening a second capture
         /// stream: the microphone is already open here, and the level has already
@@ -227,6 +223,10 @@ namespace Sayit
             catch { /* the indicator is cosmetic; never fail a recording for it */ }
         }
 
+        /// Capture until stopEvent is signalled or maxSeconds elapses.
+        /// Writes a complete RIFF/WAVE file. Returns the number of sample frames.
+        /// peakAmplitude reports the loudest absolute sample seen (0..32767) so the
+        /// caller can detect a silent capture path.
         public static int CaptureToWav(string path, int deviceIndex, WaitHandle stopEvent,
                                        int maxSeconds, out int peakAmplitude)
         {
@@ -288,17 +288,34 @@ namespace Sayit
                     WaitHandle[] waits = new WaitHandle[] { stopEvent, dataReady };
                     bool stopping = false;
 
+                    // A buffer that is drained but not handed back keeps WHDR_DONE
+                    // and its byte count, and waveInReset clears neither. The
+                    // post-stop drain below would otherwise write those buffers a
+                    // second time, repeating the last word or two of every
+                    // recording; this records the ones already accounted for.
+                    bool[] drained = new bool[BufferCount];
+
+                    // waveIn completes buffers in the order they were queued, and
+                    // this loop hands each one straight back, so following the
+                    // queue means following this cursor. Scanning by array index
+                    // instead writes the two sides of the ring's wrap the wrong way
+                    // round whenever more than one buffer completes between passes
+                    // - buffer 7 before buffer 0 in the queue, but 0 before 7 in an
+                    // index scan - which swaps 100 ms of audio inside the recording.
+                    int next = 0;
+
                     while (true)
                     {
                         int signalled = WaitHandle.WaitAny(waits, 250);
                         if (signalled == 0) { stopping = true; }
                         if (DateTime.UtcNow > deadline) { stopping = true; }
 
-                        // Drain every completed buffer, whether woken by data or by stop.
-                        for (int i = 0; i < BufferCount; i++)
+                        // Drain every completed buffer, whether woken by data or by
+                        // stop, in queue order and never more than one pass round.
+                        for (int scanned = 0; scanned < BufferCount; scanned++)
                         {
-                            WAVEHDR hdr = (WAVEHDR)Marshal.PtrToStructure(headers[i], typeof(WAVEHDR));
-                            if ((hdr.dwFlags & WHDR_DONE) == 0) { continue; }
+                            WAVEHDR hdr = (WAVEHDR)Marshal.PtrToStructure(headers[next], typeof(WAVEHDR));
+                            if ((hdr.dwFlags & WHDR_DONE) == 0) { break; }
                             if (hdr.dwBytesRecorded > 0)
                             {
                                 Marshal.Copy(hdr.lpData, scratch, 0, hdr.dwBytesRecorded);
@@ -310,10 +327,15 @@ namespace Sayit
                                 TrackPeak(scratch, hdr.dwBytesRecorded, ref bufferPeak);
                                 PublishLevel(bufferPeak);
                             }
-                            if (!stopping)
+                            if (stopping)
                             {
-                                waveInAddBuffer(hwi, headers[i], hdrSize);
+                                drained[next] = true;
                             }
+                            else
+                            {
+                                waveInAddBuffer(hwi, headers[next], hdrSize);
+                            }
+                            next = (next + 1) % BufferCount;
                         }
 
                         if (stopping) { break; }
@@ -324,8 +346,13 @@ namespace Sayit
                     waveInStop(hwi);
                     waveInReset(hwi);
 
-                    for (int i = 0; i < BufferCount; i++)
+                    // Queue order again: the buffers still held by the driver start
+                    // at the cursor, so the tail is written in the order it was
+                    // captured rather than in array order.
+                    for (int scanned = 0; scanned < BufferCount; scanned++)
                     {
+                        int i = (next + scanned) % BufferCount;
+                        if (drained[i]) { continue; }
                         WAVEHDR hdr = (WAVEHDR)Marshal.PtrToStructure(headers[i], typeof(WAVEHDR));
                         if ((hdr.dwFlags & WHDR_DONE) != 0 && hdr.dwBytesRecorded > 0)
                         {
@@ -366,6 +393,9 @@ namespace Sayit
             {
                 int sample = (short)(data[i] | (data[i + 1] << 8));
                 if (sample < 0) { sample = -sample; }
+                // -32768 has no positive counterpart; without this the reported
+                // peak can exceed the 32767 the callers scale against.
+                if (sample > 32767) { sample = 32767; }
                 if (sample > peak) { peak = sample; }
             }
         }

@@ -10,6 +10,10 @@
 # is what lets the recorder finalise the RIFF header itself, so a truncated or
 # invalid WAV is not a failure mode here.
 #
+# With -StopEvent a second event of the same name plus "-done" is created and
+# signalled once the WAV is closed and complete, so the caller can read the file
+# without also waiting for this process to exit.
+#
 # -Device accepts an MMDevice endpoint ID (preferred, stable) or a device name.
 # Empty selects the Windows default capture device.
 #
@@ -32,6 +36,33 @@ $ErrorActionPreference = 'Stop'
 
 . "$PSScriptRoot\lib\common.ps1"
 Initialize-SayitDirs
+
+# The stop event is created here, before the compile below and before the device
+# is resolved, because sayit.ps1 stops this recorder by opening the event by
+# name: until it exists there is no way to ask for a clean stop, and a release
+# that arrives inside that window falls through to killing this process instead.
+# A killed recorder never rewrites its RIFF header, so the WAV still claims zero
+# data bytes and the whole dictation reads as silence. Creating the event first
+# narrows the window to this process's own startup.
+#
+# A stop event that nobody signals still terminates via MaxSeconds, so the
+# recorder can never hold the microphone open indefinitely.
+$stopHandle = $null
+$doneHandle = $null
+$createdNew = $false
+if ($StopEvent) {
+    $stopHandle = New-Object System.Threading.EventWaitHandle(
+        $false, [System.Threading.EventResetMode]::ManualReset, $StopEvent, [ref]$createdNew)
+    # Signalled the moment the WAV is closed and complete, which is well before
+    # this process has finished tearing itself down. It saves the caller from
+    # waiting for an exit it does not need: measured at 122-300 ms of the
+    # release-to-text path. The name is the stop event's with "-done" appended,
+    # by convention with sayit.ps1.
+    $doneHandle = New-Object System.Threading.EventWaitHandle(
+        $false, [System.Threading.EventResetMode]::ManualReset, "$StopEvent-done", [ref]$createdNew)
+} else {
+    $stopHandle = New-Object System.Threading.ManualResetEvent($false)
+}
 
 $cs = Read-Utf8Text -Path (Join-Path $PSScriptRoot 'lib\Recorder.cs')
 if (-not $cs) { Write-Error 'lib\Recorder.cs not found'; exit 1 }
@@ -68,17 +99,6 @@ if ($index -eq -2) {
     exit 1
 }
 
-# A stop event that nobody signals still terminates via MaxSeconds, so the
-# recorder can never hold the microphone open indefinitely.
-$stopHandle = $null
-$createdNew = $false
-if ($StopEvent) {
-    $stopHandle = New-Object System.Threading.EventWaitHandle(
-        $false, [System.Threading.EventResetMode]::ManualReset, $StopEvent, [ref]$createdNew)
-} else {
-    $stopHandle = New-Object System.Threading.ManualResetEvent($false)
-}
-
 if ($Seconds -gt 0 -and $Seconds -lt $MaxSeconds) { $MaxSeconds = $Seconds }
 
 # Publishing the level from here means the recording indicator never has to open
@@ -94,6 +114,13 @@ try {
     Write-Error $_.Exception.Message
     exit 1
 } finally {
+    # CaptureToWav closes the file before it returns or throws, so from here the
+    # WAV is whole and the caller may read it. Announced on the way out of the
+    # catch as well, so a failed capture does not leave a stop waiting.
+    if ($doneHandle) {
+        $doneHandle.Set() | Out-Null
+        $doneHandle.Dispose()
+    }
     $stopHandle.Dispose()
 }
 

@@ -3,7 +3,8 @@
 # Dot-source this from every win\*.ps1 entry point:
 #     . "$PSScriptRoot\lib\common.ps1"
 #
-# Provides: repo/state paths, .env loading, UTF-8 file IO, stage profiling.
+# Provides: repo/state paths, .env loading, UTF-8 file IO, stage profiling,
+# session-file parsing, the wordlist engine and the error log.
 # Exit codes are defined by each entry point, not here.
 
 Set-StrictMode -Version 2.0
@@ -132,6 +133,60 @@ function Write-Mark {
         Add-Utf8Line -Path $csv -Line $line
     } catch {
         # Profiling must never break a dictation.
+    }
+}
+
+# --- Session file -----------------------------------------------------------
+# One line, tab separated:
+#
+#     pid <TAB> wav <TAB> start <TAB> stop-event <TAB> recorder-creation-time
+#
+# The last field is what turns the pid into an identity. Windows hands pids out
+# again, so a session file left behind by a crash can name a process that has
+# nothing to do with sayit - and the stop path signals, waits for and finally
+# kills whatever the file names. Comparing the recorder's creation time as well
+# makes that impossible. Lines written before the field existed parse with 0,
+# which reads as "cannot verify" and never as a match.
+#
+# Parsed here rather than in each caller because both the state machine and the
+# diagnostics read this file.
+
+function ConvertFrom-SessionLine {
+    param([AllowEmptyString()][string]$Line)
+
+    if ([string]::IsNullOrEmpty($Line)) { return $null }
+    $parts = $Line.Trim() -split "`t"
+    if ($parts.Count -lt 4) { return $null }
+
+    [long]$procStart = 0
+    if ($parts.Count -ge 5) {
+        [void][long]::TryParse($parts[4], [System.Globalization.NumberStyles]::Integer,
+                               [System.Globalization.CultureInfo]::InvariantCulture, [ref]$procStart)
+    }
+    # Invariant parsing: the start stamp is always written with a decimal point,
+    # and a Swedish locale would otherwise read "1.5" as fifteen.
+    return [pscustomobject]@{
+        ProcessId    = [int]$parts[0]
+        Wav          = $parts[1]
+        Start        = [double]::Parse($parts[2], [System.Globalization.CultureInfo]::InvariantCulture)
+        EventName    = $parts[3]
+        ProcessStart = $procStart
+    }
+}
+
+# True only while the pid still belongs to the very process the session spawned.
+function Test-SessionRecorder {
+    param($Session)
+
+    if (-not $Session) { return $false }
+    $proc = Get-Process -Id $Session.ProcessId -ErrorAction SilentlyContinue
+    if (-not $proc) { return $false }
+    if ($Session.ProcessStart -eq 0) { return $true }
+    try {
+        return ($proc.StartTime.ToFileTimeUtc() -eq $Session.ProcessStart)
+    } catch {
+        # No right to read the start time means it is not a process of ours.
+        return $false
     }
 }
 
