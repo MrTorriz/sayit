@@ -28,9 +28,13 @@
 #      Unix paths in it (WHISPER_CLI, WHISPER_SERVER) to the Windows build.
 #      An existing .env is never overwritten; the settings it lacks are listed.
 #   5. Seeds the wordlist from config\wordlist.example.tsv when there is none.
-#   6. Offers to register a scheduled task named "sayit" that runs at logon.
+#   6. Offers to register a scheduled task named "sayit" that starts
+#      win\sayit-autostart.ps1 at logon and keeps it running. When a task from
+#      an older version is already registered it lists what is wrong with it and
+#      offers to replace it.
 #
-# Re-running is safe: an existing build, .env, wordlist or task is left alone.
+# Re-running is safe: an existing build, .env and wordlist are left alone, and a
+# task that is already current is left alone too.
 #
 # Removing the autostart task:
 #   Unregister-ScheduledTask -TaskName 'sayit' -Confirm:$false
@@ -396,7 +400,170 @@ if (Test-Path -LiteralPath $wordlist) {
 
 # --- 6. Autostart -----------------------------------------------------------
 
+# The task runs one action, win\sayit-autostart.ps1, which starts the warm
+# daemon and then keeps sayit-trigger.ps1 running for the rest of the session.
+# It used to run two actions instead. Task actions run strictly in sequence -
+# the second starts only when the first one's process exits - so the daemon's
+# model load sat in front of the trigger and the button was dead until it
+# finished. The supervisor starts both at once and, unlike the task, notices
+# within a second when the trigger dies.
+#
+# Every setting below is here because its default would cost a start:
+#
+#   -AllowStartIfOnBatteries       the default refuses to start on battery,
+#   -DontStopIfGoingOnBatteries    and stops a running task when the charger is
+#                                  pulled. On a laptop that is the whole story.
+#   -ExecutionTimeLimit 0          the default stops the task after three days
+#   -MultipleInstances IgnoreNew   while one instance runs a second is refused,
+#                                  which is what keeps the repeating trigger
+#                                  below from ever producing a second trigger
+#   -StartWhenAvailable            off by default; runs a repetition that was
+#                                  missed while the machine was asleep or off
+#   -DontStopOnIdleEnd             StopOnIdleEnd defaults to on. It only applies
+#                                  to an idle-triggered task, but it costs
+#                                  nothing to put the question beyond doubt.
+#   -Priority 5                    the default is 7, BELOW_NORMAL_PRIORITY_CLASS
+#                                  for a process whose job is to answer a button
+#   -RestartCount 3                Windows' own restart-on-failure, kept as a
+#   -RestartInterval 1 min         backstop. It did not bring the trigger back
+#                                  when it was killed in testing; the repeating
+#                                  trigger did, so do not rely on this one.
+#
+# Two triggers, because they answer different questions:
+#   at logon        starts it for the session. It is also the only trigger that
+#                   works without administrator rights, and the only one that
+#                   helps: an at-startup trigger runs as SYSTEM in session 0,
+#                   where an input hook reaches no desktop and injects nothing.
+#                   Logon covers a cold boot, a restart, a hybrid-shutdown boot
+#                   and logging off and back on, because every one of them ends
+#                   in a logon.
+#   every minute    brings the supervisor back if it dies. While it is alive
+#                   these are refused by IgnoreNew and recorded as
+#                   LastTaskResult 0x800710E0, which is the normal state of this
+#                   task and not a failure.
+
 $taskName = 'sayit'
+
+function New-SayitTaskAction {
+    $psExe  = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+    $script = Join-Path $PSScriptRoot 'sayit-autostart.ps1'
+    $arg    = '-NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File "{0}"' -f $script
+    return (New-ScheduledTaskAction -Execute $psExe -Argument $arg)
+}
+
+function New-SayitTaskTrigger {
+    $atLogon = New-ScheduledTaskTrigger -AtLogOn -User ("{0}\{1}" -f $env:USERDOMAIN, $env:USERNAME)
+    # A repetition set on the logon trigger itself never fires once that logon
+    # is past, which is exactly when it would be needed. A separate time trigger
+    # whose start boundary is already behind us repeats from the moment it is
+    # registered, so it is a second trigger rather than a property of the first.
+    $repeat = New-ScheduledTaskTrigger -Once -At (Get-Date).Date `
+                  -RepetitionInterval (New-TimeSpan -Minutes 1)
+    $repeat.Repetition.StopAtDurationEnd = $false
+    return @($atLogon, $repeat)
+}
+
+function New-SayitTaskSettings {
+    return (New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries `
+                -ExecutionTimeLimit ([TimeSpan]::Zero) -MultipleInstances IgnoreNew `
+                -StartWhenAvailable -DontStopOnIdleEnd -Priority 5 `
+                -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1))
+}
+
+# What is wrong with the task that is registered, if anything. Reported against
+# the exported XML rather than the cmdlet objects, because the XML is what the
+# scheduler actually acts on, defaults included.
+function Get-SayitTaskShortcoming {
+    param([Parameter(Mandatory)][AllowEmptyString()][string]$Xml)
+    $found = @()
+    if ($Xml -notmatch 'sayit-autostart\.ps1') {
+        $found += 'it does not run win\sayit-autostart.ps1'
+    }
+    if ($Xml -notmatch '(?s)<TimeTrigger>.*?<Repetition>') {
+        $found += 'it has no repeating trigger, so nothing brings it back if it dies mid-session'
+    }
+    if ($Xml -notmatch '<StartWhenAvailable>true<') {
+        $found += 'StartWhenAvailable is off, so a run missed while asleep is dropped'
+    }
+    if ($Xml -notmatch '<MultipleInstancesPolicy>IgnoreNew<') {
+        $found += 'it does not refuse a second instance, which risks two triggers at once'
+    }
+    if ($Xml -notmatch '<ExecutionTimeLimit>PT0S<') {
+        $found += 'it has an execution time limit, and the trigger is meant to run all session'
+    }
+    if ($Xml -match '<DisallowStartIfOnBatteries>true<') {
+        $found += 'it refuses to start on battery'
+    }
+    if ($Xml -match '<StopIfGoingOnBatteries>true<') {
+        $found += 'it stops when the machine goes on battery'
+    }
+    if ($Xml -match '<RunOnlyIfNetworkAvailable>true<') {
+        $found += 'it starts only when a network is available, and dictation needs none'
+    }
+    return $found
+}
+
+# Stop whatever is holding the hook from an earlier setup, so the supervisor
+# that is about to start owns exactly one trigger. Called only immediately
+# before starting the task again - never leave the button dead in between.
+function Stop-SayitTriggerProcess {
+    $stopped = @()
+    try {
+        $procs = @(Get-CimInstance -ClassName Win32_Process -Filter "Name='powershell.exe'" -ErrorAction Stop |
+            Where-Object { $_.CommandLine -and
+                           $_.CommandLine -match '-File\s+"?[^"]*sayit-(trigger|autostart)\.ps1' -and
+                           $_.CommandLine -notmatch '\s-Command\b' -and
+                           $_.CommandLine -notmatch '-Probe' })
+    } catch {
+        return $stopped
+    }
+    foreach ($p in $procs) {
+        try {
+            Stop-Process -Id $p.ProcessId -Force -ErrorAction Stop
+            $stopped += $p.ProcessId
+        } catch { }
+    }
+    return $stopped
+}
+
+function Register-SayitTask {
+    Register-ScheduledTask -TaskName $taskName -Action (New-SayitTaskAction) `
+        -Trigger (New-SayitTaskTrigger) -Settings (New-SayitTaskSettings) `
+        -Description 'sayit push-to-talk dictation' -Force | Out-Null
+}
+
+# Start it now and say what actually happened, rather than reporting a
+# registration and leaving the user to find out at the next logon.
+function Start-SayitTaskAndReport {
+    $stopped = @(Stop-SayitTriggerProcess)
+    if ($stopped.Count -gt 0) {
+        Write-Log ("Stopped the trigger from the previous setup (pid {0})" -f ($stopped -join ', '))
+    }
+    Start-ScheduledTask -TaskName $taskName
+    $deadline = (Get-Date).AddSeconds(40)
+    $running = @()
+    while ((Get-Date) -lt $deadline) {
+        Start-Sleep -Seconds 2
+        try {
+            $running = @(Get-CimInstance -ClassName Win32_Process -Filter "Name='powershell.exe'" -ErrorAction Stop |
+                Where-Object { $_.CommandLine -and
+                               $_.CommandLine -match '-File\s+"?[^"]*sayit-trigger\.ps1' -and
+                               $_.CommandLine -notmatch '\s-Command\b' -and
+                               $_.CommandLine -notmatch '-Probe' })
+        } catch {
+            $running = @()
+        }
+        if ($running.Count -gt 0) { break }
+    }
+    if ($running.Count -eq 1) {
+        Write-Log ("The trigger is armed (pid {0})" -f $running[0].ProcessId)
+    } elseif ($running.Count -eq 0) {
+        Write-Warn 'The task started but no trigger process appeared - check .\win\sayit-doctor.ps1'
+    } else {
+        Write-Warn ("{0} trigger processes are running at once - they will double-fire." -f $running.Count)
+        Write-Warn 'Stop the extra ones and re-run: .\win\sayit-doctor.ps1 says which they are'
+    }
+}
 
 if ($NoAutostart) {
     Write-Log 'Skipping the autostart task (-NoAutostart)'
@@ -409,33 +576,40 @@ if ($NoAutostart) {
     }
 
     if ($existing) {
-        Write-Log "Scheduled task '$taskName' already registered - left untouched"
+        $taskXml = ''
+        try { $taskXml = (Export-ScheduledTask -TaskName $taskName) -join "`n" } catch { $taskXml = '' }
+        $shortcomings = @(Get-SayitTaskShortcoming -Xml $taskXml)
+        if ($shortcomings.Count -eq 0) {
+            Write-Log "Scheduled task '$taskName' already registered and current - left untouched"
+        } else {
+            Write-Warn "The registered scheduled task '$taskName' is out of date:"
+            foreach ($s in $shortcomings) { Write-Warn "    - $s" }
+            Write-Warn 'Replacing it stops the running trigger and starts it again immediately.'
+            if (Confirm-Step 'Replace it with the current definition?') {
+                try {
+                    Register-SayitTask
+                    Write-Log "Replaced the scheduled task '$taskName'"
+                    Start-SayitTaskAndReport
+                } catch {
+                    Write-Warn ("Could not replace the scheduled task: {0}" -f $_.Exception.Message)
+                }
+            } else {
+                Write-Log 'Left the existing task alone'
+            }
+        }
     } else {
-        Write-Log 'An optional scheduled task can start sayit at logon. It runs two'
-        Write-Log 'actions in order: sayit-daemon.ps1 start, which returns once the'
-        Write-Log 'model server answers, and sayit-trigger.ps1, which keeps running'
-        Write-Log 'and holds the push-to-talk hook.'
+        Write-Log 'An optional scheduled task can start sayit at logon. It runs one'
+        Write-Log 'action, sayit-autostart.ps1, which starts the warm model server and'
+        Write-Log 'then keeps the push-to-talk trigger running for the whole session,'
+        Write-Log 'restarting it if it ever exits.'
         if (Confirm-Step "Register the scheduled task '$taskName' to run at logon?") {
             try {
-                $psExe   = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
-                $daemon  = Join-Path $PSScriptRoot 'sayit-daemon.ps1'
-                $trigger = Join-Path $PSScriptRoot 'sayit-trigger.ps1'
-                $common  = '-NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File'
-                $actions = @(
-                    (New-ScheduledTaskAction -Execute $psExe -Argument ('{0} "{1}" start' -f $common, $daemon)),
-                    (New-ScheduledTaskAction -Execute $psExe -Argument ('{0} "{1}"' -f $common, $trigger))
-                )
-                $atLogon  = New-ScheduledTaskTrigger -AtLogOn -User ("{0}\{1}" -f $env:USERDOMAIN, $env:USERNAME)
-                # No execution time limit: the trigger is meant to run all session.
-                $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries `
-                                -DontStopIfGoingOnBatteries -ExecutionTimeLimit ([TimeSpan]::Zero) `
-                                -MultipleInstances IgnoreNew
-                Register-ScheduledTask -TaskName $taskName -Action $actions -Trigger $atLogon `
-                    -Settings $settings -Description 'sayit push-to-talk dictation' | Out-Null
+                Register-SayitTask
                 Write-Log "Registered the scheduled task '$taskName'"
+                Start-SayitTaskAndReport
             } catch {
                 Write-Warn ("Could not register the scheduled task: {0}" -f $_.Exception.Message)
-                Write-Warn 'Start the two scripts by hand, or register the task from an elevated shell.'
+                Write-Warn 'Start .\win\sayit-autostart.ps1 by hand instead - it needs no task and no rights.'
             }
         } else {
             Write-Log 'No task registered'

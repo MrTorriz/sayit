@@ -70,6 +70,12 @@ $threads     = Get-Setting -Env $cfg -Name 'THREADS'          -Default '6'
 $beam        = Get-Setting -Env $cfg -Name 'BEAM'             -Default '5'
 $port        = Get-Setting -Env $cfg -Name 'DAEMON_PORT'      -Default '9876'
 $audioSource = Get-Setting -Env $cfg -Name 'AUDIO_SOURCE'     -Default ''
+# The four VAD tuning settings, with the same defaults lib\transcribe.ps1 uses.
+# They are sent with every request, so they need no daemon restart.
+$vadPad      = Get-Setting -Env $cfg -Name 'VAD_SPEECH_PAD_MS'  -Default '250'
+$vadThresh   = Get-Setting -Env $cfg -Name 'VAD_THRESHOLD'      -Default '0.30'
+$vadMinSp    = Get-Setting -Env $cfg -Name 'VAD_MIN_SPEECH_MS'  -Default '0'
+$vadMinSil   = Get-Setting -Env $cfg -Name 'VAD_MIN_SILENCE_MS' -Default '300'
 $wordlist    = Get-Setting -Env $cfg -Name 'WORDLIST'         -Default (Join-Path $script:ConfigDir 'wordlist.tsv')
 $trigger     = Get-Setting -Env $cfg -Name 'TRIGGER_BUTTON'   -Default 'XBUTTON2'
 $suppressKey = Get-Setting -Env $cfg -Name 'TRIGGER_SUPPRESS' -Default '1'
@@ -182,6 +188,124 @@ if ($daemonUp) {
     Write-More 'each time. Start it with: .\win\sayit-daemon.ps1 start'
 }
 
+# --- Autostart --------------------------------------------------------------
+
+Write-Section 'Autostart'
+
+# Only powershell.exe running the script with -File counts. Never a -Probe run:
+# probe mode installs a hook but suppresses nothing and starts no dictation.
+# Never a -Command host either: a shell that merely names the path - this
+# script's own parent, for one - is not the trigger.
+function Get-SayitHostProcess {
+    param([Parameter(Mandatory)][string]$Script)
+    $pattern = '-File\s+"?[^"]*' + [regex]::Escape($Script)
+    try {
+        # The leading comma keeps the array an array on the way out. Without it
+        # a single match is returned as one CimInstance, whose .Count is not 1
+        # but $null - a property that class does not have - and every count
+        # below would silently take the wrong branch.
+        return ,@(Get-CimInstance -ClassName Win32_Process -Filter "Name='powershell.exe'" -ErrorAction Stop |
+            Where-Object { $_.CommandLine -and
+                           $_.CommandLine -match $pattern -and
+                           $_.CommandLine -notmatch '\s-Command\b' -and
+                           $_.CommandLine -notmatch '-Probe' })
+    } catch {
+        return $null
+    }
+}
+
+$taskName = 'sayit'
+$task = $null
+try { $task = Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue } catch { $task = $null }
+
+if ($null -eq $task) {
+    Write-Info "no scheduled task named '$taskName' - nothing starts sayit at logon"
+    Write-More 'register one with: .\win\install.ps1 -SkipBuild -SkipModel'
+} else {
+    if ($task.State -eq 'Disabled') {
+        Write-Warn "the scheduled task '$taskName' is registered but disabled - it will not start"
+        Write-More "enable it with: Enable-ScheduledTask -TaskName '$taskName'"
+    } else {
+        Write-Ok ("scheduled task '{0}' is registered, state {1}" -f $taskName, $task.State)
+    }
+
+    $taskXml = ''
+    try { $taskXml = (Export-ScheduledTask -TaskName $taskName) -join "`n" } catch { $taskXml = '' }
+    if ($taskXml -notmatch 'sayit-autostart\.ps1') {
+        Write-Warn 'the task predates win\sayit-autostart.ps1 and does not supervise the trigger'
+        Write-More 'a trigger that dies stays dead until the next logon. Update it with:'
+        Write-More '.\win\install.ps1 -SkipBuild -SkipModel'
+    }
+    if ($taskXml -notmatch '(?s)<TimeTrigger>.*?<Repetition>') {
+        Write-Warn 'the task has no repeating trigger, so nothing restarts it if it dies'
+        Write-More 'update it with: .\win\install.ps1 -SkipBuild -SkipModel'
+    }
+
+    $info = $null
+    try { $info = Get-ScheduledTaskInfo -TaskName $taskName -ErrorAction SilentlyContinue } catch { $info = $null }
+    if ($null -ne $info) {
+        $result = [uint32]$info.LastTaskResult
+        # 0x800710E0 is what the repeating trigger records every time it is
+        # refused because the supervisor is already running, which is the normal
+        # state of this task and not a fault.
+        $meaning = switch ($result) {
+            0          { 'the last run finished cleanly' }
+            267009     { 'an instance is running now' }
+            267011     { 'it has not run yet' }
+            267014     { 'the last run was stopped by hand' }
+            2147946720 { 'a repeat was refused because one instance was already running - normal' }
+            4294967295 { 'the last run was killed' }
+            default    { 'see the task history for what it means' }
+        }
+        Write-Info ("LastTaskResult 0x{0:X8} - {1}" -f $result, $meaning)
+        Write-Info ("last run {0}, next run {1}" -f $info.LastRunTime, $info.NextRunTime)
+    }
+}
+
+$supervisors = Get-SayitHostProcess -Script 'sayit-autostart.ps1'
+if ($null -eq $supervisors) {
+    Write-Info 'could not enumerate processes, so the supervisor was not checked'
+} elseif ($supervisors.Count -eq 1) {
+    Write-Ok ("supervisor running (pid {0})" -f $supervisors[0].ProcessId)
+} elseif ($supervisors.Count -eq 0) {
+    Write-Warn 'no sayit-autostart.ps1 supervisor is running'
+    Write-More 'nothing will restart the trigger if it exits. Start it with:'
+    Write-More ".\win\sayit-autostart.ps1   (or: Start-ScheduledTask -TaskName '$taskName')"
+} else {
+    # The supervisor takes a named mutex, so this should be unreachable.
+    Write-Warn ("{0} supervisors are running: pid {1}" -f `
+        $supervisors.Count, (($supervisors | ForEach-Object { $_.ProcessId }) -join ', '))
+}
+
+$triggers = Get-SayitHostProcess -Script 'sayit-trigger.ps1'
+if ($null -eq $triggers) {
+    Write-Info 'could not enumerate processes, so the trigger was not checked'
+} elseif ($triggers.Count -eq 1) {
+    Write-Ok ("trigger armed (pid {0})" -f $triggers[0].ProcessId)
+} elseif ($triggers.Count -eq 0) {
+    Write-Warn 'no trigger process is running - the push-to-talk button does nothing'
+    Write-More 'with the task registered it comes back within a minute; start it now with:'
+    Write-More '.\win\sayit-trigger.ps1'
+} else {
+    Write-Fail ("{0} trigger processes are running: pid {1}" -f `
+        $triggers.Count, (($triggers | ForEach-Object { $_.ProcessId }) -join ', '))
+    Write-More 'two hooks on the same button start and stop the dictation twice per'
+    Write-More 'press. Stop all but one:'
+    Write-More ("Stop-Process -Id {0}" -f (($triggers | ForEach-Object { $_.ProcessId }) -join ','))
+}
+
+if ($daemonUp) {
+    Write-Ok "warm daemon answering on 127.0.0.1:$port"
+} else {
+    Write-Info "warm daemon not answering - dictation falls back to whisper-cli (see above)"
+}
+
+$autostartLog = Join-Path $script:RunDir 'autostart.log'
+if (Test-Path -LiteralPath $autostartLog) {
+    $last = @(Get-Content -LiteralPath $autostartLog -Tail 1)
+    if ($last.Count -gt 0) { Write-Info ("last supervisor log line: {0}" -f $last[0]) }
+}
+
 # --- Capture devices --------------------------------------------------------
 
 Write-Section 'Capture devices'
@@ -228,6 +352,13 @@ if ($null -ne $devices) {
             Write-Info 'truncates names at 31 characters, and a name can change when'
             Write-Info 'the device is renamed or reconnected'
         }
+        # Only endpoints reach this list, and a vendor audio suite can be the
+        # only endpoint on the machine.
+        Write-Info 'only what Windows exposes as a capture endpoint can be selected here.'
+        Write-Info 'A virtual device from a vendor audio suite can be the only endpoint,'
+        Write-Info 'with the physical microphone behind it not exposed at all. Which'
+        Write-Info 'microphone that one carries is decided in that software, not by'
+        Write-Info 'AUDIO_SOURCE'
 
         if (-not $audioSource) {
             Write-Ok 'AUDIO_SOURCE is empty - recording uses the Windows default capture device'
@@ -257,6 +388,10 @@ Write-Info "SPEECH_LANGUAGE            $language"
 Write-Info "THREADS                    $threads"
 Write-Info "BEAM                       $beam"
 Write-Info "DAEMON_PORT                $port"
+Write-Info "VAD_SPEECH_PAD_MS          $vadPad"
+Write-Info "VAD_THRESHOLD              $vadThresh"
+Write-Info "VAD_MIN_SPEECH_MS          $vadMinSp"
+Write-Info "VAD_MIN_SILENCE_MS         $vadMinSil"
 Write-Info "MAX_RECORD_SECONDS         $maxRecord"
 Write-Info "TYPING_WPM                 $typingWpm"
 Write-Info "TRIGGER_BUTTON             $trigger"
@@ -293,17 +428,23 @@ Write-Section 'Session state'
 $sessionFile = Join-Path $script:RunDir 'sayit.session'
 $livePid = 0
 if (Test-Path -LiteralPath $sessionFile) {
-    $parts = @()
-    try { $parts = (Read-Utf8Text -Path $sessionFile).Trim() -split "`t" } catch { $parts = @() }
-    $sessionPid = 0
-    if ($parts.Count -ge 1) { [int]::TryParse($parts[0], [ref]$sessionPid) | Out-Null }
-    $proc = $null
-    if ($sessionPid -gt 0) { $proc = Get-Process -Id $sessionPid -ErrorAction SilentlyContinue }
-    if ($proc) {
-        $livePid = $sessionPid
-        Write-Info "a recording is in progress (pid $sessionPid)"
+    # Parsed and identity-checked by the same helpers the state machine uses. A
+    # live pid is not enough: Windows reuses pids, so a stale session file can
+    # name a process that has nothing to do with sayit, and calling that a
+    # recording in progress would invite the reader to kill an innocent process.
+    $session = $null
+    try { $session = ConvertFrom-SessionLine -Line (Read-Utf8Text -Path $sessionFile) } catch { $session = $null }
+    if ($null -eq $session) {
+        Write-Warn "unreadable session file: $sessionFile"
+        Write-More "remove it with: Remove-Item -LiteralPath '$sessionFile'"
+    } elseif (Test-SessionRecorder -Session $session) {
+        $livePid = $session.ProcessId
+        Write-Info ("a recording is in progress (pid {0})" -f $session.ProcessId)
+        if ($session.ProcessStart -eq 0) {
+            Write-More 'written by an older version, so only the pid identifies it'
+        }
     } else {
-        Write-Warn "stale session file: $sessionFile names no live process"
+        Write-Warn "stale session file: $sessionFile names no live recorder"
         Write-More "remove it with: Remove-Item -LiteralPath '$sessionFile'"
     }
 } else {
