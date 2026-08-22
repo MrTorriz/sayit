@@ -125,7 +125,9 @@ namespace Sayit
             }
         }
 
-        public static void Install()
+        /// False when either hook could not be armed. SetWindowsHookEx failing is
+        /// silent otherwise: the pump would run all session observing nothing.
+        public static bool Install()
         {
             lock (_lock)
             {
@@ -140,19 +142,20 @@ namespace Sayit
                     _mouseProc = new HookProc(MouseCallback);
                     _mouseHook = SetWindowsHookExW(WH_MOUSE_LL, _mouseProc, hMod, 0);
                 }
+                return _keyboardHook != IntPtr.Zero && _mouseHook != IntPtr.Zero;
             }
         }
 
         /// Re-arm after a silent removal. The OS gives no notification when it
         /// drops a slow hook, so callers should invoke this on a timer.
-        public static void Reinstall()
+        public static bool Reinstall()
         {
             lock (_lock)
             {
                 if (_keyboardHook != IntPtr.Zero) { UnhookWindowsHookEx(_keyboardHook); _keyboardHook = IntPtr.Zero; }
                 if (_mouseHook != IntPtr.Zero) { UnhookWindowsHookEx(_mouseHook); _mouseHook = IntPtr.Zero; }
             }
-            Install();
+            return Install();
         }
 
         public static void Uninstall()

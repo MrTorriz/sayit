@@ -269,7 +269,13 @@ namespace Sayit
 
         private static int GetIntegrityLevel(uint pid)
         {
-            IntPtr proc = OpenProcess(0x0400, false, pid); // PROCESS_QUERY_INFORMATION
+            // PROCESS_QUERY_LIMITED_INFORMATION, not PROCESS_QUERY_INFORMATION.
+            // The wider right is refused across an integrity boundary, which is
+            // exactly the case this function exists to detect: with 0x0400 the
+            // open fails, the caller reads that as "not elevated", and the text is
+            // handed to a SendInput that UIPI discards without a word.
+            // OpenProcessToken accepts the limited right from Vista onwards.
+            IntPtr proc = OpenProcess(0x1000, false, pid);
             if (proc == IntPtr.Zero) { return -1; }
             IntPtr token = IntPtr.Zero;
             IntPtr buffer = IntPtr.Zero;

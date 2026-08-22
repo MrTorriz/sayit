@@ -41,6 +41,11 @@ function Invoke-TextInjection {
     # rather than a silent loss.
     if ([Sayit.Injector]::IsForegroundElevated()) {
         if ([Sayit.Injector]::SetClipboard($Text, 10)) {
+            # Logged as well as warned: on the hold-to-talk path this runs in a
+            # hidden window, so the warning reaches nobody and the dictation
+            # simply appears not to have happened. The log is what sayit doctor
+            # and the user have left to explain where the text went.
+            Write-SayitError 'inject: elevated target, text left on the clipboard'
             Write-Warning 'The focused window runs elevated; text is on the clipboard - press Ctrl+V.'
             return 2
         }
@@ -71,6 +76,7 @@ function Invoke-TextInjection {
     if (-not [Sayit.Injector]::TypeUnicode($Text, 512, 5)) {
         # Fall back to the clipboard rather than losing the text.
         if ([Sayit.Injector]::SetClipboard($Text, 10)) {
+            Write-SayitError 'inject: typing rejected, text left on the clipboard'
             Write-Warning 'Typing was rejected; the text is on the clipboard - press Ctrl+V.'
             return 2
         }

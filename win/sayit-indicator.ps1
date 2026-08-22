@@ -5,6 +5,14 @@
 #   .\sayit-indicator.ps1 hide    tell a running indicator to close
 #   .\sayit-indicator.ps1 place   drag it where you want it, Enter or Escape saves
 #
+# Arguments:
+#   -Managed   with 'show': the caller has already created the state file and
+#              owns its lifetime, so do not create one here. sayit.ps1 passes it
+#              because this process is far slower to start than a short
+#              dictation is to finish: a hide issued while it was still starting
+#              would be undone the moment it got around to writing the file, and
+#              the pill would then stay on screen for the rest of the session.
+#
 # The sayit mark IS the meter: the bars follow your voice level and the dot burns
 # red while the microphone is open. The level comes from the recorder, which has
 # already computed it, so no second capture stream is opened.
@@ -21,7 +29,10 @@
 # Exit codes: 0 normal, 1 the indicator could not be created.
 
 [CmdletBinding()]
-param([Parameter(Position = 0)][ValidateSet('show', 'hide', 'place')][string]$Action = 'show')
+param(
+    [Parameter(Position = 0)][ValidateSet('show', 'hide', 'place')][string]$Action = 'show',
+    [switch]$Managed
+)
 
 Set-StrictMode -Version 2.0
 $ErrorActionPreference = 'Stop'
@@ -194,7 +205,9 @@ $r = $height
 $path.AddArc(0, 0, $r, $r, 90, 180)
 $path.AddArc(($width - $r), 0, $r, $r, 270, 180)
 $path.CloseFigure()
+# Region takes a copy of the path data, so the path itself is finished with here.
 $form.Region = New-Object System.Drawing.Region($path)
+$path.Dispose()
 
 $script:level = 0
 $script:phase = 0
@@ -279,7 +292,7 @@ if ($placing) {
     $form.Show()
     $form.Activate()
 } else {
-    Write-Utf8Text -Path $stateFile -Text '1'
+    if (-not $Managed) { Write-Utf8Text -Path $stateFile -Text '1' }
     $form.ShowNoActivate()
 }
 
@@ -313,6 +326,7 @@ try {
     [System.Windows.Forms.Application]::Run($form)
 } finally {
     $timer.Stop()
+    $timer.Dispose()
     if (-not $placing) { Remove-Item -LiteralPath $stateFile -Force -ErrorAction SilentlyContinue }
 }
 exit 0
