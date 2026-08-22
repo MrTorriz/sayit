@@ -9,8 +9,9 @@
 # The server listens on 127.0.0.1 only and has no authentication, so any local
 # process can reach it. Keep it on loopback.
 #
-# Model, VAD, threads and beam size are fixed when the server starts; changing
-# them in .env requires a restart. Language and initial prompt are per request.
+# Model, VAD model, threads and beam size are fixed when the server starts;
+# changing them in .env requires a restart. Language, initial prompt and the VAD
+# thresholds are per request and take effect on the next dictation.
 #
 # Exit codes: 0 success, 1 the binary or the model is missing, 2 start failed.
 
@@ -34,7 +35,6 @@ $threads  = Get-Setting -Env $cfg -Name 'THREADS'         -Default '6'
 $beam     = Get-Setting -Env $cfg -Name 'BEAM'            -Default '5'
 $port     = Get-Setting -Env $cfg -Name 'DAEMON_PORT'     -Default '9876'
 $vad      = Get-Setting -Env $cfg -Name 'VAD_MODEL'       -Default $repoVad
-$suppress = Get-Setting -Env $cfg -Name 'SUPPRESS_REGEX'  -Default ''
 $server   = Get-Setting -Env $cfg -Name 'WHISPER_SERVER' `
                 -Default (Join-Path $env:LOCALAPPDATA 'sayit\whisper.cpp\build-vulkan\bin\Release\whisper-server.exe')
 
@@ -49,12 +49,23 @@ function Test-DaemonAlive {
     } catch { return $false }
 }
 
+# SUPPRESS_REGEX is deliberately absent here. whisper-server has no
+# --suppress-regex option, and its argument parser answers an unknown option by
+# printing the usage text and calling exit(0): setting SUPPRESS_REGEX made the
+# daemon quit the moment it started, with a success status, which reads as a
+# clean shutdown everywhere. The setting is applied to the transcribed text in
+# lib\transcribe.ps1 instead, which is also the only way the daemon path can
+# honour it at all.
+#
+# --flash-attn is the library default in whisper.cpp v1.9.2 and is passed only to
+# keep it explicit; --vad, --vad-model and --suppress-nst are all real options of
+# this server, checked against examples\server\server.cpp. VAD thresholds are not
+# passed here because they are per request, so changing one needs no restart.
 function Get-ServerArgs {
     $a = @('--model', $model, '--language', $language, '--threads', $threads,
            '--beam-size', $beam, '--flash-attn', '--suppress-nst',
            '--host', '127.0.0.1', '--port', $port)
     if ($vad -and (Test-Path -LiteralPath $vad)) { $a += @('--vad', '--vad-model', $vad) }
-    if ($suppress) { $a += @('--suppress-regex', $suppress) }
     return $a
 }
 
