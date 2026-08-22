@@ -42,7 +42,8 @@ forced by the platform, not chosen for taste.
 | Trigger | Solaar rules (mouse) or a desktop global shortcut invoking `bin/sayit` | `WH_KEYBOARD_LL` and `WH_MOUSE_LL` in-process | Windows has no Solaar-equivalent rule engine. Of the Windows input APIs, only low-level hooks give both press and release for mouse side buttons *and* can suppress the event |
 | Injection | clipboard + `Shift+Insert` via `ydotool`, with `wtype`/`xdotool` fallbacks | `SendInput` with `KEYEVENTF_UNICODE`, clipboard + `Ctrl+V` above a threshold | `ydotool` sends US scan codes, so non-ASCII breaks; `KEYEVENTF_UNICODE` sends the character itself and is layout independent by construction |
 | Feedback | a persistent notification, plus a meter that opens its own capture stream | one layered click-through window, fed by the level the recorder already computed | Windows has no notification server to hold a persistent notification against, and no second capture stream is needed when the recorder can publish the level |
-| Warm model | a systemd user service | a scheduled task at logon, or `sayit-daemon.ps1 start` | No systemd |
+| Warm model | a systemd user service | `sayit-autostart.ps1`, started by a scheduled task at logon, or `sayit-daemon.ps1 start` by hand | No systemd |
+| Keeping the trigger alive | systemd `Restart=` | `sayit-autostart.ps1` supervises it; the task's repeating trigger supervises the supervisor | The task scheduler's own `RestartOnFailure` was measured not to fire for this process, and a task cannot see inside its own instance |
 | Bluetooth | `bin/sayit-bt` switches A2DP to HFP and restores it | nothing | Windows selects the HFP profile itself when an application opens a capture endpoint. The whole stage, its state file and the intent marker that covered the switch window are absent |
 | Transient state | `$XDG_RUNTIME_DIR`, RAM-backed and wiped at logout | `%LOCALAPPDATA%\sayit\run`, on disk | Windows has no tmpfs equivalent, so cleanup is explicit: the WAV is deleted after transcription, stale WAVs older than an hour are swept at the next start, and `sayit-doctor.ps1` reports whatever is left |
 | Config parsing | `.env` is sourced as bash | `.env` is parsed as `KEY=VALUE` data | Running arbitrary code from a config file is a worse trade on either platform, and nothing in `.env.example` needs it. The Windows reader expands `%VAR%` and nothing else |
@@ -175,6 +176,7 @@ sequenceDiagram
 | `sayit-doctor.ps1` | Read-only diagnostics: backend, models, daemon, capture devices, resolved settings, leftover state, platform limits |
 | `sayit-history.ps1` | Read side of `history.jsonl`: listing, stats, copy, re-inject; corrupt-line tolerant |
 | `sayit-learn.ps1` | Write side of the wordlist: add/undo/list with dedup |
+| `sayit-autostart.ps1` | Supervisor: starts the daemon without waiting, holds the trigger up, restarts it when it exits or stops answering, and cancels a recording an abnormal exit left behind |
 | `install.ps1` | Prerequisites, the pinned whisper.cpp build, the model check, `.env`, the wordlist seed and the optional logon task |
 
 | Helper | Responsibility |
@@ -309,8 +311,11 @@ Notes:
 
 whisper.cpp spends noticeable time per invocation just loading the model. A
 `whisper-server` kept running removes that cost entirely (see the measured tables
-above) — as a systemd user service on Linux, as a scheduled task at logon on
-Windows. Both transcribers try the server first and fall back to `whisper-cli`
+above) — as a systemd user service on Linux, and on Windows as the first thing
+`sayit-autostart.ps1` does, itself started by a scheduled task at logon. It is
+started without waiting for it, so the push-to-talk trigger is armed while the
+model is still loading rather than after it. Both transcribers try the server
+first and fall back to `whisper-cli`
 **only on transport failures**: an empty answer from a healthy daemon means "no
 speech" and is final, and re-running it on the CLI would spend a second to get
 the same answer. The daemon is optional; note the inverse dependency too, on both
@@ -603,6 +608,38 @@ second capture stream for the same job.
 Two limits are architectural and cannot be configured away: the window cannot
 appear over a true exclusive-fullscreen application, nor on the UAC secure desktop.
 `sayit-doctor.ps1` states both, so they are not mistaken for defects.
+
+#### A supervisor, because the task scheduler cannot see inside its own instance
+
+systemd restarts a unit that dies. The Windows task scheduler has
+`RestartOnFailure`, which looks like the same thing and is not: killing the
+trigger set the task's last result to a failure and produced no restart at all
+in the following two and a half minutes. It is kept as a backstop, and nothing
+depends on it.
+
+A task also cannot tell a wedged process from a working one. The trigger is a
+message pump holding a low-level hook; if that pump stops, the process is alive,
+the task is satisfied, and the button does nothing. So the trigger writes a
+heartbeat from inside the pump loop itself — the same loop the hook depends on —
+and the supervisor treats a stale heartbeat exactly as it treats an exit.
+
+`sayit-autostart.ps1` is therefore the task's single action rather than the
+trigger itself. It also fixes an ordering defect: the task previously ran the
+daemon and the trigger as two actions, and starting the daemon blocks until the
+model answers, so the button was dead for the whole model load at every logon.
+The supervisor starts the daemon without waiting for it.
+
+Both the supervisor and the trigger hold named mutexes. Two hooks on one button
+double-fire, which is worse than no hook at all, and a mutex is released by the
+kernel however the process dies — a pid file is not, and a recycled pid would
+make a stale one lie.
+
+An at-startup trigger was rejected rather than overlooked. It runs before logon,
+in a session where a low-level hook reaches no desktop and `SendInput` reaches no
+window, and registering it needs administrator rights. For a per-user input tool,
+"starts at boot" can only honestly mean "starts at logon" — which also means
+nothing starts before the user logs in, and that limit is stated rather than
+papered over.
 
 #### PowerShell 5.1 hazards worth naming
 
