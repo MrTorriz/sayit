@@ -1,0 +1,222 @@
+#!/usr/bin/env bash
+# sayit-doctor — read-only diagnostics for the recording path
+#
+# Usage:
+#   sayit-doctor           # full report
+#   sayit-doctor --quiet   # only warnings and failures
+#
+# Behavior:
+#   - Never changes anything: no card profiles, no default devices, no
+#     configuration, no recording. Every command it runs only reads state.
+#   - Resolves AUDIO_SOURCE against the sources PipeWire currently exposes and
+#     explains *why* a configured source is missing (device unplugged, or the
+#     card sitting in a profile that has no input) instead of only reporting
+#     that recording would fail.
+#   - Reports how recording will interact with a connected Bluetooth headset.
+#   - Flags leftover state from an aborted recording: a stale session file, or
+#     a headset left in its call profile.
+#
+# Exit codes:
+#   0  No failures (warnings may still be present)
+#   1  At least one failure, or an unknown argument
+
+set -euo pipefail
+
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck source=/dev/null
+[[ -f "$REPO_ROOT/.env" ]] && source "$REPO_ROOT/.env"
+
+QUIET=0
+case "${1:-}" in
+    --quiet|-q) QUIET=1 ;;
+    --help|-h)  sed -n '2,20p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    "")         ;;
+    *)          echo "Usage: sayit-doctor [--quiet]" >&2; exit 1 ;;
+esac
+
+FAILURES=0
+WARNINGS=0
+
+section() { (( QUIET )) || printf '\n%s\n' "$1"; }
+ok()      { (( QUIET )) || printf '  ok    %s\n' "$1"; }
+info()    { (( QUIET )) || printf '  --    %s\n' "$1"; }
+warn()    { printf '  warn  %s\n' "$1"; WARNINGS=$((WARNINGS + 1)); }
+fail()    { printf '  FAIL  %s\n' "$1"; FAILURES=$((FAILURES + 1)); }
+# Continuation line for the warn/fail above: printed, but never counted twice.
+more()    { printf '        %s\n' "$1"; }
+
+# --- Tools ------------------------------------------------------------------
+
+section "Tools"
+
+have() { command -v "$1" >/dev/null 2>&1; }
+
+if have pw-record; then
+    ok "pw-record found"
+else
+    fail "pw-record missing — install your distro's PipeWire tools"
+fi
+
+INSPECT=1
+for tool in pactl jq; do
+    if have "$tool"; then
+        ok "$tool found"
+    else
+        warn "$tool missing — Bluetooth switching and the checks below are unavailable"
+        INSPECT=0
+    fi
+done
+
+if (( INSPECT )) && ! pactl info >/dev/null 2>&1; then
+    fail "PipeWire is not reachable (pactl info failed)"
+    INSPECT=0
+fi
+
+if (( ! INSPECT )); then
+    section "Result"
+    printf '  %d failure(s), %d warning(s) — further checks skipped\n' \
+        "$FAILURES" "$WARNINGS"
+    (( FAILURES == 0 ))
+    exit
+fi
+
+SOURCES_JSON=$(pactl -f json list sources 2>/dev/null || echo '[]')
+CARDS_JSON=$(pactl -f json list cards 2>/dev/null || echo '[]')
+
+source_exists() {
+    printf '%s' "$SOURCES_JSON" | jq -e --arg n "$1" \
+        'any(.[]; .name == $n)' >/dev/null 2>&1
+}
+
+# The card behind a source node, found by longest name prefix rather than by
+# parsing the name: source names carry a variable number of dot-separated
+# components, so a prefix match is the only rule that holds for both
+# alsa_input.pci-0000_00_1f.3-platform-x.HiFi__Mic__source and
+# alsa_input.usb-Vendor_Device-00.mono-fallback.
+card_of_source() {
+    local candidate=$1 mac
+    case "$candidate" in
+        alsa_input.*)  candidate="alsa_card.${candidate#alsa_input.}" ;;
+        bluez_input.*) mac=${candidate#bluez_input.}
+                       candidate="bluez_card.${mac//:/_}" ;;
+        *)             return 0 ;;
+    esac
+    # `.name` inside startswith() would resolve against $s, not the card:
+    # bind it first.
+    printf '%s' "$CARDS_JSON" | jq -r --arg s "$candidate" \
+        '[.[] | .name as $n | select($s | startswith($n)) | $n] |
+         max_by(length) // empty' 2>/dev/null || true
+}
+
+# --- Recording source -------------------------------------------------------
+
+section "Recording source"
+
+if [[ -z "${AUDIO_SOURCE:-}" ]]; then
+    info "AUDIO_SOURCE is empty — recording uses the Bluetooth headset mic when"
+    info "one is connected, otherwise the PipeWire default source"
+    default_source=$(pactl get-default-source 2>/dev/null || true)
+    [[ -n "$default_source" ]] && info "PipeWire default source: $default_source"
+    default_sink=$(pactl get-default-sink 2>/dev/null || true)
+    if [[ "$default_sink" == bluez_output.* ]]; then
+        warn "playback runs over Bluetooth, so every recording will switch the"
+        more "headset to its call profile and back. Set AUDIO_SOURCE to a wired"
+        more "or USB microphone to keep A2DP playback untouched"
+    fi
+elif [[ "$AUDIO_SOURCE" =~ ^[0-9]+$ ]]; then
+    fail "AUDIO_SOURCE is the numeric id '$AUDIO_SOURCE'. PipeWire reassigns"
+    more "those on every reboot and re-plug — use the node name instead:"
+    more "  pactl list sources short"
+elif source_exists "$AUDIO_SOURCE"; then
+    ok "AUDIO_SOURCE resolves to a live source: $AUDIO_SOURCE"
+else
+    fail "AUDIO_SOURCE names no current source: $AUDIO_SOURCE"
+    card=$(card_of_source "$AUDIO_SOURCE")
+    if [[ -z "$card" ]]; then
+        more "no matching card either — the device looks disconnected"
+    else
+        active=$(printf '%s' "$CARDS_JSON" | jq -r --arg c "$card" \
+            '.[] | select(.name == $c) | .active_profile' 2>/dev/null)
+        more "the card exists but exposes no such input"
+        more "  card:           $card"
+        more "  active profile: $active"
+        # Profiles that would actually give this card an input. The active
+        # one is excluded: suggesting a switch to the profile already in use
+        # is never the fix.
+        inputs=$(printf '%s' "$CARDS_JSON" | jq -r --arg c "$card" \
+            '.[] | select(.name == $c) | .active_profile as $a | .profiles |
+             to_entries[] | select(.value.sources > 0) |
+             select(.key != $a) | .key' 2>/dev/null)
+        if [[ -n "$inputs" ]]; then
+            more "  profiles with an input:"
+            while IFS= read -r p; do
+                [[ -n "$p" ]] && more "    pactl set-card-profile $card $p"
+            done <<< "$inputs"
+        fi
+    fi
+fi
+
+# --- Bluetooth --------------------------------------------------------------
+
+section "Bluetooth"
+
+bt_cards=$(printf '%s' "$CARDS_JSON" | jq -r \
+    '.[] | select(.name | startswith("bluez_card.")) | .name' 2>/dev/null)
+
+if [[ -z "$bt_cards" ]]; then
+    info "no Bluetooth audio device connected"
+else
+    while IFS= read -r card; do
+        [[ -n "$card" ]] || continue
+        # pactl's JSON writer emits the literal string "(null)" for a
+        # description it cannot encode (device names containing non-ASCII),
+        # so an empty-or-"(null)" value falls back to the card name.
+        desc=$(printf '%s' "$CARDS_JSON" | jq -r --arg c "$card" \
+            '.[] | select(.name == $c) |
+             (.properties["device.description"] // "") as $d |
+             if ($d == "" or $d == "(null)") then .name else $d end')
+        active=$(printf '%s' "$CARDS_JSON" | jq -r --arg c "$card" \
+            '.[] | select(.name == $c) | .active_profile')
+        info "$desc"
+        info "  active profile: $active"
+        if [[ "$active" == headset-head-unit* ]]; then
+            warn "  this is the call profile (phone-quality playback). If no"
+            more "  recording is running: ./bin/sayit-bt down"
+        fi
+        if [[ -n "${AUDIO_SOURCE:-}" && "$AUDIO_SOURCE" != bluez_input.* ]]; then
+            ok "  left untouched while recording — AUDIO_SOURCE is a dedicated mic"
+        fi
+    done <<< "$bt_cards"
+fi
+
+# --- Leftover state ---------------------------------------------------------
+
+section "Session state"
+
+RUN_DIR="${XDG_RUNTIME_DIR:-/tmp}"
+
+if [[ -f "$RUN_DIR/sayit.session" ]]; then
+    IFS=$'\t' read -r spid swav _ < "$RUN_DIR/sayit.session" || true
+    if [[ -n "${spid:-}" ]] && kill -0 "$spid" 2>/dev/null &&
+       grep -qs -- "${swav:-__none__}" "/proc/$spid/cmdline"; then
+        info "a recording is in progress (pid $spid)"
+    else
+        warn "stale session file: $RUN_DIR/sayit.session names no live recorder"
+        more "remove it with: rm -f $RUN_DIR/sayit.session"
+    fi
+else
+    ok "no leftover recording session"
+fi
+
+if [[ -f "$RUN_DIR/sayit.bt" ]]; then
+    warn "leftover Bluetooth state: $RUN_DIR/sayit.bt — a recording was aborted"
+    more "before the profile was restored. Run: ./bin/sayit-bt down"
+else
+    ok "no leftover Bluetooth profile state"
+fi
+
+# --- Result -----------------------------------------------------------------
+
+section "Result"
+printf '  %d failure(s), %d warning(s)\n' "$FAILURES" "$WARNINGS"
+(( FAILURES == 0 ))

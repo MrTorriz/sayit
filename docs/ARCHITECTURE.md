@@ -46,6 +46,7 @@ sequenceDiagram
 |---|---|
 | `sayit` | Session state machine: toggle/hold/cancel, atomic session claiming, PID identity checks, notifications, history |
 | `sayit-bt` | Bluetooth headset profile switching (A2DP has no mic channel) |
+| `sayit-doctor` | Read-only diagnostics: resolves `AUDIO_SOURCE` against live nodes, explains a missing source, reports the Bluetooth profile and leftover state |
 | `sayit-record` | Audio capture only — PipeWire to 16 kHz mono WAV |
 | `sayit-daemon` | Starts `whisper-server` from `.env` so the model stays warm in RAM |
 | `sayit-transcribe` | Model I/O: daemon first, CLI fallback on transport errors, token cleanup, optional LLM pass |
@@ -169,6 +170,17 @@ indicator (rather than the button press) is the "start speaking" cue.
 Playback quality dips for exactly the duration of the recording. The headset
 is discovered from the default output at runtime, so nothing is hardcoded.
 
+A configured `AUDIO_SOURCE` bypasses this path entirely: a dedicated
+microphone is already an input device, so switching a headset that is only
+playing audio would trade good playback for a microphone sayit was told not
+to use. `sayit` therefore skips `sayit-bt` whenever `AUDIO_SOURCE` is set, and
+the headset stays in A2DP for the whole recording.
+
+The state file is written before the switch, not after, so a process killed
+mid-switch still leaves `down` able to restore the profile. The mirror case is
+handled explicitly: a switch that *fails* removes the record again, because a
+profile the card was never taken out of must not be "restored" later.
+
 ### VAD plus token suppression
 
 Whisper hallucinates on silence — ghost sentences, repeated phrases, `[music]`
@@ -235,6 +247,22 @@ its own process group, and every exit path — signal, stop from
 `sayit-indicator hide`, the renderer finishing on its own, the 120 s safety
 cap — signals that whole group. One kill takes down the renderer and the
 capture together, and the group never includes anything else.
+
+### Read-only diagnostics as a separate command
+
+The recording path fails in ways the recorder itself cannot explain: a node
+name that no longer resolves looks identical whether the device is unplugged,
+renamed, or merely sitting in a card profile that exposes no input. `pw-record`
+reports only that the target is gone.
+
+`sayit-doctor` answers the "why" without changing anything — it resolves
+`AUDIO_SOURCE` against the sources PipeWire currently exposes, walks back to
+the owning card when that fails, and prints the exact `pactl set-card-profile`
+line that would restore an input. It is a separate command rather than a flag
+on the recorder so that diagnosing a broken microphone never risks starting a
+recording, and so every check stays trivially auditable as read-only: it runs
+`pactl info`, `pactl -f json list …` and `pactl get-default-…`, and nothing
+else.
 
 ### Deliberate non-goals
 
