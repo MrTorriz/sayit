@@ -127,7 +127,11 @@ ARGS=(--record --raw --rate 8000 --channels 1 --format s16)
 PIPE_PID=""
 PIPE_PGID=""
 
-# shellcheck disable=SC2329  # invoked from the traps below
+# Both codes mean the same thing to different shellcheck versions: 0.10+ says
+# SC2329 (never invoked), older releases say SC2317 (unreachable). CI runs an
+# older shellcheck than a current Fedora, so both have to be listed or the
+# lint job fails on a function the traps below do call.
+# shellcheck disable=SC2329,SC2317
 stop_capture() {
     if [[ -n "$PIPE_PGID" ]]; then
         kill -- -"$PIPE_PGID" 2>/dev/null || true
@@ -136,7 +140,11 @@ stop_capture() {
     fi
 }
 
-# shellcheck disable=SC2329  # invoked from the traps below
+# Both codes mean the same thing to different shellcheck versions: 0.10+ says
+# SC2329 (never invoked), older releases say SC2317 (unreachable). CI runs an
+# older shellcheck than a current Fedora, so both have to be listed or the
+# lint job fails on a function the traps below do call.
+# shellcheck disable=SC2329,SC2317
 cleanup() {
     stop_capture
     if [[ $OSD_ACTIVE -eq 1 ]]; then
