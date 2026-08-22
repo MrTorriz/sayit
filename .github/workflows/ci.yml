@@ -1,5 +1,9 @@
 # CI: syntax + lint on every script (bash and Python alike), and the bats
 # test suite. Runs on push and pull requests.
+#
+# Two platforms, two jobs. The Linux jobs glob bin/, install.sh, tests/*.sh and
+# docs/*.py, so the Windows implementation in win/ is invisible to them and
+# cannot break them; the windows job covers win/ and nothing else.
 name: ci
 
 on:
@@ -41,3 +45,47 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y bats
       - name: Run test suite
         run: bats tests/
+
+  windows:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: powershell
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Syntax check
+        run: |
+          $failed = $false
+          Get-ChildItem win -Recurse -Filter *.ps1 | ForEach-Object {
+            $errors = $null
+            [System.Management.Automation.Language.Parser]::ParseFile($_.FullName, [ref]$null, [ref]$errors) | Out-Null
+            if ($errors) {
+              $failed = $true
+              Write-Host "::error file=$($_.FullName)::$($errors[0].Message)"
+            }
+          }
+          if ($failed) { exit 1 }
+
+      # The C# helpers are compiled at runtime by Add-Type, so a syntax error in
+      # them would otherwise only surface on a user's machine.
+      - name: Compile C# helpers
+        run: |
+          . .\win\lib\common.ps1
+          Add-Type -AssemblyName System.Windows.Forms
+          Add-Type -TypeDefinition (Read-Utf8Text "win\lib\Recorder.cs") -Language CSharp
+          Add-Type -TypeDefinition (Merge-CSharpSources -Sources @(
+                     (Read-Utf8Text "win\lib\Trigger.cs"),
+                     (Read-Utf8Text "win\lib\Injector.cs"))) `
+                   -Language CSharp -ReferencedAssemblies 'System.Windows.Forms','System.Drawing'
+          Add-Type -TypeDefinition (Read-Utf8Text "win\lib\RawInput.cs") `
+                   -Language CSharp -ReferencedAssemblies 'System.Windows.Forms','System.Drawing'
+
+      - name: PSScriptAnalyzer
+        run: |
+          Install-Module PSScriptAnalyzer -Force -Scope CurrentUser -SkipPublisherCheck
+          $results = Invoke-ScriptAnalyzer -Path win -Recurse -Severity Error
+          if ($results) { $results | Format-Table -AutoSize; exit 1 }
+
+      - name: Run test suite
+        run: .\win\tests\Invoke-Tests.ps1
