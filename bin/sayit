@@ -6,6 +6,7 @@
 #   sayit start     # hold-mode key-press: start recording
 #   sayit stop      # hold-mode key-release: stop, transcribe, inject
 #   sayit cancel    # discard the current recording without transcribing
+#   sayit doctor    # read-only check of the recording path (see sayit-doctor)
 #
 # Behavior:
 #   - Each recording session has its own WAV file and one session state file
@@ -378,6 +379,9 @@ case "$MODE" in
         stop_and_inject ;;
     cancel)
         cancel_recording ;;
+    doctor)
+        shift
+        exec "$REPO_ROOT/bin/sayit-doctor" "$@" ;;
     toggle|"")
         # Only treat the session as "recording" if its PID still names our
         # recorder — a stale session from a crash means: start fresh instead
@@ -393,6 +397,6 @@ case "$MODE" in
             start_recording
         fi ;;
     *)
-        echo "Usage: sayit [toggle|start|stop|cancel]" >&2
+        echo "Usage: sayit [toggle|start|stop|cancel|doctor]" >&2
         exit 1 ;;
 esac

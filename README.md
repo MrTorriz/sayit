@@ -146,6 +146,7 @@ The notification and the OSD styles use the sayit theme icons (light/dark varian
 ./bin/sayit start                     # hold-mode: start on key press
 ./bin/sayit stop                      # hold-mode: stop on key release
 ./bin/sayit cancel                    # discard the current recording
+./bin/sayit doctor                    # read-only check of the recording path
 ./bin/test-pipeline                   # smoke test with a synthetic voice
 ```
 
@@ -214,6 +215,7 @@ Bluetooth headphones (AirPods and friends) normally sit in the A2DP profile for 
 - The headset profile degrades **playback** to phone quality (mSBC, 16 kHz mono) while recording — restored immediately on stop.
 - With no Bluetooth headset connected, `sayit-bt` is a no-op and recording uses `AUDIO_SOURCE`/the PipeWire default mic.
 - The profile switch is synchronous and typically takes around a second (up to ~2.5 s) — recording (and the indicator) starts once the mic is actually live, so wait for the indicator before speaking.
+- **With a dedicated microphone, set `AUDIO_SOURCE`.** sayit then records straight from it and never touches the headset, so playback stays in A2DP throughout — no switch, no delay, no quality drop. `./bin/sayit doctor` confirms which of the two paths your configuration selects.
 
 ### Custom wordlist
 
@@ -242,7 +244,7 @@ Everything lives in `.env` (created by `install.sh` from [`.env.example`](.env.e
 | ----------------- | -------------------------------- | --------------------------------------------------- |
 | `MODEL_PATH`      | `models/ggml-kb-whisper-medium…` | GGML model file (empty = repo default)              |
 | `SPEECH_LANGUAGE` | `sv`                             | ISO 639-1 language code passed to whisper           |
-| `AUDIO_SOURCE`    | (empty)                          | Recording device; empty = PipeWire default          |
+| `AUDIO_SOURCE`    | (empty)                          | Recording device (PipeWire node name); empty = headset mic / PipeWire default |
 | `THREADS`         | `8`                              | CPU threads for the CLI fallback                    |
 | `BEAM`            | `5`                              | Beam search size (`-1` = greedy)                    |
 | `VAD_MODEL`       | `models/ggml-silero-v5.1.2.bin`  | Silero VAD; point at a missing file to disable      |
@@ -366,6 +368,9 @@ See [SECURITY.md](SECURITY.md) for the security model and how to report issues.
 | Meter shows a waveform or a generic icon instead of the mark | Install the theme icons: `./install.sh --skip-packages --skip-build --skip-model` |
 | The pill sits in the wrong place              | `./bin/sayit-overlay --place`, drag it, then press Enter                                |
 | Recording starts but never stops              | Check `$XDG_RUNTIME_DIR/sayit.session` — it must name a live `pw-record` process        |
+| Anything wrong with the recording path        | `./bin/sayit doctor` — read-only; resolves `AUDIO_SOURCE`, reports the Bluetooth profile and any leftover state |
+| `AUDIO_SOURCE` stopped working after a reboot | You configured a numeric PipeWire id; use the node name from `pactl list sources short` — `./bin/sayit doctor` says so explicitly |
+| The USB mic is plugged in but has no source   | Its card is in an output-only profile; `./bin/sayit doctor` prints the `pactl set-card-profile` line that fixes it |
 | Bluetooth headset records from the wrong mic  | Verify the headset is connected; try `./bin/sayit-bt up` (should print `bluez_input.…`) |
 | Headset stuck in phone-quality audio          | Run `./bin/sayit-bt down` to force A2DP back after an abnormally aborted recording      |
 | Solaar button does not trigger dictation      | Run `systemctl --user status solaar.service` and verify Solaar is running in your graphical session. |
@@ -391,6 +396,7 @@ sayit/
 ├── bin/
 │   ├── sayit                           # session state machine: record + transcribe + inject
 │   ├── sayit-bt                        # Bluetooth headset A2DP <-> headset-mic switching
+│   ├── sayit-doctor                    # read-only diagnostics for the recording path
 │   ├── sayit-record                    # pw-record → 16 kHz mono WAV
 │   ├── sayit-transcribe                # daemon-first whisper + VAD + prompt + (LLM) + wordlist
 │   ├── sayit-daemon                    # wrapper: whisper-server with .env flags
