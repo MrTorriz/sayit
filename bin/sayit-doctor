@@ -3,7 +3,7 @@
 #
 # Usage:
 #   sayit-doctor           # full report
-#   sayit-doctor --quiet   # only warnings and failures
+#   sayit-doctor --quiet   # only warnings, failures and the summary line
 #
 # Behavior:
 #   - Never changes anything: no card profiles, no default devices, no
@@ -29,7 +29,7 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 QUIET=0
 case "${1:-}" in
     --quiet|-q) QUIET=1 ;;
-    --help|-h)  sed -n '2,20p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    --help|-h)  sed -n '2,21p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
     "")         ;;
     *)          echo "Usage: sayit-doctor [--quiet]" >&2; exit 1 ;;
 esac
@@ -83,6 +83,14 @@ fi
 SOURCES_JSON=$(pactl -f json list sources 2>/dev/null || echo '[]')
 CARDS_JSON=$(pactl -f json list cards 2>/dev/null || echo '[]')
 
+# EVERY jq query below ends in `2>/dev/null || true`, and every field access is
+# null-guarded. pactl's JSON writer is not robust — it already emits the literal
+# string "(null)" for descriptions it cannot encode — and a card without a
+# .profiles key, or with a null .name, makes jq exit non-zero. Under set -e a
+# bare $(jq ...) would abort the run mid-report, leaving a truncated diagnosis
+# and an exit code this script does not document. A failed query yields the
+# empty string instead, which every caller already treats as "unknown".
+
 source_exists() {
     printf '%s' "$SOURCES_JSON" | jq -e --arg n "$1" \
         'any(.[]; .name == $n)' >/dev/null 2>&1
@@ -104,8 +112,25 @@ card_of_source() {
     # `.name` inside startswith() would resolve against $s, not the card:
     # bind it first.
     printf '%s' "$CARDS_JSON" | jq -r --arg s "$candidate" \
-        '[.[] | .name as $n | select($s | startswith($n)) | $n] |
-         max_by(length) // empty' 2>/dev/null || true
+        '[.[] | (.name // "") as $n | select($n != "") |
+          select($s | startswith($n)) | $n] | max_by(length) // empty' \
+        2>/dev/null || true
+}
+
+# Cards that own a profile with an input, and the line that would select it.
+# Used when no usable capture source exists: the fix is almost always a card
+# profile, not a missing device.
+report_input_profiles() {
+    local rows
+    rows=$(printf '%s' "$CARDS_JSON" | jq -r \
+        '.[] | . as $c | .active_profile as $a | (.profiles // {}) |
+         to_entries[] | select((.value.sources // 0) > 0) |
+         select(.key != $a) | "\($c.name)\t\(.key)"' 2>/dev/null || true)
+    [[ -n "$rows" ]] || return 0
+    more "cards that could provide an input:"
+    while IFS=$'\t' read -r c p; do
+        [[ -n "$c" ]] && more "  pactl set-card-profile $c $p"
+    done <<< "$rows"
 }
 
 # --- Recording source -------------------------------------------------------
@@ -115,8 +140,26 @@ section "Recording source"
 if [[ -z "${AUDIO_SOURCE:-}" ]]; then
     info "AUDIO_SOURCE is empty — recording uses the Bluetooth headset mic when"
     info "one is connected, otherwise the PipeWire default source"
+    # With no AUDIO_SOURCE the fallback is whatever PipeWire calls default, so
+    # that is what has to be checked. Without this the common case — an unset
+    # AUDIO_SOURCE on a machine whose only capture card sits in an output-only
+    # profile — would pass clean while recording was impossible.
+    count=$(printf '%s' "$SOURCES_JSON" | jq -r \
+        '[.[] | select((.name // "") | endswith(".monitor") | not)] | length' \
+        2>/dev/null || true)
     default_source=$(pactl get-default-source 2>/dev/null || true)
-    [[ -n "$default_source" ]] && info "PipeWire default source: $default_source"
+    if [[ "${count:-0}" == 0 ]]; then
+        fail "PipeWire exposes no capture source at all — recording cannot work"
+        report_input_profiles
+    elif [[ -z "$default_source" ]]; then
+        warn "PipeWire names no default source; recording falls back to whatever"
+        more "the server picks at the time"
+    elif source_exists "$default_source"; then
+        ok "PipeWire default source: $default_source"
+    else
+        fail "the PipeWire default source names no live source: $default_source"
+        report_input_profiles
+    fi
     default_sink=$(pactl get-default-sink 2>/dev/null || true)
     if [[ "$default_sink" == bluez_output.* ]]; then
         warn "playback runs over Bluetooth, so every recording will switch the"
@@ -136,7 +179,8 @@ else
         more "no matching card either — the device looks disconnected"
     else
         active=$(printf '%s' "$CARDS_JSON" | jq -r --arg c "$card" \
-            '.[] | select(.name == $c) | .active_profile' 2>/dev/null)
+            '.[] | select(.name == $c) | .active_profile // "unknown"' \
+            2>/dev/null || true)
         more "the card exists but exposes no such input"
         more "  card:           $card"
         more "  active profile: $active"
@@ -144,9 +188,10 @@ else
         # one is excluded: suggesting a switch to the profile already in use
         # is never the fix.
         inputs=$(printf '%s' "$CARDS_JSON" | jq -r --arg c "$card" \
-            '.[] | select(.name == $c) | .active_profile as $a | .profiles |
-             to_entries[] | select(.value.sources > 0) |
-             select(.key != $a) | .key' 2>/dev/null)
+            '.[] | select(.name == $c) | .active_profile as $a |
+             (.profiles // {}) | to_entries[] |
+             select((.value.sources // 0) > 0) | select(.key != $a) | .key' \
+            2>/dev/null || true)
         if [[ -n "$inputs" ]]; then
             more "  profiles with an input:"
             while IFS= read -r p; do
@@ -161,7 +206,8 @@ fi
 section "Bluetooth"
 
 bt_cards=$(printf '%s' "$CARDS_JSON" | jq -r \
-    '.[] | select(.name | startswith("bluez_card.")) | .name' 2>/dev/null)
+    '.[] | select((.name // "") | startswith("bluez_card.")) | .name' \
+    2>/dev/null || true)
 
 if [[ -z "$bt_cards" ]]; then
     info "no Bluetooth audio device connected"
@@ -173,10 +219,13 @@ else
         # so an empty-or-"(null)" value falls back to the card name.
         desc=$(printf '%s' "$CARDS_JSON" | jq -r --arg c "$card" \
             '.[] | select(.name == $c) |
-             (.properties["device.description"] // "") as $d |
-             if ($d == "" or $d == "(null)") then .name else $d end')
+             ((.properties // {})["device.description"] // "") as $d |
+             if ($d == "" or $d == "(null)") then .name else $d end' \
+            2>/dev/null || true)
+        [[ -n "$desc" ]] || desc=$card
         active=$(printf '%s' "$CARDS_JSON" | jq -r --arg c "$card" \
-            '.[] | select(.name == $c) | .active_profile')
+            '.[] | select(.name == $c) | .active_profile // "unknown"' \
+            2>/dev/null || true)
         info "$desc"
         info "  active profile: $active"
         if [[ "$active" == headset-head-unit* ]]; then

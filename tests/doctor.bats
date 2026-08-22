@@ -55,7 +55,7 @@ teardown() {
 # genuinely removes that tool, instead of merely unshadowing the host's copy.
 isolate_path() {
     local t src
-    for t in env bash jq grep sed cat; do
+    for t in env bash jq grep sed cat dirname; do
         src=$(command -v "$t") || continue
         ln -sf "$src" "$STUBBIN/$t"
     done
@@ -265,12 +265,90 @@ PY
 
 # --- Interface --------------------------------------------------------------
 
-@test "--quiet prints only warnings and failures" {
+@test "--quiet suppresses ok, info and section lines but keeps the summary" {
     set_env "alsa_input.usb-Acme_USB_Mic-00.mono-fallback"
     doctor --quiet
     [ "$status" -eq 0 ]
     [[ "$output" != *"  ok    "* ]]
+    [[ "$output" != *"  --    "* ]]
+    [[ "$output" != *"Recording source"* ]]
+    [[ "$output" != *"Bluetooth"* ]]
     [[ "$output" == *"0 failure(s), 0 warning(s)"* ]]
+}
+
+@test "--help prints the whole exit-code table" {
+    doctor --help
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"0  No failures"* ]]
+    [[ "$output" == *"1  At least one failure"* ]]
+}
+
+# --- Empty AUDIO_SOURCE: the fallback path must be checked too ---------------
+
+@test "an empty AUDIO_SOURCE fails when no capture source exists at all" {
+    echo "[]" > "$STUB_CTL/sources.json"
+    echo "" > "$STUB_CTL/default-source"
+    : > "$SANDBOX/.env"
+    doctor
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"no capture source at all"* ]]
+    [[ "$output" == *"set-card-profile alsa_card.usb-Acme_USB_Mic-00 input:mono-fallback"* ]]
+}
+
+@test "an empty AUDIO_SOURCE fails when the default source is not live" {
+    echo "alsa_input.usb-Gone_Device-00.mono-fallback" > "$STUB_CTL/default-source"
+    : > "$SANDBOX/.env"
+    doctor
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"default source names no live source"* ]]
+}
+
+@test "monitor sources do not count as a capture source" {
+    cat > "$STUB_CTL/sources.json" <<'EOF'
+[{"name": "alsa_output.usb-Acme_USB_Mic-00.analog-stereo.monitor",
+  "description": "Monitor of Acme"}]
+EOF
+    echo "" > "$STUB_CTL/default-source"
+    : > "$SANDBOX/.env"
+    doctor
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"no capture source at all"* ]]
+}
+
+@test "an empty AUDIO_SOURCE with a live default source passes" {
+    : > "$SANDBOX/.env"
+    doctor
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"PipeWire default source:"* ]]
+}
+
+# --- Malformed input must not kill the run ----------------------------------
+
+@test "cards without a profiles key do not abort the report" {
+    printf '[{"name": "alsa_card.usb-Acme_USB_Mic-00", "active_profile": "x"}]' \
+        > "$STUB_CTL/cards.json"
+    set_env "alsa_input.usb-Acme_USB_Mic-00.does-not-exist"
+    doctor
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"Session state"* ]]
+    [[ "$output" == *"failure(s)"* ]]
+}
+
+@test "invalid JSON from pactl does not abort the report" {
+    printf 'not json at all' > "$STUB_CTL/cards.json"
+    printf 'not json either' > "$STUB_CTL/sources.json"
+    set_env "alsa_input.usb-Acme_USB_Mic-00.mono-fallback"
+    doctor
+    [[ "$output" == *"Session state"* ]]
+    [[ "$output" == *"failure(s)"* ]]
+}
+
+@test "a card with a null name does not abort the report" {
+    printf '[{"name": null, "active_profile": "x", "profiles": {}}]' \
+        > "$STUB_CTL/cards.json"
+    set_env "alsa_input.usb-Acme_USB_Mic-00.does-not-exist"
+    doctor
+    [[ "$output" == *"Session state"* ]]
 }
 
 @test "an unknown argument exits 1" {

@@ -20,6 +20,13 @@ case "$1" in
     get-default-sink) cat "$STUB_CTL/default-sink" ;;
     set-card-profile)
         printf '%s %s\n' "$2" "$3" >> "$STUB_CTL/switches"
+        # Ordering probe: was the restore record already written when the
+        # switch was attempted? That ordering is the crash-safety guarantee.
+        if [[ -f "${XDG_RUNTIME_DIR:-/tmp}/sayit.bt" ]]; then
+            echo yes > "$STUB_CTL/state-at-switch"
+        else
+            echo no > "$STUB_CTL/state-at-switch"
+        fi
         [[ -f "$STUB_CTL/switch.fail" ]] && exit 1
         printf '%s\n' "$3" > "$STUB_CTL/active"
         ;;
@@ -57,6 +64,10 @@ EOF
     run "$BT" up
     [ -f "$STATE" ]
     grep -q "a2dp-sink" "$STATE"
+    # The ordering itself, not just the end result: a process killed during the
+    # switch must still leave "down" able to restore. Writing the record after
+    # a successful switch would satisfy the two assertions above but break this.
+    [ "$(cat "$STUB_CTL/state-at-switch")" = "yes" ]
 }
 
 @test "a failed switch leaves no state behind" {
