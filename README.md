@@ -11,10 +11,6 @@
 [![platform: Linux](https://img.shields.io/badge/platform-Linux-informational)](#requirements)
 [![100% local](https://img.shields.io/badge/speech--to--text-100%25_local-success)](#privacy-and-data-at-rest)
 
-<p align="center">
-  <img src="docs/demo.svg" alt="Animated demo: hold a button, speak, release — the transcribed text is pasted into the focused window" width="720">
-</p>
-
 sayit runs [whisper.cpp](https://github.com/ggml-org/whisper.cpp) with Vulkan GPU acceleration and injects the transcribed text into the focused window — terminal, editor, browser, anything. It ships tuned for Swedish via [KB-Whisper](https://huggingface.co/KBLab/kb-whisper-medium), the National Library of Sweden's Whisper fine-tune, which beats OpenAI's `whisper-large-v3` on every Swedish benchmark at a fraction of the size ([KBLab's numbers](https://huggingface.co/KBLab/kb-whisper-medium): 47% lower WER on average for `kb-whisper-large`, ~38% for the default `medium`). It works with any GGML Whisper model and language.
 
 ```mermaid
@@ -251,14 +247,16 @@ Everything lives in `.env` (created by `install.sh` from [`.env.example`](.env.e
 | `INITIAL_PROMPT`  | (empty)                          | Primes the decoder for your domain terms            |
 | `SUPPRESS_REGEX`  | (empty)                          | Regex for stubborn hallucinated phrases             |
 | `DAEMON_PORT`     | `9876`                           | Port for the warm whisper-server                    |
-| `LLM_CLEANUP`     | `0`                              | `1` = local LLM post-cleanup via Ollama (needs GPU) |
+| `LLM_CLEANUP`     | `0`                              | `1` = LLM post-cleanup pass (needs GPU); **sends the transcribed text to `LLM_URL`** |
+| `LLM_URL`         | `http://127.0.0.1:11434/api/generate` | Endpoint for that pass. Loopback = nothing leaves the machine; anything else does |
+| `LLM_MODEL`       | (see `.env.example`)             | Model name passed to that endpoint                  |
 | `TYPING_WPM`      | `40`                             | Assumed typing speed for the time-saved statistic   |
 | `WORDLIST`        | `~/.config/sayit/wordlist.tsv`   | Replacement wordlist (grown by `sayit-learn`)       |
 | `RECORDING_INDICATOR` | `1`                          | Persistent recording indicator; `0` = off           |
 | `RECORDING_METER` | `1`                              | Live microphone meter in the Plasma OSD; `0` = off  |
 | `RECORDING_METER_STYLE` | `overlay`                  | `overlay` = sayit's own pill; `mark` = animated mark in the Plasma OSD; `wave` = waveform in the OSD |
 
-`SPEECH_LANGUAGE` and `INITIAL_PROMPT` apply per dictation. `THREADS`, `BEAM` and `VAD_MODEL` apply immediately to the CLI fallback but are fixed at server start for the daemon — run `systemctl --user restart sayit-daemon.service` after changing them. `SUPPRESS_REGEX` always applies to the CLI fallback; it is forwarded to the daemon only when the installed `whisper-server` build supports the flag.
+`WHISPER_CLI` and `WHISPER_SERVER` are binary paths written by `install.sh`; they are in `.env` but rarely need changing. `SPEECH_LANGUAGE` and `INITIAL_PROMPT` apply per dictation. `THREADS`, `BEAM` and `VAD_MODEL` apply immediately to the CLI fallback but are fixed at server start for the daemon — run `systemctl --user restart sayit-daemon.service` after changing them. `SUPPRESS_REGEX` always applies to the CLI fallback; it is forwarded to the daemon only when the installed `whisper-server` build supports the flag.
 
 ### Accuracy: VAD, beam search, initial prompt, suppression
 
@@ -270,7 +268,7 @@ Several settings raise quality (all on by default):
 - **Initial prompt (`INITIAL_PROMPT`)** — primes the decoder so domain terms and names are spelled right up front. Complements the after-the-fact wordlist.
 - **Flash attention (`-fa`)** — always on; speeds up inference on GPU.
 
-Optional: **local LLM cleanup (`LLM_CLEANUP=1`, Ollama)** fixes spelling, split words and obvious errors with context. Worth the latency only with a GPU-accelerated Ollama — on CPU it is too slow (~15 s) and a small model can make technical terms worse, so it is **off by default**.
+Optional: **LLM cleanup (`LLM_CLEANUP=1`)** fixes spelling, split words and obvious errors with context. It POSTs the transcribed text to `LLM_URL`, which defaults to a local Ollama — the only configuration in which the text stays on your machine. Worth the latency only with a GPU-accelerated Ollama: on CPU it is too slow (~15 s) and a small model can make technical terms worse, so it is **off by default**.
 
 ### Choosing a model size
 
@@ -336,7 +334,9 @@ Per-stage latency profiling of real dictations is built in: set `SAYIT_PROFILE=1
 
 ## Privacy and data at rest
 
-Everything is processed locally; nothing is ever uploaded. What *does* exist on your machine:
+Speech recognition always runs locally, and audio never leaves the machine. There is no telemetry and no account. One optional feature is the exception: `LLM_CLEANUP=1` POSTs the transcribed text to `LLM_URL` — off by default, and pointed at a local Ollama (`127.0.0.1`) when you do turn it on. Point `LLM_URL` at another host and your dictated text goes there in plain HTTP.
+
+What *does* exist on your machine:
 
 - **Audio** lives only in `$XDG_RUNTIME_DIR` (RAM-backed tmpfs) during a dictation and is deleted right after transcription.
 - **History**: every dictation's text is appended to `~/.local/share/sayit/history.jsonl` and kept until you run `sayit-history --clear`. If a backup tool sweeps `~/.local/share`, your dictations follow it — exclude the directory if that matters to you.
@@ -390,7 +390,6 @@ sayit/
 ├── docs/
 │   ├── ARCHITECTURE.md                 # pipeline, components, latency profile, design decisions
 │   ├── logo.svg                        # project mark (theme-aware SVG)
-│   ├── demo.svg                        # animated demo shown at the top of this README
 │   ├── history_list.png                # screenshot: sayit-history list view
 │   └── history_stat.png                # screenshot: sayit-history statistics view
 ├── bin/
