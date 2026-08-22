@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 """Builds docs/demo.gif — a depiction of the real hold-to-talk flow.
 
 Every visual is taken from the code that actually draws it: the pill is
@@ -11,6 +12,9 @@ sayit does: injection goes through the clipboard and a paste, not synthetic
 per-character typing.
 """
 import math
+import os
+import sys
+
 from PIL import Image, ImageDraw, ImageFont
 
 BG   = (16, 16, 19)
@@ -19,7 +23,18 @@ RED  = (237, 37, 78)
 BLU  = (0, 114, 255)
 DOT  = (255, 77, 77)
 
-FONT = "/usr/share/fonts/cascadia-code-fonts/CascadiaCode-SemiBold.otf"
+# The terminal font, then the usual fallbacks. Rendering with a different
+# monospace face still produces a correct picture — only the metrics shift, so
+# check that the longest line still fits before committing the result.
+CANDIDATES = [
+    "/usr/share/fonts/cascadia-code-fonts/CascadiaCode-SemiBold.otf",
+    "/usr/share/fonts/cascadia-code/CascadiaCode.ttf",
+    "/usr/share/fonts/dejavu-sans-mono-fonts/DejaVuSansMono-Bold.ttf",
+    "/usr/share/fonts/truetype/dejavu/DejaVuSansMono-Bold.ttf",
+]
+FONT = next((c for c in CANDIDATES if os.path.exists(c)), None)
+if FONT is None:
+    sys.exit("no monospace font found; add one to CANDIDATES in this file")
 F  = ImageFont.truetype(FONT, 16)
 FS = ImageFont.truetype(FONT, 12)
 
