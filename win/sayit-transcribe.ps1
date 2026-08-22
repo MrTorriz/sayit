@@ -142,9 +142,8 @@ $raw = [regex]::Replace($raw, ' {2,}', ' ')
 $raw = $raw.Trim()
 
 # Wordlist last, so its exact replacements have the final say.
-if ($raw -and $wordlist -and (Test-Path -LiteralPath $wordlist)) {
-    $engine = Join-Path $PSScriptRoot 'sayit-wordlist.ps1'
-    $raw = $raw | & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $engine -WordlistPath $wordlist
+if ($raw) {
+    $raw = Convert-WithWordlist -Text $raw -Path $wordlist
     Write-Mark 't.wordlist.end'
 }
 

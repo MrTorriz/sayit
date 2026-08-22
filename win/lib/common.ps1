@@ -125,11 +125,102 @@ function Write-Mark {
         $wall  = [DateTimeOffset]::Now.ToUnixTimeMilliseconds() / 1000.0
         $mono  = $script:ProfileStopwatch.Elapsed.TotalSeconds
         $csv   = Join-Path $script:RunDir 'sayit-profile.csv'
-        $line  = '{0},{1:F3},{2:F3},{3},{4}' -f $runId, $wall, $mono, $Stage, $Extra
+        # Invariant formatting: under a Swedish locale these render with a
+        # decimal comma, which silently splits every row into extra CSV columns.
+        $inv   = [System.Globalization.CultureInfo]::InvariantCulture
+        $line  = '{0},{1},{2},{3},{4}' -f $runId, $wall.ToString('F3', $inv), $mono.ToString('F3', $inv), $Stage, $Extra
         Add-Utf8Line -Path $csv -Line $line
     } catch {
         # Profiling must never break a dictation.
     }
+}
+
+# --- Wordlist ---------------------------------------------------------------
+# Lives here rather than only in sayit-wordlist.ps1 so the transcription path can
+# apply it in-process. Spawning a second PowerShell just to run a few regex
+# replacements cost about 0.8 s per dictation, which was a fifth of the total.
+#
+# Contract, identical to bin/sayit-wordlist on the Linux side: rules are sorted
+# by original length descending and applied sequentially and globally, matching
+# is case-insensitive on Unicode word boundaries, and originals are literal
+# strings rather than regexes.
+
+function Convert-WithWordlist {
+    param(
+        [Parameter(Mandatory)][AllowEmptyString()][string]$Text,
+        [AllowEmptyString()][string]$Path
+    )
+
+    if ([string]::IsNullOrEmpty($Path) -or -not (Test-Path -LiteralPath $Path)) { return $Text }
+
+    try {
+        $lines = [System.IO.File]::ReadAllLines($Path, [System.Text.UTF8Encoding]::new($false))
+    } catch {
+        # An unreadable wordlist must never take the dictation down.
+        return $Text
+    }
+
+    $rules = @()
+    foreach ($line in $lines) {
+        if ($line -match '^\s*#') { continue }
+        if ($line -match '^\s*$') { continue }
+
+        # First tab only: a replacement may itself contain tabs.
+        $tab = $line.IndexOf("`t")
+        if ($tab -lt 1) { continue }
+        $orig = $line.Substring(0, $tab)
+        $repl = $line.Substring($tab + 1)
+        if ($orig.Length -eq 0 -or $repl.Length -eq 0) { continue }
+
+        $rules += [pscustomobject]@{ Original = $orig; Replacement = $repl }
+    }
+
+    if ($rules.Count -eq 0) { return $Text }
+
+    $rules = $rules | Sort-Object -Property @{ Expression = { $_.Original.Length }; Descending = $true }
+
+    $opts = [System.Text.RegularExpressions.RegexOptions]::IgnoreCase -bor `
+            [System.Text.RegularExpressions.RegexOptions]::CultureInvariant
+
+    $out = $Text
+    foreach ($rule in $rules) {
+        $pattern = '\b' + [regex]::Escape($rule.Original) + '\b'
+        # A MatchEvaluator keeps the replacement literal; a bare string would let
+        # $1 and friends be read as capture-group references.
+        $replacement = $rule.Replacement
+        $evaluator = [System.Text.RegularExpressions.MatchEvaluator] {
+            param($m) $replacement
+        }.GetNewClosure()
+        $out = [regex]::Replace($out, $pattern, $evaluator, $opts)
+    }
+    return $out
+}
+
+# --- C# helpers -------------------------------------------------------------
+# Two of the C# files have to be compiled together because one references a
+# constant from the other. Concatenating them naively is invalid C#: the second
+# file's using directives would follow the first file's namespace block. This
+# hoists every using to the top and emits the remaining declarations after them.
+
+function Merge-CSharpSources {
+    param([Parameter(Mandatory)][string[]]$Sources)
+
+    $usings = New-Object System.Collections.Generic.List[string]
+    $bodies = New-Object System.Collections.Generic.List[string]
+
+    foreach ($src in $Sources) {
+        $body = New-Object System.Collections.Generic.List[string]
+        foreach ($line in ($src -split "`r?`n")) {
+            if ($line -match '^\s*using\s+[A-Za-z_][A-Za-z0-9_.]*\s*;\s*$') {
+                $u = $line.Trim()
+                if (-not $usings.Contains($u)) { $usings.Add($u) }
+            } else {
+                $body.Add($line)
+            }
+        }
+        $bodies.Add(($body -join "`n"))
+    }
+    return (($usings -join "`n") + "`n" + ($bodies -join "`n"))
 }
 
 # --- Errors -----------------------------------------------------------------

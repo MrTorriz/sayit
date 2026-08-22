@@ -37,57 +37,8 @@ if (-not $WordlistPath) {
                                 -Default (Join-Path $script:ConfigDir 'wordlist.tsv')
 }
 
-function Convert-WithWordlist {
-    param(
-        [Parameter(Mandatory)][AllowEmptyString()][string]$Text,
-        [Parameter(Mandatory)][AllowEmptyString()][string]$Path
-    )
-
-    if ([string]::IsNullOrEmpty($Path) -or -not (Test-Path -LiteralPath $Path)) {
-        return $Text
-    }
-
-    try {
-        $lines = [System.IO.File]::ReadAllLines($Path, [System.Text.UTF8Encoding]::new($false))
-    } catch {
-        # Unreadable wordlist must never take the dictation down.
-        return $Text
-    }
-
-    $rules = @()
-    foreach ($line in $lines) {
-        if ($line -match '^\s*#') { continue }
-        if ($line -match '^\s*$') { continue }
-
-        $tab = $line.IndexOf("`t")
-        if ($tab -lt 1) { continue }
-
-        # Split on the FIRST tab only: a replacement may itself contain tabs.
-        $orig = $line.Substring(0, $tab)
-        $repl = $line.Substring($tab + 1)
-
-        if ($orig.Length -eq 0 -or $repl.Length -eq 0) { continue }
-        $rules += [pscustomobject]@{ Original = $orig; Replacement = $repl }
-    }
-
-    # Longest original first, so multi-word rules win over substrings.
-    $rules = $rules | Sort-Object -Property @{ Expression = { $_.Original.Length }; Descending = $true }
-
-    $opts = [System.Text.RegularExpressions.RegexOptions]::IgnoreCase -bor `
-            [System.Text.RegularExpressions.RegexOptions]::CultureInvariant
-
-    $out = $Text
-    foreach ($rule in $rules) {
-        $pattern = '\b' + [regex]::Escape($rule.Original) + '\b'
-        # A MatchEvaluator keeps the replacement literal: a bare string would
-        # let $1 and friends be interpreted as capture references.
-        $repl = $rule.Replacement
-        $evaluator = [System.Text.RegularExpressions.MatchEvaluator] { param($m) $repl }.GetNewClosure()
-        $out = [regex]::Replace($out, $pattern, $evaluator, $opts)
-    }
-    return $out
-}
-
+# The engine itself lives in lib\common.ps1 so the transcription path can call it
+# in-process; this script is the command-line front end to the same function.
 $result = Convert-WithWordlist -Text $stdin -Path $WordlistPath
 
 # No trailing newline, matching the Linux contract.

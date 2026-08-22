@@ -198,16 +198,12 @@ function Stop-Recording {
 
     if (-not $text) { return 0 }
 
-    $injector = Join-Path $PSScriptRoot 'sayit-inject.ps1'
-    $textFile = Join-Path $script:RunDir "inject-$PID.txt"
-    try {
-        Write-Utf8Text -Path $textFile -Text $text
-        Start-Process -FilePath 'powershell.exe' -NoNewWindow -Wait `
-            -ArgumentList '-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',$injector,
-                          '-TextFile',$textFile | Out-Null
-    } finally {
-        Remove-Item -LiteralPath $textFile -Force -ErrorAction SilentlyContinue
-    }
+    # Injected in-process rather than by spawning sayit-inject.ps1: the spawn cost
+    # roughly a second, which was a quarter of the release-to-text latency.
+    . "$PSScriptRoot\lib\inject.ps1"
+    $threshold = [int](Get-Setting -Env $cfg -Name 'INJECT_CLIPBOARD_THRESHOLD' -Default '100')
+    $method    = Get-Setting -Env $cfg -Name 'INJECT_METHOD' -Default 'auto'
+    Invoke-TextInjection -Text $text -Threshold $threshold -Method $method | Out-Null
     Write-Mark 'inject.end'
 
     # history.jsonl: same field names, order and types as the Linux side, so a
