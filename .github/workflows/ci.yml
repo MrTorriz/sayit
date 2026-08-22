@@ -15,7 +15,7 @@ jobs:
       - name: Syntax check
         run: |
           for f in bin/* install.sh tests/*.sh; do
-            [ -e "$f" ] || continue
+            [ -f "$f" ] || continue
             case "$(head -1 "$f")" in
               *python*) python3 -m py_compile "$f" ;;
               *bash*|*/sh)  bash -n "$f" ;;
@@ -26,7 +26,7 @@ jobs:
         run: |
           scripts=()
           for f in bin/* install.sh tests/*.sh; do
-            [ -e "$f" ] || continue
+            [ -f "$f" ] || continue
             case "$(head -1 "$f")" in
               *bash*|*/sh) scripts+=("$f") ;;
             esac
