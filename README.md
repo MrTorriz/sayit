@@ -69,7 +69,8 @@ one side, PowerShell, `waveIn` and `SendInput` on the other. Where the two diver
 | Trigger | Solaar rules (mouse) or a desktop global shortcut | `WH_KEYBOARD_LL` / `WH_MOUSE_LL` in `win\sayit-trigger.ps1` |
 | Injection | clipboard + `Shift+Insert` (`ydotool`), with `wtype`/`xdotool` fallbacks | `SendInput` with `KEYEVENTF_UNICODE`; clipboard + `Ctrl+V` above a length threshold |
 | Indicator / meter | a persistent notification plus a separate meter that opens its own capture stream | one layered click-through window, fed by the level the recorder already computes |
-| Warm model | a systemd user service | a scheduled task at logon, or `win\sayit-daemon.ps1 start` |
+| Warm model | a systemd user service | `win\sayit-autostart.ps1` starts it, itself started by a scheduled task at logon, or `win\sayit-daemon.ps1 start` by hand |
+| Keeping the trigger alive | systemd `Restart=` | `win\sayit-autostart.ps1` restarts it in seconds; the task's repeating trigger restarts the supervisor within a minute |
 | Bluetooth | `bin/sayit-bt` switches A2DP to HFP and back | none: Windows selects HFP itself when an application opens a capture endpoint |
 | Transient state | `$XDG_RUNTIME_DIR` (RAM-backed tmpfs) | `%LOCALAPPDATA%\sayit\run` (on disk, cleaned up explicitly) |
 
@@ -345,7 +346,9 @@ What `win\install.ps1` does, in order:
 3. Verifies that the model files are present in the repo's `models\` directory and prints their sha256 against the published checksums
 4. Creates `.env` from `.env.example` when there is none; an existing `.env` is never overwritten, and the settings it lacks are listed instead
 5. Seeds the wordlist from `config\wordlist.example.tsv` when there is none
-6. Offers to register a scheduled task named `sayit` that runs at logon
+6. Offers to register a scheduled task named `sayit` that starts `win\sayit-autostart.ps1`
+   at logon and keeps it running. If a task from an earlier version is already there, it
+   lists what is wrong with it and offers to replace it
 
 | Flag           | Effect                                                            |
 | -------------- | ----------------------------------------------------------------- |
@@ -369,8 +372,12 @@ Two things the installer leaves for you to finish:
   never rewritten; if yours predates this and still holds the Linux paths, set them
   yourself. `.\win\sayit-doctor.ps1` tells you whether the two paths resolve.
 
-Re-running the installer is safe: an existing build, `.env`, wordlist or scheduled task
-is left alone. Remove the autostart task with
+Re-running the installer is safe: an existing build, `.env` and wordlist are left alone,
+and so is a scheduled task that is already current. A task that is not — one from a
+version before the supervisor, or one whose settings would keep it from starting — is
+listed with its shortcomings and replaced only if you say yes. Replacing it stops the
+running trigger and starts it again straight away, and the installer reports the pid it
+ended up with. Remove the task with
 `Unregister-ScheduledTask -TaskName 'sayit' -Confirm:$false`.
 
 ### Usage
@@ -412,10 +419,48 @@ on every dictation.
 
 #### Autostart and the warm daemon
 
-`win\install.ps1` offers a scheduled task named `sayit` that runs at logon and performs
-two actions in order: `sayit-daemon.ps1 start`, which returns once the model server
-answers, and `sayit-trigger.ps1`, which keeps running and holds the hook. To drive the
-daemon by hand:
+`win\install.ps1` offers a scheduled task named `sayit`. It runs one action at logon —
+`win\sayit-autostart.ps1` — and that script is what keeps sayit alive for the rest of the
+session:
+
+- it starts the warm daemon **without waiting for it**, so the model loads while the
+  push-to-talk button is already armed. As two task actions they ran strictly in sequence
+  and the button stayed dead for as long as the model took to load
+- it runs `sayit-trigger.ps1` again whenever it exits, after a two-second pause that
+  doubles up to a minute if the trigger keeps failing immediately
+- it also restarts a trigger that is still running but has stopped answering. The
+  trigger writes a heartbeat every five seconds from the same loop that pumps the
+  messages its hook rides on, and 90 seconds of silence from that loop is a wedge, not
+  a slow machine. A process being alive is not the same as the button working
+- it refuses to run twice, and it never starts a second trigger while one already holds
+  the hook. Two hooks on the same button start and stop the dictation twice per press,
+  which is worse than having none
+
+Both guards are named mutexes rather than pid files, so Windows releases them when the
+process dies however it dies, and there is no stale file to clean up.
+
+The task carries two triggers. **At logon**, which covers a cold boot, a restart, a
+fast-startup (hybrid shutdown) boot and logging off and back on, because every one of
+them ends in a logon. And a **time trigger that repeats every minute**, which is what
+brings the supervisor back if the supervisor itself dies. While it is alive those repeats
+are refused by the task's `IgnoreNew` policy and recorded as `LastTaskResult 0x800710E0`;
+that is this task's normal state, not a failure.
+
+There is deliberately no at-startup trigger. It would run as `SYSTEM` in session 0, where
+an input hook reaches no desktop and injected text reaches no window — and it would need
+administrator rights to register. Nothing can arm the push-to-talk button before someone
+logs in.
+
+`.\win\sayit-doctor.ps1` reports the whole chain under **Autostart**: whether the task is
+registered and enabled, what its last result was and what that result means, whether the
+supervisor and the trigger are running, and whether the daemon answers.
+
+None of it needs the task or administrator rights. `.\win\sayit-autostart.ps1` from a
+shell does the same job for as long as that shell lives. Elevation would make the tool
+worse, not better: an elevated trigger cannot type into the non-elevated windows you
+spend the day in.
+
+To drive the daemon by hand:
 
 ```powershell
 .\win\sayit-daemon.ps1 start    # start it if it is not already running
@@ -425,9 +470,11 @@ daemon by hand:
 ```
 
 It serves `whisper-server` on `127.0.0.1` at `DAEMON_PORT` with no authentication, so
-any local process can reach it — keep it on loopback. Model, VAD, threads and beam size
-are fixed when the server starts; change them in `.env` and restart it. Language and
-initial prompt are per request.
+any local process can reach it — keep it on loopback. The model, the VAD model, threads
+and beam size are fixed when the server starts; change them in `.env` and restart it.
+Language, initial prompt and the four VAD tuning settings (`VAD_SPEECH_PAD_MS`,
+`VAD_THRESHOLD`, `VAD_MIN_SPEECH_MS`, `VAD_MIN_SILENCE_MS`) are sent with each request,
+so those take effect on the next dictation with no restart.
 
 `win\sayit-transcribe.ps1` tries the daemon first and falls back to `whisper-cli` **only
 on a transport failure**; an empty response from a healthy daemon means "no speech" and
@@ -478,10 +525,19 @@ over a true exclusive-fullscreen application, nor on the UAC secure desktop.
 ```
 
 `AUDIO_SOURCE` is empty by default, which records from the Windows default capture
-device. To pin one microphone, put its **MMDevice endpoint ID** there —
-`sayit-record.ps1 -List` and `sayit-doctor.ps1` both print it. The friendly name works
-too, but the API truncates it at 31 characters, which is why the endpoint ID is the
-stable key.
+device. To pin one microphone, put its **MMDevice endpoint ID** there — when your driver
+reports one. `waveInMessage` is documented to return an endpoint ID per device, and some
+drivers return nothing at all; on the machine this port was developed on, every capture
+device came back with an empty endpoint ID. Then the friendly name is the only key you
+have, and the API truncates it at 31 characters and it changes when the device is renamed
+or reconnected. `sayit-record.ps1 -List` and `sayit-doctor.ps1` print what your devices
+actually expose, and the doctor says which of the two selectors you are left with.
+
+There is a case no setting can fix: a virtual capture device — a headset vendor's audio
+suite, for instance — can be the only capture endpoint Windows exposes, with the physical
+microphone behind it not presented as an endpoint at all. `AUDIO_SOURCE` can then only
+name the virtual device, and which physical microphone feeds it is decided in that
+vendor's own software, not here.
 
 `MAX_RECORD_SECONDS` (default 120) bounds how long the microphone can stay open if
 whatever started the recording dies before stopping it.
@@ -588,8 +644,12 @@ them are ignored by the other.
 | `THREADS`         | `8`                              | both     | CPU threads for the CLI fallback                    |
 | `BEAM`            | `5`                              | both     | Beam search size (`-1` = greedy)                    |
 | `VAD_MODEL`       | `models/ggml-silero-v5.1.2.bin`  | both     | Silero VAD; point at a missing file to disable      |
-| `INITIAL_PROMPT`  | (empty)                          | both     | Primes the decoder for your domain terms            |
-| `SUPPRESS_REGEX`  | (empty)                          | both     | Regex for stubborn hallucinated phrases             |
+| `VAD_SPEECH_PAD_MS` | `250`                          | Windows  | Audio kept after the detected end of speech, in ms. The only one of these four that lengthens the tail; whisper.cpp's own default of `30` clips Swedish unvoiced finals |
+| `VAD_THRESHOLD`   | `0.30`                           | Windows  | Speech probability above which Silero calls a 32 ms frame speech (whisper.cpp: `0.5`) |
+| `VAD_MIN_SPEECH_MS` | `0`                            | Windows  | Segments shorter than this are discarded. `0` discards nothing: if every segment goes, transcription returns success with an empty result and no error |
+| `VAD_MIN_SILENCE_MS` | `300`                         | Windows  | Silence needed before a segment is closed. Does **not** lengthen the tail, however high it is set |
+| `INITIAL_PROMPT`  | (empty)                          | both     | One short natural sentence of context, not a term list — see [Accuracy](#accuracy-vad-beam-search-initial-prompt-suppression) for why |
+| `SUPPRESS_REGEX`  | (empty)                          | both     | Regex for stubborn hallucinated phrases. Windows: applied to the text on both paths, never passed to `whisper-server`, which has no such option |
 | `DAEMON_PORT`     | `9876`                           | both     | Port for the warm whisper-server                    |
 | `LLM_CLEANUP`     | `0`                              | Linux    | `1` = LLM post-cleanup pass (needs GPU); **sends the transcribed text to `LLM_URL`** |
 | `LLM_URL`         | `http://127.0.0.1:11434/api/generate` | Linux | Endpoint for that pass. Loopback = nothing leaves the machine; anything else does |
@@ -607,13 +667,15 @@ them are ignored by the other.
 | `INDICATOR_SCALE` | `1.0`                            | Windows  | Size of the on-screen pill; `1.0` is 100x52 px. Values outside `0.5`-`4.0` fall back to `1.0` |
 | `INDICATOR_EXCLUDE_FROM_CAPTURE` | `1`               | Windows  | Keep the pill out of screen captures, screen shares and recordings. Needs Windows 10 2004 or later; older builds capture it anyway. `0` = let it be captured |
 
-`SPEECH_LANGUAGE` and `INITIAL_PROMPT` apply per dictation. `THREADS`, `BEAM` and
-`VAD_MODEL` apply immediately to the CLI fallback but are fixed at server start for the
-daemon — restart it after changing them (`systemctl --user restart sayit-daemon.service`
-on Linux, `.\win\sayit-daemon.ps1 stop` then `start` on Windows). On Linux,
-`SUPPRESS_REGEX` always applies to the CLI fallback and is forwarded to the daemon only
-when the installed `whisper-server` build supports the flag; the Windows daemon wrapper
-passes it whenever it is set.
+`SPEECH_LANGUAGE`, `INITIAL_PROMPT` and — on Windows — the four `VAD_*` tuning settings
+apply per dictation. `THREADS`, `BEAM` and `VAD_MODEL` apply immediately to the CLI
+fallback but are fixed at server start for the daemon — restart it after changing them
+(`systemctl --user restart sayit-daemon.service` on Linux, `.\win\sayit-daemon.ps1 stop`
+then `start` on Windows). On Linux, `SUPPRESS_REGEX` always applies to the CLI fallback
+and is forwarded to the daemon only when the installed `whisper-server` build supports
+the flag. On Windows it is never passed to the server at all — `whisper-server` has no
+such option, and being given one makes it exit at startup — so it is applied to the text
+of whichever path served the dictation.
 
 The Windows scripts read `.env` as plain `KEY=VALUE` data rather than executing it, so a
 value there is never run as code. They expand `%VAR%` in values; they do not expand
@@ -623,10 +685,10 @@ value there is never run as code. They expand `%VAR%` in values; they do not exp
 
 Several settings raise quality (all on by default):
 
-- **VAD (`VAD_MODEL`)** — Silero Voice Activity Detection filters out non-speech before the model sees the audio. Whisper hallucinates (ghost text, repeated phrases) on silence; VAD removes that risk at the edges of every recording.
+- **VAD (`VAD_MODEL`)** — Silero Voice Activity Detection filters out non-speech before the model sees the audio. Whisper hallucinates (ghost text, repeated phrases) on silence; VAD removes that risk at the edges of every recording. On Windows four further settings decide where it cuts, and only one of them does what people expect: `VAD_SPEECH_PAD_MS` is the only setting that lengthens the tail of a phrase, because whisper.cpp ends a segment at the first 32 ms frame whose speech probability falls below `VAD_THRESHOLD` − 0.15 and adds back only that padding. `VAD_MIN_SILENCE_MS` does not extend the tail however high it is set, and `VAD_MIN_SPEECH_MS` is a correctness setting rather than a quality one: anything shorter is discarded, and when every segment is discarded the transcription still succeeds — with an empty result and no error.
 - **Beam search (`BEAM`)** — `5` decodes more accurately than greedy (`-1`).
-- **Suppress non-speech (`-sns`)** — the daemon and CLI always suppress non-speech tokens (`[music]`, brackets, noise). An optional `SUPPRESS_REGEX` additionally removes specific recurring junk strings.
-- **Initial prompt (`INITIAL_PROMPT`)** — primes the decoder so domain terms and names are spelled right up front. Complements the after-the-fact wordlist.
+- **Suppress non-speech (`-sns`)** — the daemon and CLI always suppress non-speech tokens (`[music]`, brackets, noise). An optional `SUPPRESS_REGEX` additionally removes specific recurring junk strings. On Windows it is applied to the transcribed text on both paths, and the CLI fallback also suppresses matching tokens while decoding. It is never passed to `whisper-server`, which has no `--suppress-regex` option at all: that binary answers an unknown option by printing its usage and exiting with status 0, so passing one made the warm daemon quit at startup while looking like a clean shutdown.
+- **Initial prompt (`INITIAL_PROMPT`)** — empty by default, and a term list is the wrong thing to put in it. Whisper treats the slot as the transcript of the preceding segment, not as a vocabulary: across 11 datasets, biasing-word prompts cut rare-word errors from 23.7% to 18.0% but made overall WER **worse** on 6 of them, and worse still as the list grew from 35 to 70 to 150 words ([arXiv:2502.11572](https://arxiv.org/abs/2502.11572)). A dictation is a handful of words, so a long prompt leaves the decoder holding far more prior text than audio — the regime where the model is reported to emit the prompt itself as the transcript. If you use it, use one short natural sentence in your dictation language, around 25 tokens, carrying a few domain nouns in context, and leave rare-term correction to the wordlist, which is deterministic. whisper.cpp truncates the prompt to 224 tokens (`n_text_ctx / 2`) from the tail, and a `max_context` of 0 disables the initial prompt entirely — the two sit behind the same guard.
 - **Flash attention (`-fa`)** — always on; speeds up inference on GPU.
 
 Optional and Linux-only: **LLM cleanup (`LLM_CLEANUP=1`)** fixes spelling, split words and obvious errors with context. It POSTs the transcribed text to `LLM_URL`, which defaults to a local Ollama — the only configuration in which the text stays on your machine. Worth the latency only with a GPU-accelerated Ollama: on CPU it is too slow (~15 s) and a small model can make technical terms worse, so it is **off by default**.
@@ -642,7 +704,7 @@ WER (lower = better) from [KBLab's benchmarks](https://huggingface.co/KBLab/kb-w
 | `kb-whisper-large`            | 1.1 GB      | high   | slower  | **5.4 / 4.1 / 5.2**              |
 | OpenAI whisper-large-v3       | —           | high   | slower  | 7.8 / 9.5 / 11.3                 |
 
-`large` makes ~10–24% fewer errors than `medium` depending on the test set (mean ~18%). With Vulkan + the daemon (model kept warm), the extra latency is small for short dictations.
+`large` makes ~10–24% fewer errors than `medium` depending on the test set (mean ~18%). What it costs in latency **has not been measured on the Windows side**, and by architecture it should be a real cost rather than a rounding error: `large` runs 32 layers at 1280 state against `medium`'s 24 at 1024, roughly 2.1× the encoder compute, and an integrated GPU sharing system memory is bandwidth-bound, which lands near the same ratio. Treat that figure as arithmetic, not as a benchmark, and time it on your own machine before switching.
 
 ```bash
 ./install.sh --model large     # or small
@@ -768,6 +830,7 @@ sayit/
 ├── win/                                # Windows implementation (PowerShell 5.1 + runtime-compiled C#)
 │   ├── install.ps1                     # prerequisites, pinned build, model check, .env, logon task
 │   ├── sayit.ps1                       # session state machine: record + transcribe + inject
+│   ├── sayit-autostart.ps1             # the logon task's one action: warm daemon + supervised trigger
 │   ├── sayit-trigger.ps1               # global push-to-talk hook, with -Probe
 │   ├── sayit-rawprobe.ps1              # Raw Input diagnostic for HID consumer-control buttons
 │   ├── sayit-record.ps1                # waveIn → 16 kHz mono WAV, stopped by a named event
