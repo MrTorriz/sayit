@@ -19,76 +19,54 @@ BeforeAll {
     $script:Utf8           = New-Object System.Text.UTF8Encoding($false)
 
     $script:WordlistFile = Join-Path $TestDrive 'wordlist.tsv'
-    $script:InFile       = Join-Path $TestDrive 'stdin.txt'
-    $script:OutFile      = Join-Path $TestDrive 'stdout.txt'
-    $script:Harness      = Join-Path $TestDrive 'Invoke-WordlistHarness.ps1'
 
-    # The script under test reads [Console]::In and writes [Console]::Out. Piping
-    # through a real console would route the bytes via the console code page,
-    # which on Windows PowerShell 5.1 is not UTF-8 and would corrupt every
-    # non-ASCII character before the script ever saw it. The harness swaps the
-    # console streams for UTF-8 file streams instead, so the test measures the
-    # transformation and not the terminal.
-    $harnessSource = @'
-param(
-    [Parameter(Mandatory)][string]$ScriptPath,
-    [Parameter(Mandatory)][AllowEmptyString()][string]$WordlistPath,
-    [Parameter(Mandatory)][string]$InPath,
-    [Parameter(Mandatory)][string]$OutPath
-)
-
-$enc    = New-Object System.Text.UTF8Encoding($false)
-$reader = New-Object System.IO.StreamReader($InPath, $enc)
-$writer = New-Object System.IO.StreamWriter($OutPath, $false, $enc)
-[Console]::SetIn($reader)
-[Console]::SetOut($writer)
-
-# The script under test never calls exit, so seed the variable and report it
-# unchanged; an unhandled terminating error makes powershell.exe exit non-zero
-# on its own, which is what the "exits 0" assertions rely on.
-$global:LASTEXITCODE = 0
-try {
-    & $ScriptPath -WordlistPath $WordlistPath
-} finally {
-    $writer.Flush()
-    $writer.Close()
-    $reader.Close()
-}
-exit $LASTEXITCODE
-'@
-    [System.IO.File]::WriteAllText($script:Harness, $harnessSource, $script:Utf8)
-
-    # Write a wordlist with LF line endings, matching the file the Linux side
-    # produces and consumes.
+    # The script under test decodes stdin and encodes stdout itself. Driving it
+    # through a real child process with real redirection is therefore the whole
+    # point: a harness that swapped [Console]::In and [Console]::Out for UTF-8
+    # streams would measure the transformation and nothing else, and would pass
+    # just as happily if the script mangled every non-ASCII byte on the way in
+    # and on the way out.
+    #
+    # A child started this way gets the OEM code page (850 on a Swedish install)
+    # for both directions, which is exactly what the script meets in normal use,
+    # and it leaves the code page of the console running the suite alone.
     function Set-Wordlist {
         param([Parameter(Mandatory)][AllowEmptyString()][string]$Content)
         [System.IO.File]::WriteAllText($script:WordlistFile, $Content, $script:Utf8)
     }
 
     # Run the script in a child Windows PowerShell so the exit code is real.
+    # Bytes go in and come out raw: any decoding here would hide the defect.
     function Invoke-Wordlist {
         param(
             [Parameter(Mandatory)][AllowEmptyString()][string]$Text,
             [AllowEmptyString()][string]$WordlistPath = $script:WordlistFile
         )
-        [System.IO.File]::WriteAllText($script:InFile, $Text, $script:Utf8)
-        if (Test-Path -LiteralPath $script:OutFile) {
-            Remove-Item -LiteralPath $script:OutFile -Force
-        }
 
-        $null = & powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass `
-            -File $script:Harness `
-            -ScriptPath $script:WordlistScript `
-            -WordlistPath $WordlistPath `
-            -InPath $script:InFile `
-            -OutPath $script:OutFile
-        $code = $LASTEXITCODE
+        $psi = New-Object System.Diagnostics.ProcessStartInfo
+        $psi.FileName  = 'powershell.exe'
+        $psi.Arguments = '-NoProfile -NonInteractive -ExecutionPolicy Bypass -File "{0}" -WordlistPath "{1}"' -f `
+                         $script:WordlistScript, $WordlistPath
+        $psi.UseShellExecute        = $false
+        $psi.CreateNoWindow         = $true
+        $psi.RedirectStandardInput  = $true
+        $psi.RedirectStandardOutput = $true
 
-        $text = ''
-        if (Test-Path -LiteralPath $script:OutFile) {
-            $text = [System.IO.File]::ReadAllText($script:OutFile, $script:Utf8)
-        }
-        return [pscustomobject]@{ ExitCode = $code; Output = $text }
+        $proc = [System.Diagnostics.Process]::Start($psi)
+        $inBytes = $script:Utf8.GetBytes($Text)
+        $proc.StandardInput.BaseStream.Write($inBytes, 0, $inBytes.Length)
+        $proc.StandardInput.BaseStream.Flush()
+        $proc.StandardInput.Close()
+
+        $buffer = New-Object System.IO.MemoryStream
+        $proc.StandardOutput.BaseStream.CopyTo($buffer)
+        $proc.WaitForExit()
+
+        $out = $script:Utf8.GetString($buffer.ToArray())
+        $code = $proc.ExitCode
+        $proc.Dispose()
+        $buffer.Dispose()
+        return [pscustomobject]@{ ExitCode = $code; Output = $out }
     }
 }
 
