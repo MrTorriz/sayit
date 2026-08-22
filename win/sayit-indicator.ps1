@@ -66,12 +66,32 @@ namespace Sayit
         private const uint SWP_NOMOVE     = 0x0002;
         private const uint SWP_NOACTIVATE = 0x0010;
 
+        // Keeps the pill out of screen captures, screen shares and recordings.
+        // Windows 10 2004 is the first build that honours EXCLUDEFROMCAPTURE;
+        // on anything older the call fails and the window is simply captured.
+        private const uint WDA_NONE              = 0x00000000;
+        private const uint WDA_EXCLUDEFROMCAPTURE = 0x00000011;
+
         [DllImport("user32.dll")]
         private static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
         [DllImport("user32.dll")]
         private static extern bool SetWindowPos(IntPtr hWnd, IntPtr after, int x, int y, int cx, int cy, uint flags);
+        [DllImport("user32.dll")]
+        private static extern bool SetWindowDisplayAffinity(IntPtr hWnd, uint dwAffinity);
 
         public bool ClickThrough = true;
+
+        /// Returns false when the OS refused, so the caller can say so rather
+        /// than promise a privacy property the window does not have.
+        public bool ExcludeFromCapture(bool exclude)
+        {
+            try
+            {
+                return SetWindowDisplayAffinity(this.Handle,
+                    exclude ? WDA_EXCLUDEFROMCAPTURE : WDA_NONE);
+            }
+            catch { return false; }
+        }
 
         protected override CreateParams CreateParams
         {
@@ -116,9 +136,21 @@ Add-Type -TypeDefinition $cs -Language CSharp -ReferencedAssemblies 'System.Wind
 # box) so it stays identical to the project mark: three baseline-aligned rounded
 # bars ending in a full stop. Bar heights interpolate between the level-0 and
 # level-7 icon frames; the dot burns red while the microphone is open.
-$markScale = 0.58
-$width  = 100
-$height = 52
+# INDICATOR_SCALE multiplies all three together, so the pill keeps its
+# proportions and the mark keeps its position inside it at any size.
+$cfg   = Import-DotEnv
+$scale = 1.0
+$raw   = Get-Setting -Env $cfg -Name 'INDICATOR_SCALE' -Default '1.0'
+$parsed = 0.0
+if ([double]::TryParse($raw, [System.Globalization.NumberStyles]::Float,
+                       [System.Globalization.CultureInfo]::InvariantCulture, [ref]$parsed) -and
+    $parsed -ge 0.5 -and $parsed -le 4.0) {
+    $scale = $parsed
+}
+
+$markScale = 0.58 * $scale
+$width  = [int][math]::Round(100 * $scale)
+$height = [int][math]::Round(52 * $scale)
 
 # x, width, height at level 0, height at level 7 - straight from icons/*.svg
 $bars = @(
@@ -174,14 +206,14 @@ $form.Add_Paint({
 
     # White outline around the pill. Drawn inset by half the pen width, because
     # the form Region clips anything that falls outside the rounded shape.
-    $inset = 2.0
+    $inset = 2.0 * $scale
     $rr = [float]($height - 2 * $inset)
     $border = New-Object System.Drawing.Drawing2D.GraphicsPath
     $border.AddArc([float]$inset, [float]$inset, $rr, $rr, 90, 180)
     $border.AddArc([float]($width - $inset - $rr), [float]$inset, $rr, $rr, 270, 180)
     $border.CloseFigure()
     $borderPen = New-Object System.Drawing.Pen(
-        [System.Drawing.Color]::FromArgb(255, 230, 237, 243), 2.5)
+        [System.Drawing.Color]::FromArgb(255, 230, 237, 243), [float](2.5 * $scale))
     $g.DrawPath($borderPen, $border)
     $borderPen.Dispose()
     $border.Dispose()
@@ -249,6 +281,14 @@ if ($placing) {
 } else {
     Write-Utf8Text -Path $stateFile -Text '1'
     $form.ShowNoActivate()
+}
+
+# Keep the pill out of screen shares and recordings. Applied after the handle
+# exists, because the affinity is a property of the window, not of its style.
+# The return value is ignored on purpose: an older Windows build refuses, and a
+# visible indicator is a far better outcome than no indicator at all.
+if ((Get-Setting -Env $cfg -Name 'INDICATOR_EXCLUDE_FROM_CAPTURE' -Default '1') -ne '0') {
+    $form.ExcludeFromCapture($true) | Out-Null
 }
 
 $timer = New-Object System.Windows.Forms.Timer
