@@ -260,9 +260,17 @@ reports only that the target is gone.
 the owning card when that fails, and prints the exact `pactl set-card-profile`
 line that would restore an input. It is a separate command rather than a flag
 on the recorder so that diagnosing a broken microphone never risks starting a
-recording, and so every check stays trivially auditable as read-only: it runs
-`pactl info`, `pactl -f json list …` and `pactl get-default-…`, and nothing
-else.
+recording, and so every check stays trivially auditable as read-only: the only
+audio commands it runs are `pactl info`, `pactl -f json list …` and
+`pactl get-default-…`. It never issues a `set-` of any kind — the
+`set-card-profile` lines it prints are text for the operator to run, not
+commands it executes.
+
+Every one of its queries is guarded. `pactl`'s JSON writer is not robust — it
+emits the literal string `(null)` for a description it cannot encode — and a
+card without a `profiles` key makes `jq` exit non-zero. Under `set -e` an
+unguarded query would abort the run mid-report: a diagnostic tool dying on the
+data it was asked to diagnose, exactly where the diagnosis was most needed.
 
 ### Deliberate non-goals
 

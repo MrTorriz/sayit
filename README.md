@@ -368,9 +368,9 @@ See [SECURITY.md](SECURITY.md) for the security model and how to report issues.
 | Meter shows a waveform or a generic icon instead of the mark | Install the theme icons: `./install.sh --skip-packages --skip-build --skip-model` |
 | The pill sits in the wrong place              | `./bin/sayit-overlay --place`, drag it, then press Enter                                |
 | Recording starts but never stops              | Check `$XDG_RUNTIME_DIR/sayit.session` — it must name a live `pw-record` process        |
-| Anything wrong with the recording path        | `./bin/sayit doctor` — read-only; resolves `AUDIO_SOURCE`, reports the Bluetooth profile and any leftover state |
+| Anything wrong with the recording path        | `./bin/sayit doctor` — read-only; resolves the source sayit will actually record from, reports the Bluetooth profile and any leftover state |
 | `AUDIO_SOURCE` stopped working after a reboot | You configured a numeric PipeWire id; use the node name from `pactl list sources short` — `./bin/sayit doctor` says so explicitly |
-| The USB mic is plugged in but has no source   | Its card is in an output-only profile; `./bin/sayit doctor` prints the `pactl set-card-profile` line that fixes it |
+| The USB mic is plugged in but has no source   | Its card is in an output-only profile — `./bin/sayit doctor` prints the `pactl set-card-profile` line that fixes it, whether the source is named by `AUDIO_SOURCE` or reached as the PipeWire default |
 | Bluetooth headset records from the wrong mic  | Verify the headset is connected; try `./bin/sayit-bt up` (should print `bluez_input.…`) |
 | Headset stuck in phone-quality audio          | Run `./bin/sayit-bt down` to force A2DP back after an abnormally aborted recording      |
 | Solaar button does not trigger dictation      | Run `systemctl --user status solaar.service` and verify Solaar is running in your graphical session. |

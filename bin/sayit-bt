@@ -25,8 +25,9 @@
 #     falls back to the built-in/default mic.
 #
 # Exit codes:
-#   0  Normal flow (including no-op)
-#   1  pactl or jq missing
+#   0  Normal flow (including no-op, and a profile switch that pactl refused —
+#      the caller falls back to the default mic; the reason goes to stderr)
+#   1  pactl or jq missing, or an unknown argument
 
 set -euo pipefail
 

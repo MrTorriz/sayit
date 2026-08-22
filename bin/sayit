@@ -206,7 +206,10 @@ start_recording() {
     if [[ -n "${AUDIO_SOURCE:-}" ]]; then
         SOURCE="$AUDIO_SOURCE"
     else
-        SOURCE=$("$REPO_ROOT/bin/sayit-bt" up 2>/dev/null || true)
+        # stderr to the error log, not /dev/null: a switch that keeps failing
+        # would otherwise be invisible — recording silently falls back to the
+        # default mic and nothing anywhere says why.
+        SOURCE=$("$REPO_ROOT/bin/sayit-bt" up 2>>"$ERROR_LOG" || true)
     fi
     mark bt_up.end
 
