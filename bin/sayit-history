@@ -176,7 +176,12 @@ for i, line in enumerate(lines[start:], start + 1):
         continue
     time_ = d.get("time", "?")
     words = d.get("words", "?")
-    text = str(d.get("text", ""))[:80]
+    # Long dictations are shortened so one entry cannot swamp the listing.
+    # The ellipsis matters: without it a cut entry is indistinguishable from
+    # one that genuinely ended there, and --copy/--inject would hand back
+    # more text than the listing showed.
+    raw = str(d.get("text", ""))
+    text = raw if len(raw) <= 80 else raw[:79] + "\u2026"
     print(f"{i:3} [{time_}] ({words} words) {text}")
 if bad:
     print(f"Warning: skipped {bad} corrupt history line(s)", file=sys.stderr)

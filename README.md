@@ -11,6 +11,10 @@
 [![platform: Linux](https://img.shields.io/badge/platform-Linux-informational)](#requirements)
 [![100% local](https://img.shields.io/badge/speech--to--text-100%25_local-success)](#privacy-and-data-at-rest)
 
+<p align="center">
+  <img src="docs/demo.gif" alt="Hold the thumb button and sayit's pill appears with a live level meter; release and the transcribed Swedish sentence lands in the focused window in one paste" width="760">
+</p>
+
 sayit runs [whisper.cpp](https://github.com/ggml-org/whisper.cpp) with Vulkan GPU acceleration and injects the transcribed text into the focused window — terminal, editor, browser, anything. It ships tuned for Swedish via [KB-Whisper](https://huggingface.co/KBLab/kb-whisper-medium), the National Library of Sweden's Whisper fine-tune, which beats OpenAI's `whisper-large-v3` on every Swedish benchmark at a fraction of the size ([KBLab's numbers](https://huggingface.co/KBLab/kb-whisper-medium): 47% lower WER on average for `kb-whisper-large`, ~38% for the default `medium`). It works with any GGML Whisper model and language.
 
 ```mermaid
@@ -390,6 +394,7 @@ sayit/
 ├── docs/
 │   ├── ARCHITECTURE.md                 # pipeline, components, latency profile, design decisions
 │   ├── logo.svg                        # project mark (theme-aware SVG)
+│   ├── demo.gif                        # the hold-to-talk flow, shown at the top of this README
 │   ├── history_list.png                # screenshot: sayit-history list view
 │   └── history_stat.png                # screenshot: sayit-history statistics view
 ├── bin/
