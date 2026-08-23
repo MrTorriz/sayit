@@ -444,11 +444,17 @@ if (Test-Path -LiteralPath $wordlist) {
 
 $taskName = 'sayit'
 
+# Launched through wscript.exe rather than powershell.exe directly. wscript has
+# no console of its own, so nothing appears on screen at any point. Running
+# powershell.exe -WindowStyle Hidden here instead leaves a console window on the
+# desktop from logon until the supervisor manages to hide it, and the supervisor
+# cannot hide it until it has compiled the call that does the hiding - about
+# 140 ms on an idle machine, far longer at logon when everything starts at once.
+# The shim removes the race instead of trying to win it.
 function New-SayitTaskAction {
-    $psExe  = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
-    $script = Join-Path $PSScriptRoot 'sayit-autostart.ps1'
-    $arg    = '-NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File "{0}"' -f $script
-    return (New-ScheduledTaskAction -Execute $psExe -Argument $arg)
+    $wscript = Join-Path $env:SystemRoot 'System32\wscript.exe'
+    $shim    = Join-Path $PSScriptRoot 'sayit-autostart.vbs'
+    return (New-ScheduledTaskAction -Execute $wscript -Argument ('"{0}"' -f $shim))
 }
 
 function New-SayitTaskTrigger {
@@ -476,8 +482,12 @@ function New-SayitTaskSettings {
 function Get-SayitTaskShortcoming {
     param([Parameter(Mandatory)][AllowEmptyString()][string]$Xml)
     $found = @()
-    if ($Xml -notmatch 'sayit-autostart\.ps1') {
-        $found += 'it does not run win\sayit-autostart.ps1'
+    if ($Xml -notmatch 'sayit-autostart\.vbs') {
+        if ($Xml -match 'sayit-autostart\.ps1') {
+            $found += 'it starts the supervisor through powershell.exe, which leaves a console window on screen at logon'
+        } else {
+            $found += 'it does not run win\sayit-autostart.vbs'
+        }
     }
     if ($Xml -notmatch '(?s)<TimeTrigger>.*?<Repetition>') {
         $found += 'it has no repeating trigger, so nothing brings it back if it dies mid-session'

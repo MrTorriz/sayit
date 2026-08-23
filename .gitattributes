@@ -9,3 +9,6 @@
 *.gif binary
 *.bin binary
 *.wav binary
+
+# Windows Script Host is happier with CRLF, and this file is Windows-only.
+*.vbs text eol=crlf

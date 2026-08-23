@@ -231,8 +231,15 @@ if ($null -eq $task) {
 
     $taskXml = ''
     try { $taskXml = (Export-ScheduledTask -TaskName $taskName) -join "`n" } catch { $taskXml = '' }
-    if ($taskXml -notmatch 'sayit-autostart\.ps1') {
-        Write-Warn 'the task predates win\sayit-autostart.ps1 and does not supervise the trigger'
+    # The task's action is the .vbs launcher; a task that names the .ps1 directly
+    # still supervises, but leaves a console window on screen at logon.
+    if ($taskXml -match 'sayit-autostart\.ps1') {
+        Write-Warn 'the task starts the supervisor through powershell.exe'
+        Write-More 'a console window sits on the desktop from logon until it is hidden.'
+        Write-More 'Update it with:'
+        Write-More '.\win\install.ps1 -SkipBuild -SkipModel'
+    } elseif ($taskXml -notmatch 'sayit-autostart\.vbs') {
+        Write-Warn 'the task predates win\sayit-autostart and does not supervise the trigger'
         Write-More 'a trigger that dies stays dead until the next logon. Update it with:'
         Write-More '.\win\install.ps1 -SkipBuild -SkipModel'
     }
@@ -245,9 +252,13 @@ if ($null -eq $task) {
     try { $info = Get-ScheduledTaskInfo -TaskName $taskName -ErrorAction SilentlyContinue } catch { $info = $null }
     if ($null -ne $info) {
         $result = [uint32]$info.LastTaskResult
-        # 0x800710E0 is what the repeating trigger records every time it is
-        # refused because the supervisor is already running, which is the normal
-        # state of this task and not a fault.
+        # 0 is the normal result: the task's action is a launcher that starts the
+        # supervisor and exits at once, so each repeat finishes cleanly whether or
+        # not it had anything to do - a repeat that finds a live supervisor is
+        # turned away by the supervisor's own mutex, not by the scheduler.
+        # 0x800710E0 appears instead on a task registered before that change,
+        # where the action was the supervisor itself and the scheduler refused
+        # the repeat. Neither is a fault.
         $meaning = switch ($result) {
             0          { 'the last run finished cleanly' }
             267009     { 'an instance is running now' }
