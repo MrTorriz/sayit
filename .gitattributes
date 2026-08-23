@@ -1,0 +1,14 @@
+# One repository serves both Linux and Windows, so line endings are pinned
+# rather than left to each contributor's core.autocrlf. A bash script checked in
+# with CRLF fails at the shebang, which is a confusing way to break the Linux
+# side from a Windows machine. PowerShell reads LF without complaint, so LF
+# everywhere is the safe choice.
+* text=auto eol=lf
+
+*.png binary
+*.gif binary
+*.bin binary
+*.wav binary
+
+# Windows Script Host is happier with CRLF, and this file is Windows-only.
+*.vbs text eol=crlf

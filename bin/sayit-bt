@@ -25,8 +25,9 @@
 #     falls back to the built-in/default mic.
 #
 # Exit codes:
-#   0  Normal flow (including no-op)
-#   1  pactl or jq missing
+#   0  Normal flow (including no-op, and a profile switch that pactl refused —
+#      the caller falls back to the default mic; the reason goes to stderr)
+#   1  pactl or jq missing, or an unknown argument
 
 set -euo pipefail
 
@@ -74,8 +75,19 @@ case "${1:-}" in
         [[ -n "${card:-}" ]] || exit 0
         prev=$(active_profile "$card")
         if [[ "$prev" != "$HEADSET_PROFILE" ]]; then
+            # Record the profile to restore *before* switching: a kill during
+            # the switch must still leave "down" able to put the headset back.
             printf '%s\t%s\n' "$card" "$prev" > "$STATE"
-            pactl set-card-profile "$card" "$HEADSET_PROFILE"
+            # A switch that never happened must not leave that record behind,
+            # or "down" later restores a profile the card was never taken out
+            # of and sayit-doctor reports state from an aborted recording that
+            # did not occur. Checked explicitly because set -e would abort
+            # before the cleanup could run.
+            if ! pactl set-card-profile "$card" "$HEADSET_PROFILE"; then
+                rm -f "$STATE"
+                echo "sayit-bt: cannot switch $card to $HEADSET_PROFILE" >&2
+                exit 0
+            fi
         fi
         # Wait for the source to appear (the profile switch is async, ~2 s max).
         for _ in $(seq 1 20); do

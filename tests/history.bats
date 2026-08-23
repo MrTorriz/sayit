@@ -150,3 +150,27 @@ now() { date +%Y-%m-%dT%H:%M:%S; }
     [ "$status" -eq 0 ]
     [[ "$output" != *Traceback* ]]
 }
+
+@test "a long entry is shortened with an ellipsis, not silently cut" {
+    long=$(printf 'wordy%.0s ' $(seq 1 30))
+    add_entry "$(now)" 5 30 "${long% }"
+    run "$HISTORY" 1
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"…"* ]]
+}
+
+@test "an entry that fits is printed whole, with no ellipsis" {
+    add_entry "$(now)" 2 4 "short enough to fit"
+    run "$HISTORY" 1
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"short enough to fit"* ]]
+    [[ "$output" != *"…"* ]]
+}
+
+@test "the shortened line never exceeds the 80-character text budget" {
+    long=$(printf 'wordy%.0s ' $(seq 1 30))
+    add_entry "$(now)" 5 30 "${long% }"
+    run "$HISTORY" 1
+    text=${output#*words) }
+    [ "${#text}" -le 80 ]
+}
