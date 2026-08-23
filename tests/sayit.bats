@@ -34,6 +34,9 @@ setup() {
 echo "bt $1" >> "$STUB_LOG"
 if [[ "$1" == up ]]; then
     [[ -f "$STUB_CTL/bt.sleep" ]] && sleep "$(cat "$STUB_CTL/bt.sleep")"
+    # Injection point for a run directory that turns unwritable mid-start:
+    # bt up is the last step before the recorder is spawned.
+    [[ -f "$STUB_CTL/bt.freeze_rundir" ]] && chmod 500 "$XDG_RUNTIME_DIR"
     echo "stub-source"
 fi
 exit 0
@@ -396,4 +399,18 @@ PYEOF
     "$SAYIT" start
     "$SAYIT" stop
     grep -q 'x &lt; y &amp; z' "$STUB_CTL/notify.log"
+}
+
+@test "a session file that cannot be written stops the recorder instead of orphaning it" {
+    # A recorder no session names holds the microphone until its own time cap
+    # expires, and nothing can find it to stop it earlier. The write happens
+    # under set -e, so a full or read-only run directory would otherwise abort
+    # start with the recorder already spawned and disowned.
+    touch "$STUB_CTL/bt.freeze_rundir"
+    run "$SAYIT" start
+    chmod 700 "$XDG_RUNTIME_DIR"
+    [ "$status" -eq 1 ]
+    [ ! -f "$SESSION" ]
+    [ -z "$(pgrep -f "$SANDBOX/bin/sayit-record" || true)" ]
+    grep -q "Recording failed to start" "$STUB_CTL/notify.log"
 }

@@ -235,8 +235,25 @@ start_recording() {
     # Publish the session immediately, then verify. If this process were
     # killed mid-verification, the recorder is still reachable through the
     # session file — never an orphaned hot microphone.
-    printf '%s\t%s\t%s\n' "$pid" "$wav" "$start" > "$SESSION_FILE.tmp.$$"
-    mv "$SESSION_FILE.tmp.$$" "$SESSION_FILE"
+    #
+    # A write that fails is that same hazard by another route: a full or
+    # read-only run directory would abort start here, under set -e, with the
+    # recorder already spawned and disowned and nothing left able to name it.
+    # Stop the recorder ourselves rather than let the error out.
+    if ! { printf '%s\t%s\t%s\n' "$pid" "$wav" "$start" > "$SESSION_FILE.tmp.$$" &&
+           mv "$SESSION_FILE.tmp.$$" "$SESSION_FILE"; } 2>/dev/null; then
+        # An unremovable leftover must not abort the cleanup: the whole
+        # point of this branch is that the run directory is already failing.
+        rm -f "$SESSION_FILE.tmp.$$" 2>/dev/null || true
+        REC_PID="$pid" REC_WAV="$wav" stop_recorder
+        rm -f "$wav" "$INTENT_FILE" 2>/dev/null || true
+        printf '%s start: could not commit the session file\n' \
+            "$(date -Iseconds)" >> "$ERROR_LOG" 2>/dev/null || true
+        indicator hide
+        "$REPO_ROOT/bin/sayit-bt" down 2>/dev/null || true
+        notify "Recording failed to start — check the microphone"
+        return 1
+    fi
     rm -f "$INTENT_FILE"
     mark session.written
 
