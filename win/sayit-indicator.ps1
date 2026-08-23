@@ -92,6 +92,21 @@ namespace Sayit
 
         public bool ClickThrough = true;
 
+        public Overlay()
+        {
+            // The mark is repainted about twelve times a second while the
+            // microphone is open. Without double buffering WinForms clears the
+            // background and then draws on screen, so the bars are visibly
+            // missing for part of every frame - which reads as flicker.
+            // OptimizedDoubleBuffer draws into an off-screen bitmap and copies
+            // the finished frame in one go; UserPaint and AllPaintingInWmPaint
+            // are what stop the separate background erase that causes it.
+            this.SetStyle(ControlStyles.OptimizedDoubleBuffer |
+                          ControlStyles.UserPaint |
+                          ControlStyles.AllPaintingInWmPaint, true);
+            this.UpdateStyles();
+        }
+
         /// Returns false when the OS refused, so the caller can say so rather
         /// than promise a privacy property the window does not have.
         public bool ExcludeFromCapture(bool exclude)
