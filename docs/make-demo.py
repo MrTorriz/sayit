@@ -118,9 +118,12 @@ frames, durs = [], []
 def add(im, ms):
     frames.append(im); durs.append(ms)
 
-# 1. idle prompt, cursor blinking
-for i in range(8):
-    add(frame(CMD, i % 4 < 2, 0, i, False), 90)
+# 1. idle prompt, cursor blinking. A terminal cursor blinks around once a
+# second; at 90 ms a frame that means a 12-frame cycle, and the sequence has to
+# run at least one full cycle or the blink reads as a glitch rather than a
+# cursor.
+for i in range(13):
+    add(frame(CMD, i % 12 < 6, 0, i, False), 90)
 # 2. button held, mic open, still silent -> dot pulses, bars at rest
 for i in range(7):
     add(frame(CMD, True, 0, i, True), 90)
@@ -134,7 +137,7 @@ for i in range(2):
     add(frame(CMD, True, 0.6, i, False), 90)
 # 5. the text lands in one paste, not typed
 for i in range(26):
-    add(frame(FULL, i % 4 < 2, 0, i, False), 100)
+    add(frame(FULL, i % 10 < 5, 0, i, False), 100)
 
 # One palette for the whole animation: a per-frame adaptive palette snaps the
 # caption's grey to the nearest red on frames where grey is rare.
