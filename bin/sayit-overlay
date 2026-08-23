@@ -74,8 +74,8 @@ MARK_TOP = BASELINE - 64.0          # top of the tallest bar at level 7
 # on a pill which stays up while you speak it reads as a lamp that is lit while
 # the microphone is open rather than as a period ending a sentence. The mark in
 # docs/logo.svg and icons/ is unchanged: this geometry belongs to the meter.
-DOT_D = 20.0
-DOT_X = 110.0
+DOT_D = 24.0
+DOT_X = 116.0
 
 MARK_SCALE = 0.405
 MARK_LEFT, MARK_RIGHT = BARS[0][0], DOT_X + DOT_D
