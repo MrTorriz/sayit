@@ -138,7 +138,14 @@ function Invoke-WhisperDaemon {
             throw "daemon did not answer within $deadline s"
         }
         if (-not $response.IsSuccessStatusCode) {
-            throw "daemon returned HTTP $([int]$response.StatusCode)"
+            $code = [int]$response.StatusCode
+            # A 4xx is the daemon rejecting the request, not failing to answer.
+            # The caller still falls back, because losing what was said is worse
+            # than a slow answer, but the log should not call this a dead daemon.
+            if ($code -ge 400 -and $code -lt 500) {
+                throw "daemon rejected the request with HTTP $code"
+            }
+            throw "daemon returned HTTP $code"
         }
         return $response.Content.ReadAsStringAsync().GetAwaiter().GetResult()
     } finally {
@@ -208,6 +215,18 @@ function Convert-WavToText {
         [Parameter(Mandatory)][string]$Path,
         [Parameter(Mandatory)]$Settings
     )
+
+    # A WAV with no samples is what a very short press leaves behind. Both the
+    # daemon and the CLI reject it - the daemon answers HTTP 400 "Invalid
+    # request" - and the caller would read that as a daemon failure and pay a
+    # full model load on the CLI to be told the same thing. There is no speech in
+    # a file with no audio, so answer that here.
+    $size = 0
+    try { $size = (Get-Item -LiteralPath $Path).Length } catch { $size = 0 }
+    if ($size -le 44) {
+        Write-Mark 't.empty' $size
+        return ''
+    }
 
     Write-Mark 't.daemon.begin'
     $raw = $null

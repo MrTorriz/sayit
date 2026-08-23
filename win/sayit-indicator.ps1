@@ -185,8 +185,25 @@ $bars = @(
     @{ X = 54.0; W = 12.0; H0 = 10.0; H7 = 36.0 }
 )
 $baseline = 74.0
-$offsetX  = ($width  - (86.0 - 14.0) * $markScale) / 2.0 - 14.0 * $markScale
-$offsetY  = ($height - (74.0 - 10.0) * $markScale) / 2.0 - 10.0 * $markScale
+
+# Top of the tallest bar at level 7, which is where the mark begins vertically.
+$markTop = $baseline - 64.0
+
+# The full stop. docs/logo.svg sets it on the baseline as punctuation and 12
+# across; here it is larger and sits on the mark's vertical centre line, so that
+# on a small always-on pill it reads as a lamp that is lit while the microphone
+# is open rather than as a period at the end of a sentence. The mark in the logo
+# and the icons is unchanged - this geometry belongs to the indicator only.
+$dotSize = 17.0
+$dotX    = 74.0
+$dotY    = ($markTop + $baseline) / 2.0 - $dotSize / 2.0
+
+# Centring uses the mark's real extent, so the dot's right edge is what bounds
+# it now rather than the 86 the logo's own bounding box ends at.
+$markLeft  = 14.0
+$markRight = $dotX + $dotSize
+$offsetX   = ($width  - ($markRight - $markLeft) * $markScale) / 2.0 - $markLeft * $markScale
+$offsetY   = ($height - ($baseline - $markTop) * $markScale) / 2.0 - $markTop * $markScale
 
 function Get-Position {
     if (Test-Path -LiteralPath $positionFile) {
@@ -273,10 +290,10 @@ $form.Add_Paint({
     }
     $pen.Dispose()
 
-    # The full stop that ends the mark: red while the microphone is open.
+    # The dot that ends the mark: red while the microphone is open.
     $dot = New-Object System.Drawing.SolidBrush(
         [System.Drawing.Color]::FromArgb(255, 218, 68, 83))
-    $g.FillEllipse($dot, 74.0, 62.0, 12.0, 12.0)
+    $g.FillEllipse($dot, [float]$dotX, [float]$dotY, [float]$dotSize, [float]$dotSize)
     $dot.Dispose()
 })
 
