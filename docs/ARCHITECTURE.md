@@ -329,6 +329,18 @@ markers. Two layers remove that: Silero VAD filters non-speech audio before the
 model sees it, and `-sns` (suppress non-speech tokens) removes bracketed noise
 tokens at decode time.
 
+Where VAD *cuts* is tuned identically on both platforms, and not at whisper.cpp's
+own defaults. A segment ends at the first 32 ms frame whose speech probability
+falls below `VAD_THRESHOLD` − 0.15, after which only `VAD_SPEECH_PAD_MS` is added
+back; the default 30 ms therefore cuts inside the 80–150 ms a Swedish unvoiced
+final (`-t`, `-s`, `-st`, `-rt`) occupies. `VAD_MIN_SILENCE_MS` does not help,
+however high it is set — it delays when a segment is closed, not where it ends.
+`VAD_MIN_SPEECH_MS` is a correctness setting rather than a quality one: whisper
+discards shorter segments, and when every segment is discarded the transcription
+still succeeds, empty and without an error, so a one-word answer can vanish
+silently. sayit defaults it to `0`. All four travel with the request on both
+platforms, so a change applies to the next dictation without a daemon restart.
+
 #### Sequential wordlist, longest rule first
 
 Wordlist rules are applied one substitution per rule, sorted by original

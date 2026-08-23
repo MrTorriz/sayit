@@ -149,3 +149,46 @@ EOF
     run "$TRANSCRIBE" /nonexistent/file.wav
     [ "$status" -eq 1 ]
 }
+
+# --- VAD tuning and the empty-WAV shortcut ---------------------------------
+# The default VAD_MODEL points inside the repo, and the sandbox copies only
+# bin/, so VAD is off unless a test puts a file there.
+
+vad_on() {
+    VADFILE="$BATS_TEST_TMPDIR/silero.bin"
+    printf 'vad' > "$VADFILE"
+    export VAD_MODEL="$VADFILE"
+}
+
+@test "VAD tuning is sent with the request, so no daemon restart is needed" {
+    vad_on
+    run "$TRANSCRIBE" "$WAV"
+    [ "$status" -eq 0 ]
+    grep -q -- '--form-string vad_speech_pad_ms=250' "$STUB_CTL/curl.args"
+    grep -q -- '--form-string vad_threshold=0.30' "$STUB_CTL/curl.args"
+    grep -q -- '--form-string vad_min_speech_duration_ms=0' "$STUB_CTL/curl.args"
+    grep -q -- '--form-string vad_min_silence_duration_ms=300' "$STUB_CTL/curl.args"
+}
+
+@test "VAD tuning is omitted when the VAD model is missing" {
+    VAD_MODEL=/nonexistent/silero.bin run "$TRANSCRIBE" "$WAV"
+    [ "$status" -eq 0 ]
+    ! grep -q -- 'vad_speech_pad_ms' "$STUB_CTL/curl.args"
+}
+
+@test "VAD settings from the environment override the defaults" {
+    vad_on
+    VAD_SPEECH_PAD_MS=120 VAD_THRESHOLD=0.45 run "$TRANSCRIBE" "$WAV"
+    grep -q -- '--form-string vad_speech_pad_ms=120' "$STUB_CTL/curl.args"
+    grep -q -- '--form-string vad_threshold=0.45' "$STUB_CTL/curl.args"
+}
+
+@test "the CLI fallback gets the same VAD tuning as the daemon" {
+    vad_on
+    CURL_MODE=fail run "$TRANSCRIBE" "$WAV"
+    [ "$status" -eq 0 ]
+    grep -q -- '-vp 250' "$STUB_CTL/cli.args"
+    grep -q -- '-vt 0.30' "$STUB_CTL/cli.args"
+    grep -q -- '-vspd 0' "$STUB_CTL/cli.args"
+    grep -q -- '-vsd 300' "$STUB_CTL/cli.args"
+}

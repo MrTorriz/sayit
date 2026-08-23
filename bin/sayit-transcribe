@@ -13,12 +13,14 @@
 #     an empty transcription from a healthy daemon is authoritative (silence)
 #     and is never re-run. whisper-cli and the model file are required only
 #     for the fallback path, never while the daemon serves.
-#   - Reads configuration from .env. SPEECH_LANGUAGE and INITIAL_PROMPT apply
-#     per request on both paths; THREADS, BEAM and VAD_MODEL apply to the CLI
-#     fallback — the daemon fixes them at server start (restart
-#     sayit-daemon.service after changing them). SUPPRESS_REGEX applies to the
-#     CLI fallback, and to the daemon only when the whisper-server build
-#     supports the flag. SAYIT_MODEL overrides MODEL_PATH on both paths.
+#   - Reads configuration from .env. SPEECH_LANGUAGE, INITIAL_PROMPT and the
+#     four VAD tuning settings (VAD_SPEECH_PAD_MS, VAD_THRESHOLD,
+#     VAD_MIN_SPEECH_MS, VAD_MIN_SILENCE_MS) apply per request on both paths;
+#     THREADS, BEAM and VAD_MODEL apply to the CLI fallback — the daemon fixes
+#     those at server start (restart sayit-daemon.service after changing them).
+#     SUPPRESS_REGEX applies to the CLI fallback, and to the daemon only when
+#     the whisper-server build supports the flag. SAYIT_MODEL overrides
+#     MODEL_PATH on both paths.
 #   - Applies the wordlist as case-insensitive word-boundary replacements
 #   - Prints normalized text on stdout (no newlines, tabs or status lines).
 #     stderr carries error classes only — never transcribed text.
@@ -48,6 +50,17 @@ DAEMON_PORT="${DAEMON_PORT:-9876}"
 DAEMON_URL="http://127.0.0.1:${DAEMON_PORT}/inference"
 INITIAL_PROMPT="${INITIAL_PROMPT:-}"
 VAD_MODEL="${VAD_MODEL:-$REPO_ROOT/models/ggml-silero-v5.1.2.bin}"
+# VAD tuning. These defaults are not whisper.cpp's. It ends a speech segment at
+# the first 32 ms frame whose speech probability drops below VAD_THRESHOLD minus
+# 0.15 and adds back only VAD_SPEECH_PAD_MS, so its own default of 30 ms cuts
+# inside the 80-150 ms a Swedish unvoiced final (-t, -s, -st, -rt) occupies.
+# VAD_MIN_SPEECH_MS is a correctness setting rather than a quality one: whisper
+# discards shorter segments, and when every segment goes the transcription still
+# succeeds - empty, with no error - so a one-word answer can vanish silently.
+VAD_SPEECH_PAD_MS="${VAD_SPEECH_PAD_MS:-250}"
+VAD_THRESHOLD="${VAD_THRESHOLD:-0.30}"
+VAD_MIN_SPEECH_MS="${VAD_MIN_SPEECH_MS:-0}"
+VAD_MIN_SILENCE_MS="${VAD_MIN_SILENCE_MS:-300}"
 SUPPRESS_REGEX="${SUPPRESS_REGEX:-}"
 LLM_CLEANUP="${LLM_CLEANUP:-0}"
 LLM_MODEL="${LLM_MODEL:-gemma2:2b}"
@@ -62,9 +75,10 @@ mark() {
 }
 
 # Warm daemon (whisper-server): the model is already in RAM/GPU, so the model
-# load per call disappears. VAD/beam/flash-attn are server-start settings; the
-# prompt is sent per request (--form-string keeps a value starting with @ or <
-# literal — curl -F would treat it as a file reference).
+# load per call disappears. Whether VAD runs at all, along with beam and
+# flash-attn, is fixed at server start; the prompt and the VAD tuning are sent
+# per request (--form-string keeps a value starting with @ or < literal —
+# curl -F would treat it as a file reference).
 transcribe_daemon() {
     command -v curl >/dev/null || return 1
     # Deadline scales with the audio length (16 kHz mono s16 = 32000 bytes/s)
@@ -80,6 +94,16 @@ transcribe_daemon() {
                  --form-string language="$SPEECH_LANGUAGE"
                  --form-string prompt="$INITIAL_PROMPT"
                  --form-string response_format=text )
+    # VAD tuning travels with the request, so a change in .env takes effect on
+    # the next dictation without restarting the daemon. The server reads these
+    # in the C locale, where a decimal comma parses as a whole number: "0,30"
+    # would arrive as a threshold of 30 and silence every dictation.
+    if [[ -f "$VAD_MODEL" ]]; then
+        args+=( --form-string vad_speech_pad_ms="$VAD_SPEECH_PAD_MS"
+                --form-string vad_threshold="$VAD_THRESHOLD"
+                --form-string vad_min_speech_duration_ms="$VAD_MIN_SPEECH_MS"
+                --form-string vad_min_silence_duration_ms="$VAD_MIN_SILENCE_MS" )
+    fi
     curl "${args[@]}" "$DAEMON_URL" 2>/dev/null
 }
 
@@ -92,7 +116,11 @@ transcribe_cli() {
     # -bs: beam search (more accurate than greedy); --vad: filter non-speech;
     # -sns: suppress non-speech tokens (e.g. [music], brackets, noise).
     local cli_args=(-m "$MODEL" -l "$SPEECH_LANGUAGE" -t "$THREADS" -bs "$BEAM" -fa -sns -nt -np)
-    [[ -f "$VAD_MODEL" ]] && cli_args+=(--vad -vm "$VAD_MODEL")
+    if [[ -f "$VAD_MODEL" ]]; then
+        cli_args+=(--vad -vm "$VAD_MODEL"
+                   -vp "$VAD_SPEECH_PAD_MS" -vt "$VAD_THRESHOLD"
+                   -vspd "$VAD_MIN_SPEECH_MS" -vsd "$VAD_MIN_SILENCE_MS")
+    fi
     [[ -n "$INITIAL_PROMPT" ]] && cli_args+=(--prompt "$INITIAL_PROMPT")
     [[ -n "$SUPPRESS_REGEX" ]] && cli_args+=(--suppress-regex "$SUPPRESS_REGEX")
     "$WHISPER_CLI" "${cli_args[@]}" -f "$WAV" 2>/dev/null
