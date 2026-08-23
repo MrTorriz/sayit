@@ -178,11 +178,15 @@ $markScale = 0.58 * $scale
 $width  = [int][math]::Round(100 * $scale)
 $height = [int][math]::Round(52 * $scale)
 
-# x, width, height at level 0, height at level 7 - straight from icons/*.svg
+# x, width, height at level 0, height at level 7. The first three come straight
+# from icons/*.svg; the fourth continues the same 20-unit spacing and its heights
+# sit between the neighbours it separates, so the row still rises and falls like
+# a waveform rather than ending on a step.
 $bars = @(
     @{ X = 14.0; W = 12.0; H0 = 12.0; H7 = 44.0 },
     @{ X = 34.0; W = 12.0; H0 = 18.0; H7 = 64.0 },
-    @{ X = 54.0; W = 12.0; H0 = 10.0; H7 = 36.0 }
+    @{ X = 54.0; W = 12.0; H0 = 10.0; H7 = 36.0 },
+    @{ X = 74.0; W = 12.0; H0 = 15.0; H7 = 54.0 }
 )
 $baseline = 74.0
 
@@ -194,8 +198,8 @@ $markTop = $baseline - 64.0
 # on a small always-on pill it reads as a lamp that is lit while the microphone
 # is open rather than as a period at the end of a sentence. The mark in the logo
 # and the icons is unchanged - this geometry belongs to the indicator only.
-$dotSize = 17.0
-$dotX    = 74.0
+$dotSize = 20.0
+$dotX    = 110.0
 $dotY    = ($markTop + $baseline) / 2.0 - $dotSize / 2.0
 
 # Centring uses the mark's real extent, so the dot's right edge is what bounds
@@ -285,8 +289,16 @@ $form.Add_Paint({
         $cx = $b.X + $b.W / 2.0
         $yTop = $baseline - $h + $b.W / 2.0
         $yBot = $baseline - $b.W / 2.0
-        if ($yTop -gt $yBot) { $yTop = $yBot }
-        $g.DrawLine($pen, [float]$cx, [float]$yTop, [float]$cx, [float]$yBot)
+        if ($yTop -ge $yBot) {
+            # A bar no taller than the pen is wide leaves a zero-length line, and
+            # GDI+ draws nothing at all for one - round caps included. At rest two
+            # of the four bars are exactly that short, so they simply vanished
+            # whenever the microphone was open but quiet. Draw the cap itself.
+            $g.FillEllipse($pen.Brush, [float]($cx - $b.W / 2.0), [float]($yBot - $b.W / 2.0),
+                           [float]$b.W, [float]$b.W)
+        } else {
+            $g.DrawLine($pen, [float]$cx, [float]$yTop, [float]$cx, [float]$yBot)
+        }
     }
     $pen.Dispose()
 
