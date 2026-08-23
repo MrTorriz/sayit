@@ -125,7 +125,8 @@ try {
             } else {
                 $verb = if ($e.Down) { 'start' } else { 'stop' }
                 Start-Process -FilePath 'powershell.exe' `
-                    -ArgumentList '-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',$sayit,$verb `
+                    -ArgumentList '-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass',
+                                  '-File',(Format-ProcessArgument $sayit),$verb `
                     -WindowStyle Hidden
             }
         }
@@ -152,7 +153,8 @@ try {
     # recorder's own time cap expires.
     if (-not $Probe) {
         Start-Process -FilePath 'powershell.exe' -WindowStyle Hidden `
-            -ArgumentList '-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',$sayit,'cancel' | Out-Null
+            -ArgumentList '-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass',
+                          '-File',(Format-ProcessArgument $sayit),'cancel' | Out-Null
     }
     if ($null -ne $script:InstanceMutex) {
         try { $script:InstanceMutex.ReleaseMutex() } catch { }

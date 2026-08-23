@@ -89,8 +89,8 @@ switch ($Action) {
         if (-not (Test-Path -LiteralPath $server)) { Write-Error "whisper-server missing: $server"; exit 1 }
         if (-not (Test-Path -LiteralPath $model))  { Write-Error "Model missing: $model"; exit 1 }
 
-        $p = Start-Process -FilePath $server -ArgumentList (Get-ServerArgs) `
-                           -WindowStyle Hidden -PassThru
+        $p = Start-Process -FilePath $server -WindowStyle Hidden -PassThru `
+            -ArgumentList (Get-ServerArgs | ForEach-Object { Format-ProcessArgument $_ })
         Write-Utf8Text -Path $pidFile -Text ([string]$p.Id)
 
         # Poll rather than sleep a fixed amount: model load dominates and varies.

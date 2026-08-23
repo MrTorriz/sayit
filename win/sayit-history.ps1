@@ -192,8 +192,9 @@ if ($Inject) {
     try {
         Write-Utf8Text -Path $textFile -Text $text
         $proc = Start-Process -FilePath 'powershell.exe' -NoNewWindow -Wait -PassThru `
-            -ArgumentList '-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',$injector,
-                          '-TextFile',$textFile
+            -ArgumentList '-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass',
+                          '-File',(Format-ProcessArgument $injector),
+                          '-TextFile',(Format-ProcessArgument $textFile)
         exit $proc.ExitCode
     } finally {
         Remove-Item -LiteralPath $textFile -Force -ErrorAction SilentlyContinue

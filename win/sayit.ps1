@@ -83,7 +83,9 @@ function Show-Indicator {
     try {
         Write-Utf8Text -Path $indicatorFile -Text '1'
         Start-Process -FilePath 'powershell.exe' -WindowStyle Hidden `
-            -ArgumentList '-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',$script,$State,'-Managed' | Out-Null
+            -ArgumentList '-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass',
+                          '-File',(Format-ProcessArgument $script),
+                          (Format-ProcessArgument $State),'-Managed' | Out-Null
     } catch { }
 }
 
@@ -193,8 +195,10 @@ function Start-RecordingLocked {
     $start = [DateTimeOffset]::Now.ToUnixTimeMilliseconds() / 1000.0
 
     $proc = Start-Process -FilePath 'powershell.exe' -WindowStyle Hidden -PassThru `
-        -ArgumentList '-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',$recorder,
-                      '-OutFile',$wav,'-StopEvent',$eventName
+        -ArgumentList '-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass',
+                      '-File',(Format-ProcessArgument $recorder),
+                      '-OutFile',(Format-ProcessArgument $wav),
+                      '-StopEvent',(Format-ProcessArgument $eventName)
 
     Write-Mark 'record.spawned' $proc.Id
 

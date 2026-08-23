@@ -251,6 +251,27 @@ function Convert-WithWordlist {
     return $out
 }
 
+# --- Process arguments -------------------------------------------------------
+# Start-Process joins -ArgumentList into a single command line with a space
+# between the elements and quotes nothing at all, so an element holding a path
+# with a space in it arrives at the target as two arguments and the file it
+# names is never found. Every path handed to Start-Process therefore has to be
+# quoted here first.
+#
+# The escaping is the one the Windows command line itself uses: a quote is
+# escaped with a backslash, and backslashes are only special immediately before
+# a quote - which includes the closing quote this function adds, so a value
+# ending in a backslash has to have those doubled.
+
+function Format-ProcessArgument {
+    param([Parameter(Mandatory)][AllowEmptyString()][string]$Value)
+    if ($Value -eq '') { return '""' }
+    if ($Value -notmatch '[\s"]') { return $Value }
+    $escaped = [regex]::Replace($Value, '(\\*)"', '$1$1\"')
+    $escaped = [regex]::Replace($escaped, '(\\+)$', '$1$1')
+    return '"' + $escaped + '"'
+}
+
 # --- C# helpers -------------------------------------------------------------
 # Two of the C# files have to be compiled together because one references a
 # constant from the other. Concatenating them naively is invalid C#: the second
