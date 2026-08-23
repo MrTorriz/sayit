@@ -296,8 +296,12 @@ try {
 
         if ($ranFor -ge 30) { $backoff = $minBackoff }
 
-        Write-AutostartLog ('autostart: trigger exited with {0} after {1:N0} s - restarting in {2} s' -f `
-            $code, $ranFor, $backoff)
+        # Invariant formatting: N0 under a Swedish locale inserts a non-breaking
+        # space as the thousands separator, which lands in the log as a mangled
+        # byte - "1 246 s" became "1<?>246 s" - and makes the number unreadable
+        # exactly when a long-running trigger has just died and you want it.
+        Write-AutostartLog ('autostart: trigger exited with {0} after {1} s - restarting in {2} s' -f `
+            $code, ([int]$ranFor).ToString([System.Globalization.CultureInfo]::InvariantCulture), $backoff)
         Start-Sleep -Seconds $backoff
 
         if ($ranFor -lt 30) { $backoff = [Math]::Min($backoff * 2, $maxBackoff) }
