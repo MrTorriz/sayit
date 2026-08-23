@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
 """Builds docs/demo.gif — a depiction of the real hold-to-talk flow.
 
-Every visual is taken from the code that actually draws it: the pill is
-bin/sayit-overlay's geometry (150x40, radius 20, black fill, white 1.5 px
-border, three bars at the mark's offsets, a red dot that pulses while the mic
-is open but silent and burns steady once it hears you), and the terminal
-colours are the Konsole profile this machine runs.
+Every visual is taken from the code that actually draws it. The pill geometry
+is not copied here but read out of bin/sayit-overlay itself, so the two cannot
+drift apart: an earlier version of this file duplicated the numbers and kept
+drawing three bars and a wordmark long after the overlay had four and none.
+Only the drawing is written twice, because the overlay draws through cairo and
+this draws through PIL. The terminal colours are the Konsole profile this
+machine runs.
 
 The text appears all at once rather than being typed, because that is what
 sayit does: injection goes through the clipboard and a paste, not synthetic
@@ -46,11 +48,26 @@ CMD  = 'git commit -m "'
 SAID = 'fix: hantera tomma inspelningar utan att krascha'
 FULL = CMD + SAID + '"'
 
-# --- pill geometry, straight from bin/sayit-overlay -------------------------
-PW, PH, PR = 150, 40, 20
-BARS = [(-10.4, 5.8, 17.3), (-2.3, 8.1, 25.3), (5.8, 4.6, 13.8)]
-MARK_CX, MARK_BASE = 30.0, PH / 2 + 12.6
-DOT_R = 2.6
+# --- pill geometry, read out of bin/sayit-overlay ---------------------------
+# The overlay only touches GTK inside main(), so executing it defines the
+# constants and nothing else. Reading them beats restating them: every number
+# below therefore describes what the overlay actually draws today.
+_OV = {}
+_OVERLAY = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                        os.pardir, "bin", "sayit-overlay")
+with open(_OVERLAY, encoding="utf-8") as _f:
+    exec(compile(_f.read(), _OVERLAY, "exec"), _OV)      # noqa: S102
+
+PW, PH, PR = _OV["WIDTH"], _OV["HEIGHT"], _OV["RADIUS"]
+BORDER     = _OV["BORDER"]
+BARS       = _OV["BARS"]
+BASELINE   = _OV["BASELINE"]
+MARK_TOP   = _OV["MARK_TOP"]
+DOT_D      = _OV["DOT_D"]
+DOT_X      = _OV["DOT_X"]
+SCALE      = _OV["MARK_SCALE"]
+OFF_X      = _OV["OFFSET_X"]
+OFF_Y      = _OV["OFFSET_Y"]
 
 
 def pill(level, frame):
@@ -60,21 +77,22 @@ def pill(level, frame):
     d = ImageDraw.Draw(im)
     d.rounded_rectangle([S, S, PW * S - S, PH * S - S], radius=PR * S,
                         fill=(0, 0, 0, 255), outline=(255, 255, 255, 255),
-                        width=int(1.5 * S))
-    for dx, low, high in BARS:
+                        width=int(BORDER * S))
+    for bx, bw, low, high in BARS:
         h = low + (high - low) * level / 7.0
-        w = 3.9
-        x0 = (MARK_CX + dx) * S
-        d.rounded_rectangle([x0, (MARK_BASE - h) * S, x0 + w * S, MARK_BASE * S],
-                            radius=w * S / 2, fill=(255, 255, 255, 255))
+        h = max(h, bw)                   # same clamp the overlay applies
+        x0 = (OFF_X + bx * SCALE) * S
+        y0 = (OFF_Y + (BASELINE - h) * SCALE) * S
+        w  = bw * SCALE * S
+        d.rounded_rectangle([x0, y0, x0 + w, y0 + h * SCALE * S],
+                            radius=w / 2, fill=(255, 255, 255, 255))
     alpha = 255
     if level < 0.5:                      # open but silent -> pulsing
         alpha = int(255 * (0.45 + 0.55 * (0.5 + 0.5 * math.sin(frame / 2.2))))
-    cx, cy = (MARK_CX + 14.4) * S, (MARK_BASE - DOT_R - 0.3) * S
-    d.ellipse([cx - DOT_R * S, cy - DOT_R * S, cx + DOT_R * S, cy + DOT_R * S],
-              fill=DOT + (alpha,))
-    d.text((58 * S, (PH * S - 15 * S) / 2), "sayit",
-           font=ImageFont.truetype(FONT, 11 * S), fill=(255, 255, 255, 255))
+    r  = DOT_D / 2 * SCALE * S
+    cx = (OFF_X + (DOT_X + DOT_D / 2) * SCALE) * S
+    cy = (OFF_Y + (MARK_TOP + BASELINE) / 2 * SCALE) * S
+    d.ellipse([cx - r, cy - r, cx + r, cy + r], fill=DOT + (alpha,))
     return im.resize((PW, PH), Image.LANCZOS)
 
 

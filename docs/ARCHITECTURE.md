@@ -26,7 +26,7 @@ flowchart LR
 | **History format** | `history.jsonl`, one JSON object per line: `time` (local ISO-8601 to seconds), `seconds`, `words`, `text`. Same field names, order and types, so a history file is portable between the platforms |
 | **Settings** | One `.env` from one `.env.example`. A setting that exists on both platforms has the same name and the same meaning; the file carries a clearly marked Windows-only section at the end |
 | **Diagnostics discipline** | A separate read-only `doctor` command on each platform; error logs record error *classes*, never dictated text; profiling records timings, never text |
-| **Documentation and identity** | This document, the README, the mark and its geometry — `win\sayit-indicator.ps1` draws the same three baseline-aligned rounded bars and full stop as `docs/logo.svg` and `icons/sayit-level-*.svg` |
+| **Documentation and identity** | This document, the README, the mark and its geometry — `win\sayit-indicator.ps1` and `bin/sayit-overlay` draw the same four baseline-aligned rounded bars and lamp, in the coordinate system of `docs/logo.svg`. The meter deliberately diverges from the logo: a fourth bar, and a larger dot on the mark's centre line rather than the logo's full stop on the baseline. `docs/logo.svg` and `icons/sayit-level-*.svg` keep the three-bar mark |
 
 ### Where they diverge, and why
 

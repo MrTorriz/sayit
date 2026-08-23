@@ -484,8 +484,12 @@ is final. Same contract as the Linux side.
 
 `RECORDING_INDICATOR=1` (the default) shows sayit's mark as a small pill above your
 other windows while the microphone is open: the bars follow your voice level and the
-full stop burns red. It uses the same geometry as [`docs/logo.svg`](docs/logo.svg) and
-the `icons/sayit-level-*.svg` frames.
+dot burns red. It is drawn in the coordinate system of
+[`docs/logo.svg`](docs/logo.svg), but the meter is not the logo: it has a fourth
+bar, and its dot is larger and sits on the mark's centre line, where on a pill that
+stays up while you speak it reads as a lamp rather than as a full stop. The logo
+and the `icons/sayit-level-*.svg` frames are unchanged. The Linux overlay draws the
+same geometry.
 
 ```powershell
 .\win\sayit-indicator.ps1 place   # drag it where you want it, Enter or Escape saves
