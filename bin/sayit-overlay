@@ -17,8 +17,10 @@
 #     floats above normal windows without ever taking focus. In normal mode
 #     the window has an EMPTY input region: clicks pass straight through to
 #     whatever is underneath, so the pill can never be in the way.
-#   - The sayit mark is the meter: the three bars follow the voice level and
-#     the dot pulses red while the microphone is open but silent.
+#   - The sayit mark is the meter: the four bars follow the voice level and
+#     the dot pulses red while the microphone is open but silent. The dot is
+#     larger here than in docs/logo.svg and sits on the mark's centre line, so
+#     it reads as a lamp rather than as the full stop it is in the logo.
 #   - Position is remembered in $XDG_CONFIG_HOME/sayit/overlay-position
 #     (default ~/.config/sayit/). Without one it starts bottom centre.
 #   - Exits silently when the desktop cannot host it (no Wayland session, no
@@ -37,7 +39,7 @@ import os
 import struct
 import sys
 
-WIDTH, HEIGHT, RADIUS = 150, 40, 20
+WIDTH, HEIGHT, RADIUS = 110, 40, 20
 BORDER = 1.5
 EDGE_MARGIN = 8                     # keeps the pill off the very screen edge
 FPS_MS = 33                         # ~30 fps redraw, independent of audio rate
@@ -47,10 +49,42 @@ PLACE_TIMEOUT_FRAMES = 180 * 1000 // FPS_MS   # --place gives up after 3 min
 # RMS thresholds (s16 samples) -> level 0..7, matching bin/sayit-meter.
 LEVELS = [90, 200, 450, 900, 1800, 3500, 7000]
 
-# Bar geometry: (x offset from the mark centre, min height, max height).
-BARS = [(-10.4, 5.8, 17.3), (-2.3, 8.1, 25.3), (5.8, 4.6, 13.8)]
-MARK_CX, MARK_BASE = 30.0, HEIGHT / 2 + 12.6
-DOT_R = 2.6
+# --- mark geometry --------------------------------------------------------
+# The mark is expressed in the same coordinate system as docs/logo.svg (a 96
+# unit view box) and scaled into the pill, rather than in pre-scaled pixel
+# values. Keeping the mark's own units means this geometry can be read against
+# the logo and against the Windows indicator without decoding a second set of
+# numbers.
+#
+# x, width, height at level 0, height at level 7. The first three come straight
+# from icons/*.svg; the fourth continues the same 20-unit spacing and its
+# heights sit between the neighbours it separates, so the row still rises and
+# falls like a waveform rather than ending on a step.
+BARS = [
+    (14.0, 12.0, 12.0, 44.0),
+    (34.0, 12.0, 18.0, 64.0),
+    (54.0, 12.0, 10.0, 36.0),
+    (74.0, 12.0, 15.0, 54.0),
+]
+BASELINE = 74.0
+MARK_TOP = BASELINE - 64.0          # top of the tallest bar at level 7
+
+# The full stop. docs/logo.svg sets it on the baseline as punctuation and 12
+# across; here it is larger and sits on the mark's vertical centre line, so that
+# on a pill which stays up while you speak it reads as a lamp that is lit while
+# the microphone is open rather than as a period ending a sentence. The mark in
+# docs/logo.svg and icons/ is unchanged: this geometry belongs to the meter.
+DOT_D = 20.0
+DOT_X = 110.0
+
+MARK_SCALE = 0.405
+MARK_LEFT, MARK_RIGHT = BARS[0][0], DOT_X + DOT_D
+# The dot's right edge is what bounds the mark now, not the 86 the logo's own
+# bounding box ends at.
+OFFSET_X = ((WIDTH - (MARK_RIGHT - MARK_LEFT) * MARK_SCALE) / 2.0
+            - MARK_LEFT * MARK_SCALE)
+OFFSET_Y = ((HEIGHT - (BASELINE - MARK_TOP) * MARK_SCALE) / 2.0
+            - MARK_TOP * MARK_SCALE)
 
 
 def config_path():
@@ -104,9 +138,9 @@ def rounded_rect(cr, x, y, w, h, r):
 
 
 class Overlay:
-    def __init__(self, gtk, layer_shell, gdk, pango, pangocairo, place_mode):
+    def __init__(self, gtk, layer_shell, gdk, place_mode):
         self.Gtk, self.GtkLayerShell = gtk, layer_shell
-        self.Gdk, self.Pango, self.PangoCairo = gdk, pango, pangocairo
+        self.Gdk = gdk
         from gi.repository import GLib
         self.GLib = GLib
         self.place_mode = place_mode
@@ -231,11 +265,19 @@ class Overlay:
         cr.set_line_width(BORDER)
         cr.stroke()
 
-        for dx, low, high in BARS:
+        for bx, bw, low, high in BARS:
             height = low + (high - low) * self.shown / 7.0
-            width = 3.9
-            rounded_rect(cr, MARK_CX + dx, MARK_BASE - height,
-                         width, height, width / 2)
+            # A bar shorter than it is wide would draw as a squashed lozenge
+            # rather than the round cap the mark is built from, and at rest two
+            # of the four are exactly that short. Clamping to the bar width
+            # leaves a circle resting on the baseline, which is what the logo
+            # and the Windows indicator both show.
+            if height < bw:
+                height = bw
+            w = bw * MARK_SCALE
+            rounded_rect(cr, OFFSET_X + bx * MARK_SCALE,
+                         OFFSET_Y + (BASELINE - height) * MARK_SCALE,
+                         w, height * MARK_SCALE, w / 2)
             cr.set_source_rgb(1, 1, 1)
             cr.fill()
 
@@ -244,17 +286,11 @@ class Overlay:
         alpha = 1.0
         if self.level < 0.5:
             alpha = 0.45 + 0.55 * (0.5 + 0.5 * math.sin(self.frame / 7.0))
-        cr.arc(MARK_CX + 14.4, MARK_BASE - DOT_R - 0.3, DOT_R, 0, 2 * math.pi)
+        cr.arc(OFFSET_X + (DOT_X + DOT_D / 2.0) * MARK_SCALE,
+               OFFSET_Y + (MARK_TOP + BASELINE) / 2.0 * MARK_SCALE,
+               DOT_D / 2.0 * MARK_SCALE, 0, 2 * math.pi)
         cr.set_source_rgba(1.0, 0.30, 0.30, alpha)
         cr.fill()
-
-        layout = self.PangoCairo.create_layout(cr)
-        layout.set_font_description(self.Pango.FontDescription("monospace 11"))
-        layout.set_text("sayit", -1)
-        _ink, log = layout.get_pixel_extents()
-        cr.move_to(58, (HEIGHT - log.height) / 2)
-        cr.set_source_rgb(1, 1, 1)
-        self.PangoCairo.show_layout(cr, layout)
         return False
 
     def tick(self):
@@ -341,9 +377,7 @@ def main():
         gi.require_version("Gtk", "3.0")
         gi.require_version("Gdk", "3.0")
         gi.require_version("GtkLayerShell", "0.1")
-        gi.require_version("PangoCairo", "1.0")
-        from gi.repository import (Gdk, Gtk, GtkLayerShell,  # noqa: F401
-                                   Pango, PangoCairo)
+        from gi.repository import Gdk, Gtk, GtkLayerShell  # noqa: F401
         import cairo                        # noqa: F401
     except (ImportError, ValueError):
         return 1 if check_only else 0       # bindings missing: silent no-op
@@ -353,7 +387,7 @@ def main():
     if check_only:
         return 0                            # everything needed is present
     try:
-        Overlay(Gtk, GtkLayerShell, Gdk, Pango, PangoCairo, place_mode).run()
+        Overlay(Gtk, GtkLayerShell, Gdk, place_mode).run()
     except Exception:                       # never fail the dictation pipeline
         if os.environ.get("SAYIT_DEBUG"):
             import traceback
