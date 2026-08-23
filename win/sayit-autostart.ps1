@@ -36,6 +36,10 @@
 # again. Restarting it on a schedule would fight anyone who ran
 # sayit-daemon.ps1 stop on purpose.
 #
+# It hides its own console window on startup, because the scheduled task's
+# -WindowStyle Hidden only takes effect once the host is already on screen. Set
+# SAYIT_KEEP_CONSOLE=1 to watch it run in a terminal instead.
+#
 # Exit codes:
 #   0  Supervised until asked to stop
 #   1  The trigger script is missing
@@ -49,6 +53,30 @@ param(
 
 Set-StrictMode -Version 2.0
 $ErrorActionPreference = 'Stop'
+
+# Hide our own console before anything else runs. The scheduled task launches
+# powershell.exe with -WindowStyle Hidden, but the host applies that only after
+# it is already on screen, so a console window sits on the desktop from logon
+# until something hides it - and nothing did. Note that such a window is not the
+# process's MainWindow, so Get-Process reports MainWindowHandle 0 for it while it
+# is plainly visible; asking the window manager is the only reliable check.
+# SAYIT_KEEP_CONSOLE=1 leaves it alone, for watching this run in a terminal.
+if ($env:SAYIT_KEEP_CONSOLE -ne '1') {
+    try {
+        if (-not ([System.Management.Automation.PSTypeName]'Sayit.ConsoleWindow').Type) {
+            Add-Type -Namespace Sayit -Name ConsoleWindow -MemberDefinition @'
+[DllImport("kernel32.dll")] public static extern System.IntPtr GetConsoleWindow();
+[DllImport("user32.dll")] public static extern bool ShowWindow(System.IntPtr hWnd, int nCmdShow);
+'@
+        }
+        $console = [Sayit.ConsoleWindow]::GetConsoleWindow()
+        if ($console -ne [IntPtr]::Zero) {
+            [void][Sayit.ConsoleWindow]::ShowWindow($console, 0)   # SW_HIDE
+        }
+    } catch {
+        # A host with no console is the outcome this wanted anyway.
+    }
+}
 
 . "$PSScriptRoot\lib\common.ps1"
 Initialize-SayitDirs
