@@ -192,3 +192,19 @@ vad_on() {
     grep -q -- '-vspd 0' "$STUB_CTL/cli.args"
     grep -q -- '-vsd 300' "$STUB_CTL/cli.args"
 }
+
+@test "a WAV with no samples answers empty without contacting either path" {
+    EMPTY="$BATS_TEST_TMPDIR/empty.wav"
+    head -c 44 /dev/zero > "$EMPTY"
+    run "$TRANSCRIBE" "$EMPTY"
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+    [ ! -f "$STUB_CTL/curl.args" ]
+    [ ! -f "$STUB_CTL/cli.args" ]
+}
+
+@test "a WAV with samples is not mistaken for an empty one" {
+    run "$TRANSCRIBE" "$WAV"
+    [ "$status" -eq 0 ]
+    [ -f "$STUB_CTL/curl.args" ]
+}

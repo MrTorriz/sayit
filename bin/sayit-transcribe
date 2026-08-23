@@ -21,6 +21,7 @@
 #     SUPPRESS_REGEX applies to the CLI fallback, and to the daemon only when
 #     the whisper-server build supports the flag. SAYIT_MODEL overrides
 #     MODEL_PATH on both paths.
+#   - A WAV with no samples returns empty without contacting either path.
 #   - Applies the wordlist as case-insensitive word-boundary replacements
 #   - Prints normalized text on stdout (no newlines, tabs or status lines).
 #     stderr carries error classes only — never transcribed text.
@@ -151,6 +152,18 @@ except Exception:
     print(text)
 PYEOF
 }
+
+# A WAV with no samples is what a very short press leaves behind. Both paths
+# reject it - the daemon answers HTTP 400 "Invalid request", which curl -f turns
+# into the same exit status as an unreachable daemon - so the CLI fallback would
+# run and be told the same thing at 20 times the cost. There is no speech in a
+# file with no audio, so answer that here. 44 bytes is a WAV header and nothing
+# else.
+if (( $(stat -c %s "$WAV" 2>/dev/null || echo 0) <= 44 )); then
+    mark t.empty
+    printf ''
+    exit 0
+fi
 
 # Daemon first. A transport failure (connection refused, timeout, HTTP error)
 # triggers the CLI fallback; an EMPTY 200 response is a real "no speech"
