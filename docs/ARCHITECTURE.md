@@ -26,7 +26,7 @@ flowchart LR
 | **History format** | `history.jsonl`, one JSON object per line: `time` (local ISO-8601 to seconds), `seconds`, `words`, `text`. Same field names, order and types, so a history file is portable between the platforms |
 | **Settings** | One `.env` from one `.env.example`. A setting that exists on both platforms has the same name and the same meaning; the file carries a clearly marked Windows-only section at the end |
 | **Diagnostics discipline** | A separate read-only `doctor` command on each platform; error logs record error *classes*, never dictated text; profiling records timings, never text |
-| **Documentation and identity** | This document, the README, the mark and its geometry — `win\sayit-indicator.ps1` and `bin/sayit-overlay` draw the same four baseline-aligned rounded bars and lamp, in the coordinate system of `docs/logo.svg`. The meter deliberately diverges from the logo: a fourth bar, and a larger dot on the mark's centre line rather than the logo's full stop on the baseline. `docs/logo.svg` and `icons/sayit-level-*.svg` keep the three-bar mark |
+| **Documentation and identity** | This document, the README, and the mark's *shape* — `win\sayit-indicator.ps1` and `bin/sayit-overlay` both draw four baseline-aligned rounded bars and a lamp, in the coordinate system of `docs/logo.svg`. The sizing is not shared: the pills differ (100x52 against 110x40), so scale and dot diameter are tuned per platform. The meter also diverges from the logo on purpose — a fourth bar, and a larger dot on the mark's centre line rather than the logo's full stop on the baseline. `docs/logo.svg` and `icons/sayit-level-*.svg` keep the three-bar mark |
 
 ### Where they diverge, and why
 

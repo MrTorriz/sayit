@@ -488,8 +488,9 @@ dot burns red. It is drawn in the coordinate system of
 [`docs/logo.svg`](docs/logo.svg), but the meter is not the logo: it has a fourth
 bar, and its dot is larger and sits on the mark's centre line, where on a pill that
 stays up while you speak it reads as a lamp rather than as a full stop. The logo
-and the `icons/sayit-level-*.svg` frames are unchanged. The Linux overlay draws the
-same geometry.
+and the `icons/sayit-level-*.svg` frames are unchanged. `bin/sayit-overlay` draws
+the same shape on Linux, sized for a different pill: 110x40 against this one's
+100x52, so the scale and the dot differ by design.
 
 ```powershell
 .\win\sayit-indicator.ps1 place   # drag it where you want it, Enter or Escape saves
