@@ -10,8 +10,10 @@ After=graphical-session.target
 [Service]
 Type=simple
 WorkingDirectory=%h/path/to/sayit
-# --resident keeps one pill up from login: dimmed and click-through at rest,
-# lit and above fullscreen while sayit-meter feeds it a recording.
+# --resident keeps one pill up from login: still, with the lamp dark and below
+# fullscreen at rest; lit and above fullscreen while sayit-meter feeds it a
+# recording. A resident pill is draggable at any time, so it needs no
+# placement mode.
 ExecStart=%h/path/to/sayit/bin/sayit-overlay --resident
 Restart=on-failure
 RestartSec=3

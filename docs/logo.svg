@@ -1,13 +1,37 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 96 96" width="96" height="96" role="img" aria-label="sayit logo: a waveform ending in a full stop">
-  <!-- Three baseline-aligned waveform bars ending in a full stop: speech
-       becoming a written sentence. Self-contained, no external resources.
-       The mark color follows the viewer's theme via prefers-color-scheme. -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="56.5 56.5 441.08 257" width="441.08" height="257" role="img" aria-label="sayit: four waveform bars and a recording lamp inside a rounded pill">
+  <title>sayit</title>
+  <!-- The mark on its own: four baseline-aligned waveform bars and a lamp,
+       inside a rounded pill. Speech becoming a written sentence, with the
+       lamp lit while the microphone is open. Self-contained, no external
+       resources.
+
+       Size: the pill's stroke is 7 units of 441, and it is centred on the
+       viewBox edge, so antialiasing splits it. Measured ink coverage on the
+       outline is roughly half below 48 px wide, three quarters at 63, and
+       solid from about 84. Use 64 px as the practical floor and 84 or more
+       where the outline has to look drawn rather than suggested.
+
+       Theme: the ink follows prefers-color-scheme; the lamp keeps its red in
+       both. That resolves against the embedding page only where the renderer
+       propagates color-scheme into an img-referenced SVG. Where it does not,
+       the ink follows the operating system instead, and a reader whose OS and
+       page disagree sees a very low-contrast mark. GitHub sets color-scheme
+       per theme, which is what this is aimed at.
+
+       docs/logo-lockup.svg adds the wordmark and the tagline. -->
   <style>
     .m { fill: #1f2328; }
-    @media (prefers-color-scheme: dark) { .m { fill: #e6edf3; } }
+    .s { fill: none; stroke: #1f2328; stroke-width: 7; }
+    .a { fill: #da4453; }
+    @media (prefers-color-scheme: dark) {
+      .m { fill: #e6edf3; }
+      .s { stroke: #e6edf3; }
+    }
   </style>
-  <rect class="m" x="14" y="30" width="12" height="44" rx="6"/>
-  <rect class="m" x="34" y="10" width="12" height="64" rx="6"/>
-  <rect class="m" x="54" y="38" width="12" height="36" rx="6"/>
-  <circle class="m" cx="80" cy="68" r="6"/>
+  <rect class="s" x="60" y="60" width="434.08" height="250" rx="125"/>
+  <rect class="m" x="184.74" y="174.45" width="17.04" height="55.99" rx="8.52"/>
+  <rect class="m" x="213.14" y="148.89" width="17.04" height="81.55" rx="8.52"/>
+  <rect class="m" x="241.54" y="184.59" width="17.04" height="45.85" rx="8.52"/>
+  <rect class="m" x="269.94" y="161.67" width="17.04" height="68.77" rx="8.52"/>
+  <circle class="a" cx="349.46" cy="185" r="19.88"/>
 </svg>

@@ -299,7 +299,9 @@ if ($SkipModel) {
     } else {
         Write-Warn "  Whisper model missing: $modelFile"
         Write-Warn '  The models are supplied separately and are not downloaded here.'
-        Write-Warn '  Put the .bin file in the repo models\ directory, or point MODEL_PATH at it.'
+        Write-Warn '  Put the .bin file in the repo models\ directory.'
+        Write-Warn '  Keeping it elsewhere works at runtime via MODEL_PATH, but this check'
+        Write-Warn '  does not read that setting - re-run with -SkipModel in that case.'
         $modelMissing = $true
     }
 
@@ -414,9 +416,11 @@ if (Test-Path -LiteralPath $wordlist) {
 #   -DontStopIfGoingOnBatteries    and stops a running task when the charger is
 #                                  pulled. On a laptop that is the whole story.
 #   -ExecutionTimeLimit 0          the default stops the task after three days
-#   -MultipleInstances IgnoreNew   while one instance runs a second is refused,
-#                                  which is what keeps the repeating trigger
-#                                  below from ever producing a second trigger
+#   -MultipleInstances IgnoreNew   while one instance runs a second is refused.
+#                                  Kept as a backstop: the action is a shim that
+#                                  exits at once, so it rarely has anything to
+#                                  refuse - the supervisor's own mutex is what
+#                                  stops a second trigger
 #   -StartWhenAvailable            off by default; runs a repetition that was
 #                                  missed while the machine was asleep or off
 #   -DontStopOnIdleEnd             StopOnIdleEnd defaults to on. It only applies
@@ -437,10 +441,14 @@ if (Test-Path -LiteralPath $wordlist) {
 #                   Logon covers a cold boot, a restart, a hybrid-shutdown boot
 #                   and logging off and back on, because every one of them ends
 #                   in a logon.
-#   every minute    brings the supervisor back if it dies. While it is alive
-#                   these are refused by IgnoreNew and recorded as
-#                   LastTaskResult 0x800710E0, which is the normal state of this
-#                   task and not a failure.
+#   every minute    brings the supervisor back if it dies. The action is the
+#                   wscript shim, which starts the supervisor and exits at once,
+#                   so each repeat finishes with LastTaskResult 0 whether or not
+#                   it had anything to do; a repeat that finds a live supervisor
+#                   is turned away by that supervisor's mutex. 0x800710E0 shows
+#                   up instead on a task registered before the shim, where the
+#                   action was the supervisor itself and the scheduler refused
+#                   the repeat. Neither value is a fault.
 
 $taskName = 'sayit'
 

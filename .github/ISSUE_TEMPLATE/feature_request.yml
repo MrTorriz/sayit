@@ -2,6 +2,16 @@ name: Feature request
 description: Suggest an improvement
 labels: [enhancement]
 body:
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Platform
+      options:
+        - Linux
+        - Windows 11
+        - Both
+    validations:
+      required: true
   - type: textarea
     id: problem
     attributes:
@@ -19,4 +29,7 @@ body:
     id: alternatives
     attributes:
       label: Alternatives considered
-      description: Note that cloud backends, wake words and GUIs are deliberate non-goals (see README).
+      description: >-
+        Note the deliberate non-goals: cloud speech-to-text backends, wake-word
+        activation, GUI frontends, and shared code across the two platforms.
+        Requests for those will be declined - see docs/ARCHITECTURE.md.

@@ -2,6 +2,16 @@ name: Bug report
 description: Something does not work as documented
 labels: [bug]
 body:
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Platform
+      options:
+        - Linux
+        - Windows 11
+        - Both
+    validations:
+      required: true
   - type: textarea
     id: what
     attributes:
@@ -22,18 +32,47 @@ body:
     id: env
     attributes:
       label: Environment
-      description: Distro, desktop/compositor, GPU, audio setup
+      description: >-
+        Fill in the block for your platform and delete the other.
       placeholder: |
+        Linux:
         - Distro: Fedora 44
-        - Desktop: KDE Plasma 6 (Wayland)
+        - Desktop / session: KDE Plasma 6 (Wayland)
         - GPU / Vulkan: Intel Arc (vulkaninfo works)
         - Microphone: built-in / USB / Bluetooth headset
+        - Model: kb-whisper-medium q5_0
+
+        Windows:
+        - Windows build: 11 26200
+        - PowerShell: 5.1
+        - GPU / Vulkan SDK: Intel Arc, SDK installed
+        - Microphone: built-in / USB / Bluetooth headset
+        - Trigger button: XBUTTON2
         - Model: kb-whisper-medium q5_0
     validations:
       required: true
   - type: textarea
+    id: doctor
+    attributes:
+      label: Doctor output (optional, please read first)
+      description: >-
+        `./bin/sayit doctor` on Linux, or `.\win\sayit-doctor.ps1` on Windows.
+        Neither dumps your .env file, your wordlist, your history or any
+        dictated text, and neither prints the VALUES of INITIAL_PROMPT or
+        SUPPRESS_REGEX - only whether they are set.
+        BUT the output does contain resolved local paths (which on Windows
+        normally include your user name), capture device names, endpoint IDs
+        and the values of most other settings. Read it through and mask
+        anything you would rather not publish. This field is optional for
+        exactly that reason.
+      render: text
+  - type: textarea
     id: logs
     attributes:
-      label: Output / logs
-      description: Output of the failing command, `./bin/test-pipeline`, or `journalctl --user -u sayit-daemon`
+      label: Other output
+      description: >-
+        Output of the failing command, or of `./bin/test-pipeline`. Please do
+        NOT paste daemon logs: they are whisper-server's own output and can
+        contain your transcribed text. Do not paste .env, your history file or
+        audio.
       render: text

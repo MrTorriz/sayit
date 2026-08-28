@@ -1,5 +1,7 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 96 96">
-  <!-- sayit theme icon, generated from the docs/logo.svg geometry; installed by install.sh -->
+  <!-- sayit theme icon: the three-bar mark with a full stop on the baseline.
+       Kept square on purpose for the hicolor/scalable slot, where the wider
+       four-bar mark in docs/logo.svg would letterbox. Installed by install.sh. -->
   <rect x="14" y="39" width="12" height="35" rx="6" fill="#e6edf3"/>
   <rect x="34" y="23" width="12" height="51" rx="6" fill="#e6edf3"/>
   <rect x="54" y="45" width="12" height="29" rx="6" fill="#e6edf3"/>

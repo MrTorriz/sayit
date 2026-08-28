@@ -1,4 +1,13 @@
+[← README](../README.md) · [Install: Linux](INSTALL-LINUX.md) · [Windows](INSTALL-WINDOWS.md) · [Configuration](CONFIGURATION.md) · [Troubleshooting](TROUBLESHOOTING.md) · [Performance](PERFORMANCE.md) · **Architecture**
+
 # Architecture
+
+- [One repository, two implementations](#one-repository-two-implementations)
+- [The Linux pipeline](#the-linux-pipeline)
+- [The Windows pipeline](#the-windows-pipeline)
+- [Performance and latency](#performance-and-latency)
+- [Design decisions](#design-decisions)
+- [Deliberate non-goals](#deliberate-non-goals)
 
 sayit is one pipeline with two implementations: a set of small bash scripts in
 `bin/` for Linux, and a set of PowerShell scripts with runtime-compiled C#
@@ -26,7 +35,7 @@ flowchart LR
 | **History format** | `history.jsonl`, one JSON object per line: `time` (local ISO-8601 to seconds), `seconds`, `words`, `text`. Same field names, order and types, so a history file is portable between the platforms |
 | **Settings** | One `.env` from one `.env.example`. A setting that exists on both platforms has the same name and the same meaning; the file carries a clearly marked Windows-only section at the end |
 | **Diagnostics discipline** | A separate read-only `doctor` command on each platform; error logs record error *classes*, never dictated text; profiling records timings, never text |
-| **Documentation and identity** | This document, the README, and the mark's *shape* — `win\sayit-indicator.ps1` and `bin/sayit-overlay` both draw four baseline-aligned rounded bars and a lamp, in the coordinate system of `docs/logo.svg`. The sizing is not shared: the pills differ (100x52 against 110x40), so scale and dot diameter are tuned per platform. The meter also diverges from the logo on purpose — a fourth bar, and a larger dot on the mark's centre line rather than the logo's full stop on the baseline. `docs/logo.svg` and `icons/sayit-level-*.svg` keep the three-bar mark |
+| **Documentation and identity** | This document, the README, and the mark's *vocabulary* — a row of rounded bars and a lamp, laid out in the 96-unit coordinate system of `icons/*.svg`. That much is shared; the drawing is not, and the two platforms have drifted apart on purpose. `win\sayit-indicator.ps1` still draws the four baseline-aligned bars of the logo on a 100x52 pill. `bin/sayit-overlay` draws ten bars that grow about a centre line, next to the `sayit` wordmark, on a 160x40 pill — it is a fixture that sits on screen for a whole session, so it says its own name; the Windows pill appears only while recording and does not need to. `docs/logo.svg` draws the four-bar mark in units of its own, 1.42 times those. Scale and lamp diameter are tuned per platform. Nor is the red — `docs/logo.svg`, `docs/logo-lockup.svg`, `win\sayit-indicator.ps1` and the sixteen `icons/sayit-level-*.svg` frames all use `#da4453`, while `bin/sayit-overlay` uses `#ff4d4d` lit and a dark `#6b2126` unlit, because its lamp is always on the pill and only changes colour; `icons/sayit.svg`, `icons/sayit-light.svg` and the two `icons/sayit-idle*.svg` frames carry no red at all, drawing the dot in the ink colour. All twenty files in `icons/` keep the older three-bar mark on purpose: four bars and a lamp are not square, and a square is what a `hicolor/scalable` icon slot wants |
 
 ### Where they diverge, and why
 
@@ -98,7 +107,7 @@ sequenceDiagram
 | `sayit-inject` | Text delivery with a fallback chain per compositor, clipboard hygiene |
 | `sayit-indicator` | Persistent recording indicator (notification-based, safe fallbacks) |
 | `sayit-meter` | Live voice meter: picks a style, owns the capture stream and its cleanup; feedback only |
-| `sayit-overlay` | The overlay style — sayit's own click-through pill, drawn through layer-shell (the one Python script) |
+| `sayit-overlay` | The overlay style — sayit's own click-through pill, drawn through layer-shell (the one Python script). `--resident` keeps it up for the whole session |
 | `sayit-history` | Read side of `history.jsonl`: listing, stats, re-inject; corrupt-line tolerant |
 | `sayit-learn` | Write side of the wordlist: add/undo/list with dedup |
 
@@ -119,6 +128,8 @@ logout); only history and the wordlist persist.
 | `$XDG_RUNTIME_DIR/sayit-profile.csv` | Per-stage timestamps when `SAYIT_PROFILE=1` (timing data only) |
 | `$XDG_DATA_HOME/sayit/history.jsonl` | One JSON object per dictation |
 | `$XDG_CONFIG_HOME/sayit/wordlist.tsv` | User vocabulary, grown by `sayit-learn` |
+| `$XDG_RUNTIME_DIR/sayit.overlay` | FIFO a resident overlay reads its audio from; `sayit-meter` writes the capture stream here instead of starting a second pill |
+| `$XDG_RUNTIME_DIR/sayit.overlay.pid` | PID of the resident overlay — identity-checked before it is written to or signalled |
 | `$XDG_CONFIG_HOME/sayit/overlay-position` | Where the overlay pill sits, written by `sayit-overlay --place` |
 
 PIDs read back from state files are trusted only after an identity check:
@@ -183,6 +194,7 @@ sequenceDiagram
 |---|---|
 | `lib\common.ps1` | Paths, `.env` reader, UTF-8 file IO without a BOM, stage profiling, the wordlist engine, the C# source merger, the error log |
 | `lib\inject.ps1` | The injection decision: elevated-target check, method by length, clipboard fallback |
+| `lib\transcribe.ps1` | The transcription itself: the daemon request, the CLI fallback, token cleanup and the wordlist call — dot-sourced so no second PowerShell is spawned |
 | `lib\Recorder.cs` | `waveIn` capture, the RIFF writer, peak tracking and level publishing, device enumeration and resolution |
 | `lib\Trigger.cs` | The low-level keyboard and mouse hooks, the event queue and the injection signature |
 | `lib\Injector.cs` | `SendInput` Unicode typing, the clipboard with its history and cloud opt-outs, the paste chord, the integrity-level check |
@@ -224,84 +236,28 @@ session's own recorder.
 
 ## Performance and latency
 
-### Linux reference machine
+All measured numbers live in one place: [PERFORMANCE.md](PERFORMANCE.md). It
+carries both reference machines, the methods, the dates and — explicitly — what
+is measurement, what is estimate and what is arithmetic.
 
-Measured with `tests/benchmark.sh` — Intel Core Ultra 9 185H, Intel Arc iGPU
-(Vulkan), Fedora 44, `kb-whisper-medium` q5_0 with Silero VAD, 2026-08-20. The
-harness times `sayit-transcribe` end to end (HTTP round trip or CLI, token
-cleanup, wordlist) against a dedicated `whisper-server` instance, using synthetic
-16 kHz Swedish speech:
+Two facts from it shape the design and belong here:
 
-| Scenario (audio length)                    |  n | median |   p95 |   max |
-| ------------------------------------------ | -: | -----: | ----: | ----: |
-| Warm daemon — short sentence (2.2 s)       | 25 | 1.62 s | 1.64 s | 1.64 s |
-| Warm daemon — medium (8.7 s)               | 25 | 3.12 s | 3.28 s | 3.41 s |
-| Warm daemon — long (20.8 s)                | 25 | 6.41 s | 6.67 s | 6.74 s |
-| Warm daemon — silence (2.0 s)              | 10 | 0.06 s | 0.09 s | 0.09 s |
-| Cold `whisper-cli` fallback — short        | 10 | 2.65 s | 2.71 s | 2.71 s |
-| Cold `whisper-cli` fallback — medium       | 10 | 4.27 s | 4.37 s | 4.37 s |
-| Daemon model load (service start)          |  1 | 0.95 s |     — |     — |
-| Wedged server (SIGSTOP), incl. fallback    |  3 | 14.8 s |     — | 14.9 s |
+- **The warm daemon removes the per-dictation model load entirely.** That is the
+  whole reason the daemon-first contract exists, and why the CLI fallback is
+  reserved for transport failures rather than used as a peer.
+- **A daemon request times out after `audio seconds + 10 s`, with a 2 s connect
+  timeout.** A deadline that scales with the audio is what keeps a wedged server
+  from stalling a short dictation: the request gives up and the CLI fallback
+  finishes the job. `tests/transcribe.bats` asserts that the deadline scales.
 
-Notes:
+Not covered by any harness: microphone capture, and the Bluetooth profile
+switch on Linux. The switch happens synchronously at press time, which is why
+the recording indicator is the signal that the microphone is live — not the
+button press.
 
-- **Warm vs cold**: the daemon removes the per-call model load entirely; the
-  cold rows show the true cost of the `whisper-cli` fallback path.
-- **Silence is cheap**: an empty transcription from a healthy daemon is
-  accepted as authoritative — it never triggers a redundant cold re-run.
-- **Deadline**: the daemon request times out after `audio seconds + 10 s`
-  (with a 2 s connect timeout), so a wedged server cannot stall a short
-  dictation for long; the request then falls back to the CLI.
-- **Not covered by the harness**: microphone capture and the Bluetooth
-  profile switch. On a BT headset, the A2DP→HFP switch happens synchronously
-  at press time and takes roughly 0.5–2.5 s before capture starts (estimate,
-  unmeasured) — the recording indicator appears when the mic is actually
-  live. Clipboard injection adds on the order of 0.1 s after transcription.
-- Per-stage timings of real dictations: run with `SAYIT_PROFILE=1` and read
-  `$XDG_RUNTIME_DIR/sayit-profile.csv` (run id, wall clock, monotonic uptime,
-  stage, numeric extra — never text).
-
-### Windows reference machine
-
-The bats harness is bash and does not run on Windows. These numbers come from
-whisper.cpp's own `whisper-bench` and from sayit's per-stage profiling — Intel
-Core Ultra 9 185H, Intel Arc integrated graphics, Windows 11 build 26200,
-`kb-whisper-medium` q5_0 with Silero VAD, 2026-08-22.
-
-Encode time, three repetitions interleaved with cooldowns:
-
-| Backend | run 1 | run 2 | run 3 | median |
-| --- | ---: | ---: | ---: | ---: |
-| Vulkan on the Arc integrated GPU | 723.7 ms | 676.0 ms | 957.7 ms | **723.7 ms** |
-| CPU with OpenBLAS, 6 threads | 8953.0 ms | 9888.4 ms | 10340.4 ms | **9888.4 ms** |
-
-End to end, from releasing the button to the text appearing, three dictations
-with `SAYIT_PROFILE=1`:
-
-| Dictation | 1 | 2 | 3 | median |
-| --- | ---: | ---: | ---: | ---: |
-| Release to text | 2.37 s | 4.81 s | 2.47 s | **2.47 s** |
-
-Notes:
-
-- **Vulkan is about 13.7x faster than the CPU build on encode.** Decode per
-  step: 16.1–21.0 ms on Vulkan against 29.8–33.9 ms on CPU. The CPU figures
-  degrade monotonically across the three runs as the laptop heats up; the
-  Vulkan figures stay flat.
-- **Getting Vulkan at all requires building from source.** There is no official
-  prebuilt Vulkan binary of whisper.cpp for Windows, and integrated-GPU support
-  only arrived in whisper.cpp v1.8.3, so older third-party Vulkan builds
-  silently run on the CPU. `win\install.ps1` pins v1.9.2, matching `install.sh`.
-- **Stage breakdown across those three dictations**: the daemon round trip took
-  1.18–2.90 s, wordlist replacement 0.02 s, injection 0.18 s and stopping the
-  recorder about 0.2 s. Daemon model load at service start: 2.63 s.
-- **Two costs were removed by not spawning PowerShell.** Starting a second
-  PowerShell to deliver the text cost about a second per dictation, roughly a
-  quarter of the release-to-text latency, so `sayit.ps1` dot-sources
-  `lib\inject.ps1` and injects in-process. Spawning one to apply the wordlist
-  cost about 0.8 s, a fifth of the total, so the wordlist engine lives in
-  `lib\common.ps1` and `sayit-transcribe.ps1` calls it directly. The separate
-  `sayit-inject.ps1` and `sayit-wordlist.ps1` front ends remain for manual use.
+Per-stage timings of real dictations: run with `SAYIT_PROFILE=1` and read the
+CSV in the run directory. Run id, wall clock, monotonic uptime, stage and a
+numeric extra — never text.
 
 ## Design decisions
 
@@ -459,8 +415,9 @@ focus, never blocks injection, and can be disabled with
 The live meter takes the same idea further. While recording, `sayit-meter`
 opens its own low-rate PipeWire capture (sources allow concurrent readers,
 so the recording itself is untouched) and reduces the audio to a single
-level about 8 times per second. The sayit mark IS the meter: its bars
-follow the voice level and the dot burns red while the microphone is open.
+level about 8 times per second. The meter is the mark's own row of bars:
+they follow the voice level, and the lamp burns red while the microphone is
+open.
 The samples are used only for that computation; no audio is stored.
 
 Three styles render it, each falling back to the next when its
@@ -468,10 +425,63 @@ requirements are missing, so the meter degrades instead of vanishing:
 
 - **`overlay`** (default) — `sayit-overlay` draws sayit's own pill through
   the layer-shell protocol. It owns its appearance rather than borrowing a
-  desktop's, it never takes focus, its input region is *empty* so clicks
-  pass through to the window underneath, and it can be dragged anywhere
-  (`--place`) with the position remembered. Needs Wayland with layer-shell
-  and the GTK bindings; without them the meter drops to the OSD styles.
+  desktop's, and it never takes focus. Whether it takes a click depends on
+  which lifetime it has, below: the short-lived one is click-through, the
+  resident one is draggable. Either way the position is remembered. Needs
+  Wayland with layer-shell and the GTK bindings; without them the meter
+  drops to the OSD styles.
+
+  The pill has two possible lifetimes. By default it lives exactly as long
+  as the recording that started it, and `sayit-meter` pipes the capture
+  stream straight into it. Enabling the `sayit-overlay` user service instead
+  runs one `sayit-overlay --resident` for the whole session, and the meter
+  writes into that pill's FIFO rather than starting a second one:
+
+  | | Piped (default) | Resident (`sayit-overlay.service`) |
+  | --- | --- | --- |
+  | On screen | only while recording | the whole session |
+  | Audio inlet | stdin, from the meter's `pw-cat` | `$XDG_RUNTIME_DIR/sayit.overlay`, written by the same `pw-cat` |
+  | Recording starts | the process starting is the signal | audio arriving on the FIFO |
+  | Recording ends | end of stream ends the process | `AUDIO_IDLE_S` (0.4 s) without audio |
+  | At rest | does not exist | the same pill, the same colours; the meter still and the lamp dark |
+  | Layer | `OVERLAY`, above fullscreen | `TOP` at rest, raised to `OVERLAY` while lit |
+  | Redraw | ~30 fps | 4 fps at rest, ~30 fps while lit |
+
+  The FIFO is opened `O_RDWR`, so the resident holds a writer of its own and
+  never sees a hangup when the meter's `pw-cat` exits. That is deliberate: it
+  makes "recording stopped" a single rule — audio stopped — instead of a
+  hangup to catch and a FIFO to reopen. A resting pill does not hold a
+  capture stream at all, so nothing keeps the microphone, or a Bluetooth
+  headset's mic profile, awake between dictations.
+
+  **Placing is not a mode.** A resident pill is draggable for its whole
+  life: grab it and move it, at rest or while recording, and the position is
+  written on release. `--place` with a resident up therefore has nothing to
+  open and nothing to switch, and says so instead of drawing a second pill
+  on top of the one the user is looking at. Without a resident it opens its
+  own draggable window, as it always has.
+
+  That the decision is permanent is forced by the protocol. An empty input
+  region cannot be taken back on a mapped layer-shell surface: setting a
+  full region over it, passing `None`, and hiding and reshowing the window
+  were all measured on KWin, and in every case the compositor kept routing
+  pointer events to the window underneath. So the window is **built once**,
+  before it is mapped, and the choice is never revisited — a piped pill is
+  click-through for its whole life, a resident one draggable for its whole
+  life. A pill that exists for three seconds must never be in the way; a
+  fixture that cannot be grabbed is worse than one that catches a click on
+  its own 160x40 px.
+
+  `on_draw` puts three items on the pill in one row — the lamp, the meter,
+  the wordmark — and separates three states with one rule. The lamp is lit
+  by an open microphone and by nothing else, in the same place and at the
+  same size either way, so a closed microphone can never be mistaken for an
+  open one. Between "open and silent" and "open and speaking" the meter's
+  geometry is the only thing that changes: no colour, no brightness, nothing
+  else on the pill, and the lamp never pulses, so movement stays the meter's
+  alone. `_test_state` and `_test_bar_midpoints` report exactly what the
+  draw path uses, so the rule and the geometry can be checked without a
+  window and a test cannot pass against a stale copy.
 - **`mark`** — the same mark in Plasma's on-screen display, animated
   through pre-rendered theme icons (`sayit-level-0..7` plus an idle frame
   whose dot pulses). The icon tone is chosen once at start through the
@@ -480,6 +490,24 @@ requirements are missing, so the meter degrades instead of vanishing:
   is chosen: a half-installed set would otherwise blank out single frames.
 - **`wave`** — a scrolling glyph waveform in the same OSD, the style that
   needs nothing but the OSD itself.
+
+#### The one optional step that leaves the machine
+
+`LLM_CLEANUP=1` runs the transcribed text through an LLM to fix spelling, split
+words and obvious recognition errors. It is Linux-only, off by default, and it
+is the single code path in sayit that sends anything anywhere: it POSTs the
+**text** — never the audio — to `LLM_URL` over plain HTTP.
+
+The default `LLM_URL` is a local Ollama on `127.0.0.1`, which keeps the text on
+the machine. The setting exists as a URL rather than as a hardcoded loopback
+address because someone with a GPU box on their own network has a legitimate
+reason to point it there. That flexibility is exactly what makes the default
+worth stating plainly: any non-loopback `LLM_URL` sends your dictated text to
+that host.
+
+It stays off by default for a second reason. On CPU the pass takes around 15
+seconds, which is longer than the dictation it is cleaning up, and a small model
+can make technical terms worse rather than better.
 
 #### Stopping a capture that ignores SIGPIPE
 
@@ -610,9 +638,9 @@ from the window you are dictating into defeats its own purpose. `HWND_TOPMOST`
 grants membership of the topmost band rather than a position within it, so it is
 re-issued on every tick.
 
-It draws the project mark in the same coordinate system as `docs/logo.svg`: three
-baseline-aligned rounded bars whose heights interpolate between the level-0 and
-level-7 icon frames, plus the full stop, which burns red while the microphone is
+It draws the project mark in the 96-unit coordinate system of `icons/*.svg`:
+four baseline-aligned rounded bars whose heights interpolate between the level-0
+and level-7 icon frames, plus the lamp, which burns red while the microphone is
 open. The level comes from the recorder, which has already computed a peak for the
 silence check, so the microphone is opened exactly once — the Linux meter opens a
 second capture stream for the same job.
@@ -684,7 +712,9 @@ behaves, and each would be a silent data defect if handled by default:
 ### Deliberate non-goals
 
 - **No cloud STT** — the value proposition is that audio never leaves the
-  machine.
+  machine. The optional `LLM_CLEANUP` pass above is text-only, opt-in and
+  points at loopback by default; it is a post-processing step, not a
+  recognition backend.
 - **No wake word** — push-to-talk is more reliable, more private, and costs
   zero CPU when idle.
 - **No GUI** — everything is scriptable and composable; the recording indicator
