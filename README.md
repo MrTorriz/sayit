@@ -58,31 +58,13 @@ the pipeline and both platforms' sequences.
 
 ## Two platforms, one repository
 
-The two implementations share everything except code:
+The two implementations share everything except code: the same pinned
+whisper.cpp release and model contract, the same wordlist format, the same
+`history.jsonl`, one `.env` from one `.env.example`, and one identity. The code
+itself is not shared and there is nothing to share — bash, PipeWire and ydotool
+on one side; PowerShell, `waveIn` and `SendInput` on the other.
 
-| Shared | Where |
-| --- | --- |
-| Model handling | The same pinned whisper.cpp release (`v1.9.2`), the same GGML model and Silero VAD files, and the same daemon-first contract: try the warm `whisper-server` on `127.0.0.1`, fall back to `whisper-cli` **only** on a transport failure |
-| Wordlist format | `original<TAB>replacement`, sorted longest original first, applied sequentially, case-insensitive on word boundaries, literal strings — the same contract in `bin/sayit-wordlist` and `win\sayit-wordlist.ps1` |
-| History format | `history.jsonl`, one JSON object per line with `time`, `seconds`, `words`, `text` — a history file is portable between the two |
-| Settings | One `.env`, created from the shared `.env.example`, with the same names and meanings wherever a setting exists on both |
-| Documentation and identity | These documents, and the mark |
-
-The code is not shared, and there is nothing to share: bash, PipeWire and ydotool on
-one side; PowerShell, `waveIn` and `SendInput` on the other.
-
-| Stage | Linux (`bin/`) | Windows (`win\`) |
-| --- | --- | --- |
-| Capture | `pw-record` (PipeWire) | `waveIn` through `win\lib\Recorder.cs` |
-| Stopping a recording | `SIGINT`, then poll until the recorder has exited | a named event; the recorder finalises its own RIFF header |
-| Trigger | Solaar rules (mouse) or a desktop global shortcut | `WH_KEYBOARD_LL` / `WH_MOUSE_LL` in `win\sayit-trigger.ps1` |
-| Injection | clipboard plus `Shift+Insert` (`ydotool`), with `wtype`/`xdotool` fallbacks | `SendInput` with `KEYEVENTF_UNICODE`; clipboard plus `Ctrl+V` above a length threshold |
-| Indicator / meter | a persistent notification plus a separate meter that opens its own capture stream | one layered click-through window, fed by the level the recorder already computes |
-| Warm model | a systemd user service | a scheduled task at logon starts a supervisor, which starts the daemon |
-| Bluetooth | `bin/sayit-bt` switches A2DP to HFP and back | none: Windows selects HFP itself when an application opens a capture endpoint |
-| Transient state | `$XDG_RUNTIME_DIR` (RAM-backed tmpfs) | `%LOCALAPPDATA%\sayit\run` (on disk, cleaned up explicitly) |
-
-The reasoning behind each divergence is in
+Which stage differs, and the reasoning behind every divergence, is in
 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#where-they-diverge-and-why).
 
 ## Quickstart: Linux
@@ -180,50 +162,14 @@ on `127.0.0.1`, and the fallback path hands it to a local binary instead. There
 is no telemetry and no account.
 
 **One optional feature is the exception.** `LLM_CLEANUP=1`, Linux only and off by
-default, POSTs the transcribed **text** to `LLM_URL` for a cleanup pass. `LLM_URL`
-defaults to a local Ollama on `127.0.0.1`, which keeps the text on the machine. Point
-it at another host and your dictated text goes to that host, in plain HTTP.
+default, POSTs the transcribed **text** to `LLM_URL` for a cleanup pass.
+`LLM_URL` defaults to a local Ollama on `127.0.0.1`, which keeps the text on the
+machine. Point it at another host and your dictated text goes to that host, in
+plain HTTP.
 
-What exists on your machine either way:
-
-- **Audio** lives in `$XDG_RUNTIME_DIR` on Linux, which is a RAM-backed tmpfs, and in
-  `%LOCALAPPDATA%\sayit\run` on Windows, which is on disk because Windows has no tmpfs
-  equivalent. It is deleted right after transcription; `sayit.ps1` also sweeps WAV
-  files older than an hour when the next recording starts, and the doctor reports any
-  that are left.
-- **History**: every dictation's text is appended to
-  `~/.local/share/sayit/history.jsonl` or `%LOCALAPPDATA%\sayit\history.jsonl` and
-  kept until you clear it with `--clear` / `-Clear`. If a backup or sync tool sweeps
-  that directory, your dictations follow it.
-- **Clipboard**: on Linux the text always transits the clipboard during injection, so
-  clipboard managers may archive it under their own retention rules. sayit restores
-  your previous clipboard about a second after pasting — but only if you have not
-  copied something new meanwhile — and clears the primary selection. Non-text
-  clipboards and clipboards tagged by password managers are never read, saved or
-  re-offered. On Windows the clipboard is used only above
-  `INJECT_CLIPBOARD_THRESHOLD` or when typing is impossible; the text is marked to
-  stay out of Win+V history and cloud sync, and the previous contents are **not**
-  restored.
-- **Notifications**: on Linux they show the first characters of a dictation and are
-  sent as transient, so compliant servers do not retain them. The Windows side sends
-  no notifications; its only feedback is the on-screen pill, which shows a level and
-  never text.
-- **Diagnostics**: failures append error classes — never text, never audio — to
-  `sayit-last-error.log` in the run directory. On Linux that vanishes at logout; on
-  Windows it does not.
-- **The warm daemon** listens on `127.0.0.1` with no authentication, so any local
-  process can reach it. Keep it on loopback.
-- **Daemon logs are `whisper-server`'s own output** and can contain transcribed text.
-  Never paste them into a public issue. The doctor output is the safer artefact,
-  but it is not sanitised either — see the note under
-  [Verifying an installation](#verifying-an-installation).
-- **The two Windows diagnostic probes write what they observe to disk.**
-  `sayit-trigger.ps1 -Probe` logs every key and button transition it sees, and
-  `sayit-rawprobe.ps1` logs device IDs and raw HID bytes, both into
-  `%LOCALAPPDATA%\sayit\run\` with no cleanup. Delete them when you are done.
-  The trigger in its normal mode writes neither.
-
-[SECURITY.md](SECURITY.md) has the full model and how to report an issue privately.
+What is written to disk either way — the history file, the transient audio, what
+transits the clipboard, what the daemon logs can contain, and which diagnostics
+are safe to paste into an issue — is in [SECURITY.md](SECURITY.md).
 
 ## Performance
 

@@ -59,7 +59,14 @@ details in the issue.
   [docs/INSTALL-LINUX.md](docs/INSTALL-LINUX.md#text-injection-on-kwinwayland-ydotool).
 - Dictated text transits the clipboard on every injection, so clipboard
   managers may record it. The previous clipboard is restored about a second
-  later, and only if you have not copied something new meanwhile.
+  later, and only if you have not copied something new meanwhile. The primary
+  selection is cleared after the paste window, so a dictation is not
+  middle-click pastable indefinitely. A non-text clipboard, or one tagged by a
+  password manager with `x-kde-passwordManagerHint`, is never read, saved or
+  re-offered — restoring one stripped of its hint would strip its protection
+  with it.
+- Notifications quote the first 60 characters of a dictation and are sent
+  `--transient`, so a compliant notification server does not retain them.
 - Transient audio lives in `$XDG_RUNTIME_DIR`, a RAM-backed tmpfs that does not
   survive a reboot, and is deleted right after transcription. So does
   `sayit-last-error.log`.
