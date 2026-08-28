@@ -17,16 +17,12 @@
 
 sayit runs [whisper.cpp](https://github.com/ggml-org/whisper.cpp) with Vulkan GPU acceleration and injects the transcribed text into the focused window — terminal, editor, browser, anything. It ships tuned for Swedish via [KB-Whisper](https://huggingface.co/KBLab/kb-whisper-medium), the National Library of Sweden's Whisper fine-tune, which beats OpenAI's `whisper-large-v3` on every Swedish benchmark at a fraction of the size ([KBLab's numbers](https://huggingface.co/KBLab/kb-whisper-medium): 47% lower WER on average for `kb-whisper-large`, around 38% for the default `medium`). It works with any GGML Whisper model and language.
 
-```mermaid
-flowchart LR
-    A["capture<br>16 kHz mono WAV"] -->|release| B["whisper.cpp<br>VAD, beam search,<br>warm daemon, Vulkan"]
-    B --> C["wordlist<br>replacement"]
-    C --> D["inject into<br>focused window"]
-```
-
-The pipeline above is the whole product, and it is the same on both platforms. Only
-the first and the last stage are platform code: how the microphone is opened, and how
-the finished text reaches the focused window.
+Four stages are the whole product, and they are the same on both platforms:
+capture 16 kHz mono WAV, transcribe it with whisper.cpp, apply your wordlist,
+inject the result into the focused window. Only the first and the last are
+platform code — how the microphone is opened, and how the finished text reaches
+the window you are working in. [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) draws
+the pipeline and both platforms' sequences.
 
 ## Documentation
 
