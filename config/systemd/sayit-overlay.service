@@ -1,0 +1,20 @@
+[Unit]
+Description=sayit — the recording pill, on screen for the whole session
+# graphical-session.target rather than default.target: the overlay needs
+# WAYLAND_DISPLAY in the service environment, which the desktop imports when
+# it starts. Started too early it would find no session, exit, and leave no
+# pill. PartOf takes it down again at logout.
+PartOf=graphical-session.target
+After=graphical-session.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/path/to/sayit
+# --resident keeps one pill up from login: dimmed and click-through at rest,
+# lit and above fullscreen while sayit-meter feeds it a recording.
+ExecStart=%h/path/to/sayit/bin/sayit-overlay --resident
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=graphical-session.target

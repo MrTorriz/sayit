@@ -3,46 +3,86 @@
 #
 # Usage:
 #   sayit-overlay              # read raw audio on stdin and render the meter
-#   sayit-overlay --place      # move the pill: drag it, Enter/Escape saves
+#   sayit-overlay --resident   # stay on screen; read audio from the FIFO
+#   sayit-overlay --place      # a pill on its own to drag; Enter/Escape saves
 #   sayit-overlay --check      # exit 0 only if this desktop can host it
 #   sayit-overlay --print-position
 #
 # Input:
-#   Raw mono 16-bit little-endian PCM at 8 kHz on stdin (what sayit-meter
-#   pipes in from pw-cat). The samples are used ONLY to compute a level;
-#   nothing is stored or logged. End of stream ends the overlay.
+#   Raw mono 16-bit little-endian PCM at 8 kHz (what sayit-meter pipes in
+#   from pw-cat), on stdin normally and on $XDG_RUNTIME_DIR/sayit.overlay
+#   under --resident. The samples are used ONLY to compute a level; nothing
+#   is stored or logged. In the piped mode end of stream ends the overlay.
+#
+# The two modes differ only in lifetime. Piped, the pill exists exactly as
+# long as a recording does, which is what sayit-meter starts when nothing
+# else is on screen. Resident, one pill stays up from login (the
+# sayit-overlay.service user unit) and sayit-meter feeds that one instead of
+# starting a second: audio arriving on the FIFO IS the recording signal, and
+# AUDIO_IDLE_S without any is the end of it.
 #
 # Behavior:
 #   - Draws its own borderless window through the layer-shell protocol, so it
-#     floats above normal windows without ever taking focus. In normal mode
-#     the window has an EMPTY input region: clicks pass straight through to
-#     whatever is underneath, so the pill can never be in the way.
+#     floats above normal windows without ever taking focus — the keyboard
+#     is never taken, in any mode.
+#   - Resident and idle it sits on the TOP layer, so a fullscreen window
+#     covers it. A recording raises it to the OVERLAY layer, which is above
+#     fullscreen: while the microphone is live the pill is never hidden. It
+#     is drawn the same either way — movement of the bars, not colour, is
+#     what says a recording is running.
 #   - The sayit mark is the meter: the four bars follow the voice level and
-#     the dot pulses red while the microphone is open but silent. The dot is
-#     larger here than in docs/logo.svg and sits on the mark's centre line, so
-#     it reads as a lamp rather than as the full stop it is in the logo.
+#     stand still when nothing is driving them. Same shape
+#     as docs/logo.svg, different numbers: that pill is a different size, so
+#     the scale and the lamp's diameter are tuned for this one.
 #   - Position is remembered in $XDG_CONFIG_HOME/sayit/overlay-position
 #     (default ~/.config/sayit/). Without one it starts bottom centre.
+#   - A RESIDENT pill can be dragged at any time, with no mode to enter: it
+#     keeps a normal input region, so a click on its own 110x40 px is taken
+#     by the pill and a drag moves it. The piped pill keeps the empty region
+#     and stays click-through — it is on screen for seconds at a time and
+#     must never be in the way, and there is nothing to move it to.
+#     --place therefore only opens a pill of its own when no resident is
+#     running; against one, it says the pill is already draggable.
 #   - Exits silently when the desktop cannot host it (no Wayland session, no
 #     layer-shell support, missing bindings) — sayit-meter then falls back to
-#     the Plasma OSD styles. Feedback must never break dictation.
+#     the Plasma OSD styles. Feedback must never break dictation. --resident
+#     is the exception: nothing downstream depends on it, and reporting the
+#     failure is what lets the service unit retry once the session is up.
 #
 # This is the one script in bin/ that is Python rather than bash: it owns a
 # drawn window and an animation loop, which bash cannot express.
 #
 # Exit codes:
-#   0  Always, except --check on a desktop that cannot host the overlay
-#   1  --check only: no Wayland session, missing bindings, or no display
+#   0  Always, except --check and --resident on a desktop that cannot host it
+#   1  --check and --resident only: no Wayland session, missing bindings, no
+#      display, or (--resident) no FIFO to read
 
 import math
 import os
+import stat
 import struct
 import sys
+import time
 
-WIDTH, HEIGHT, RADIUS = 110, 40, 20
-BORDER = 1.5
+# 88x32 rather than a rounder 110x40 for one reason: a panel. The pill is
+# usually parked in one, and at 40 tall it filled a 48 px panel edge to edge
+# and read as jammed in. At 32 it clears the panel by EDGE_MARGIN top and
+# bottom, which is what centres it there. Everything below is proportional
+# to these two, so changing them rescales the mark rather than cropping it.
+WIDTH, HEIGHT, RADIUS = 88, 32, 16
+BORDER = 1.2
 EDGE_MARGIN = 8                     # keeps the pill off the very screen edge
 FPS_MS = 33                         # ~30 fps redraw, independent of audio rate
+# Idle costs nothing to look at, so it must cost nothing to draw either: at
+# rest the pill is a still image and a 4 fps timer is only there to notice
+# that audio has started. A resident pill runs for the whole session.
+IDLE_FPS_MS = 250
+AUDIO_IDLE_S = 0.4                  # no audio for this long = not recording
+# The resting pill is drawn exactly like a recording one: 1.0 for both. Only
+# the bars' MOVEMENT separates the two states. Lower these to fade the pill
+# between dictations instead (0.55 / 0.22 gives a clearly greyed-out pill).
+IDLE_INK = 1.0                      # bars and border at rest
+IDLE_LAMP = 1.0                     # the lamp at rest
 CHUNK = 2000                        # 125 ms of 8 kHz s16 mono
 EASE = 0.35                         # level smoothing per frame
 PLACE_TIMEOUT_FRAMES = 180 * 1000 // FPS_MS   # --place gives up after 3 min
@@ -50,16 +90,17 @@ PLACE_TIMEOUT_FRAMES = 180 * 1000 // FPS_MS   # --place gives up after 3 min
 LEVELS = [90, 200, 450, 900, 1800, 3500, 7000]
 
 # --- mark geometry --------------------------------------------------------
-# The mark is expressed in the same coordinate system as docs/logo.svg (a 96
+# The mark is expressed in the same coordinate system as icons/*.svg (a 96
 # unit view box) and scaled into the pill, rather than in pre-scaled pixel
 # values. Keeping the mark's own units means this geometry can be read against
 # the logo and against the Windows indicator without decoding a second set of
 # numbers.
 #
 # x, width, height at level 0, height at level 7. The first three come straight
-# from icons/*.svg; the fourth continues the same 20-unit spacing and its
-# heights sit between the neighbours it separates, so the row still rises and
-# falls like a waveform rather than ending on a step.
+# from icons/*.svg, which keep the older three-bar mark; the fourth continues
+# the same 20-unit spacing and its heights sit between the neighbours it
+# separates, so the row still rises and falls like a waveform rather than
+# ending on a step. docs/logo.svg carries this same four-bar row.
 BARS = [
     (14.0, 12.0, 12.0, 44.0),
     (34.0, 12.0, 18.0, 64.0),
@@ -69,18 +110,18 @@ BARS = [
 BASELINE = 74.0
 MARK_TOP = BASELINE - 64.0          # top of the tallest bar at level 7
 
-# The full stop. docs/logo.svg sets it on the baseline as punctuation and 12
-# across; here it is larger and sits on the mark's vertical centre line, so that
-# on a pill which stays up while you speak it reads as a lamp that is lit while
-# the microphone is open rather than as a period ending a sentence. The mark in
-# docs/logo.svg and icons/ is unchanged: this geometry belongs to the meter.
+# The lamp. It sits on the bar row's vertical centre line, so that on a pill
+# which stays up while you speak it reads as a lamp that is lit while the
+# microphone is open. docs/logo.svg centres it on its pill instead, about 5%
+# of a tall bar higher, and its diameter relative to a bar is the same 2.33 as
+# here. icons/*.svg still carry the older three-bar mark with a full stop on
+# the baseline.
 DOT_D = 28.0
 DOT_X = 116.0
 
-MARK_SCALE = 0.490
+MARK_SCALE = 0.392                  # 0.490 * 32/40 — the mark keeps its shape
 MARK_LEFT, MARK_RIGHT = BARS[0][0], DOT_X + DOT_D
-# The dot's right edge is what bounds the mark now, not the 86 the logo's own
-# bounding box ends at.
+# The lamp's right edge is what bounds the mark, not the last bar's.
 OFFSET_X = ((WIDTH - (MARK_RIGHT - MARK_LEFT) * MARK_SCALE) / 2.0
             - MARK_LEFT * MARK_SCALE)
 OFFSET_Y = ((HEIGHT - (BASELINE - MARK_TOP) * MARK_SCALE) / 2.0
@@ -90,6 +131,70 @@ OFFSET_Y = ((HEIGHT - (BASELINE - MARK_TOP) * MARK_SCALE) / 2.0
 def config_path():
     base = os.environ.get("XDG_CONFIG_HOME") or os.path.expanduser("~/.config")
     return os.path.join(base, "sayit", "overlay-position")
+
+
+def fifo_path():
+    base = os.environ.get("XDG_RUNTIME_DIR") or "/tmp"
+    return os.path.join(base, "sayit.overlay")
+
+
+def pid_path():
+    return fifo_path() + ".pid"
+
+
+def open_fifo():
+    """The resident's audio inlet, or None when it cannot be created.
+
+    Opened O_RDWR on purpose: holding a writer of our own means the reader
+    never sees EOF when the meter's pw-cat exits, so a recording ending is
+    simply audio stopping — no hangup to catch and no reopen dance.
+    """
+    path = fifo_path()
+    try:
+        if os.path.exists(path) and not stat.S_ISFIFO(os.stat(path).st_mode):
+            os.unlink(path)         # something else took the name
+        if not os.path.exists(path):
+            os.mkfifo(path, 0o600)
+        return os.open(path, os.O_RDWR | os.O_NONBLOCK)
+    except OSError:
+        return None
+
+
+def write_pid():
+    try:
+        with open(pid_path(), "w", encoding="utf-8") as fh:
+            fh.write("%d\n" % os.getpid())
+    except OSError:
+        pass                        # sayit-meter then just pipes its own
+
+
+def clear_runtime():
+    """Take the inlet down with us, so nothing writes into a dead FIFO."""
+    for path in (fifo_path(), pid_path()):
+        try:
+            os.unlink(path)
+        except OSError:
+            pass
+
+
+def resident_pid():
+    """PID of a running resident overlay, or None.
+
+    Identity-checked against the process's own command line, the same rule
+    the rest of sayit uses for PIDs read back from state files: a recycled
+    PID belonging to something else must never be signalled.
+    """
+    try:
+        with open(pid_path(), encoding="utf-8") as fh:
+            pid = int(fh.read().strip())
+    except (OSError, ValueError):
+        return None
+    try:
+        with open("/proc/%d/cmdline" % pid, "rb") as fh:
+            cmdline = fh.read()
+    except OSError:
+        return None
+    return pid if b"sayit-overlay" in cmdline else None
 
 
 def read_position():
@@ -127,6 +232,28 @@ def write_position(x, y):
         pass                        # a read-only home must not break dictation
 
 
+def draw_levels(active):
+    """Opacities for the bars and border, and for the lamp.
+
+    The pill looks the same whether or not it is recording: full ink, lamp
+    lit. MOVEMENT is what distinguishes the two, and movement alone — the
+    bars rise and fall while audio drives them and stand still otherwise.
+    Nothing else on the pill ever animates. Dimming the resting pill was
+    tried and rejected: a permanent fixture that greys itself out reads as
+    broken rather than as idle.
+
+    IDLE_INK and IDLE_LAMP are the two knobs. At 1.0 (the default) resting
+    and recording are drawn identically; lower them to fade the pill between
+    dictations instead.
+
+    Made a plain function so the rule is testable without a window; on_draw
+    does nothing but paint what it returns.
+    """
+    ink = 1.0 if active else IDLE_INK
+    lamp = 1.0 if active else IDLE_LAMP
+    return ink, lamp
+
+
 def rounded_rect(cr, x, y, w, h, r):
     r = min(r, w / 2, h / 2)
     cr.new_sub_path()
@@ -138,32 +265,55 @@ def rounded_rect(cr, x, y, w, h, r):
 
 
 class Overlay:
-    def __init__(self, gtk, layer_shell, gdk, place_mode):
+    def __init__(self, gtk, layer_shell, gdk, place_mode, resident=False):
         self.Gtk, self.GtkLayerShell = gtk, layer_shell
         self.Gdk = gdk
         from gi.repository import GLib
         self.GLib = GLib
         self.place_mode = place_mode
+        self.resident = resident
+        # "active" means the microphone is open: the lamp is lit and the pill
+        # sits above fullscreen. A piped overlay only ever exists during a
+        # recording, so it starts active and stays that way; a resident one
+        # starts at rest and follows the audio. A window opened purely to be
+        # placed reads no audio at all and must never claim to be listening.
+        self.active = not resident and not place_mode
+        self.last_audio = 0.0
+        self.tick_ms = FPS_MS
+        self.tick_id = None
         self.buf = b""               # partial PCM between reads
         self.level = 0.0             # target, from the audio stream
         self.shown = 0.0             # eased value actually drawn
         self.frame = 0
         self.drag = None
 
+        self.win = None
+        self.x, self.y = self.start_position()
+        self.build_window()
+
+    def build_window(self):
+        """Create the pill's window.
+
+        Built once. An empty input region cannot be taken back on a mapped
+        layer-shell surface — setting a full region over it, passing None,
+        and hiding and reshowing the window were all measured on KWin, and
+        in every case the compositor kept routing pointer events to the
+        window underneath. So the decision is made here, before the window
+        is mapped, and never revisited: a resident pill is draggable for its
+        whole life, a piped one is click-through for its whole life.
+        """
+        gtk, layer_shell, gdk = self.Gtk, self.GtkLayerShell, self.Gdk
         self.win = gtk.Window()
         layer_shell.init_for_window(self.win)
-        layer_shell.set_layer(self.win, layer_shell.Layer.OVERLAY)
         # Anchoring to two adjacent edges turns the margins into a plain
         # top-left position, which is what a freely moved pill needs.
         layer_shell.set_anchor(self.win, layer_shell.Edge.TOP, True)
         layer_shell.set_anchor(self.win, layer_shell.Edge.LEFT, True)
-        # ON_DEMAND while placing: clicking the pill focuses it, so Enter or
-        # Escape works — but the keyboard is never held hostage if this
-        # process hangs. NONE otherwise: the meter takes no input at all.
-        layer_shell.set_keyboard_mode(
-            self.win,
-            layer_shell.KeyboardMode.ON_DEMAND if place_mode
-            else layer_shell.KeyboardMode.NONE)
+        # -1 = ignore other surfaces' exclusive zones. Without it the
+        # compositor pushes the pill clear of the panel's reserved strip, so
+        # the top of the screen is unreachable however far up it is dragged.
+        # The pill reserves nothing of its own in return.
+        layer_shell.set_exclusive_zone(self.win, -1)
 
         self.win.set_app_paintable(True)
         visual = self.win.get_screen().get_rgba_visual()
@@ -173,26 +323,34 @@ class Overlay:
         self.win.connect("draw", self.on_draw)
         self.win.connect("realize", self.on_realize)
 
-        if place_mode:
-            self.win.add_events(gdk.EventMask.BUTTON_PRESS_MASK
-                                | gdk.EventMask.BUTTON_RELEASE_MASK
-                                | gdk.EventMask.POINTER_MOTION_MASK)
-            self.win.connect("button-press-event", self.on_press)
-            self.win.connect("button-release-event", self.on_release)
-            self.win.connect("motion-notify-event", self.on_motion)
-            self.win.connect("key-press-event", self.on_key)
+        self.win.add_events(gdk.EventMask.BUTTON_PRESS_MASK
+                            | gdk.EventMask.BUTTON_RELEASE_MASK
+                            | gdk.EventMask.POINTER_MOTION_MASK)
+        self.win.connect("button-press-event", self.on_press)
+        self.win.connect("button-release-event", self.on_release)
+        self.win.connect("motion-notify-event", self.on_motion)
+        self.win.connect("key-press-event", self.on_key)
 
-        self.x, self.y = self.start_position()
+        self.apply_layer()
+        self.apply_keyboard()
         self.apply_position()
 
     # -- geometry ---------------------------------------------------------
     def monitor_size(self):
+        """The WHOLE screen, not the work area.
+
+        The work area is what is left once panels have taken their share,
+        and clamping to it puts a floor under the pill a panel's height
+        below the top of the screen — exactly where the user cannot drop it
+        onto the panel. The pill is a small always-on-top marker, not a
+        tiled window; it is allowed anywhere the screen goes.
+        """
         display = self.Gdk.Display.get_default()
         monitor = (display.get_primary_monitor()
                    or display.get_monitor(0)) if display else None
         if monitor is None:
             return 1920, 1080
-        geo = monitor.get_workarea()
+        geo = monitor.get_geometry()
         return geo.width, geo.height
 
     def start_position(self):
@@ -213,16 +371,63 @@ class Overlay:
         self.GtkLayerShell.set_margin(self.win, self.GtkLayerShell.Edge.LEFT, self.x)
         self.GtkLayerShell.set_margin(self.win, self.GtkLayerShell.Edge.TOP, self.y)
 
+    # -- window state -----------------------------------------------------
+    def apply_layer(self):
+        """OVERLAY is above fullscreen windows, TOP is below them.
+
+        A lit pill has to be visible over anything, or it would claim the
+        microphone is closed by being hidden. A resting one has nothing to
+        say and must not sit on top of a film.
+        """
+        shelf = (self.GtkLayerShell.Layer.OVERLAY
+                 if (self.active or self.place_mode or not self.resident)
+                 else self.GtkLayerShell.Layer.TOP)
+        try:
+            self.GtkLayerShell.set_layer(self.win, shelf)
+        except Exception:           # a compositor that will not restack it
+            pass                    # is still a compositor showing the pill
+
+    def apply_keyboard(self):
+        # ON_DEMAND while placing: clicking the pill focuses it, so Enter or
+        # Escape works — but the keyboard is never held hostage if this
+        # process hangs. NONE otherwise: the meter takes no input at all.
+        self.GtkLayerShell.set_keyboard_mode(
+            self.win,
+            self.GtkLayerShell.KeyboardMode.ON_DEMAND if self.place_mode
+            else self.GtkLayerShell.KeyboardMode.NONE)
+
     def on_realize(self, _widget):
-        if self.place_mode:
+        """Empty input region = every click passes through to the window
+        below. Applied once and never taken back — see build_window.
+
+        Only the piped pill gets it. That one exists for the seconds a
+        recording lasts and must never be in the way, so it takes no input
+        at all. The resident pill is a fixture the user has to be able to
+        move, and a fixture that cannot be grabbed is worse than one that
+        catches a click on its own 110x40 px. Everywhere else on screen is
+        unaffected either way.
+        """
+        if self.resident or self.place_mode:
             return
-        # Empty input region: every click passes through to the window below.
         import cairo
         window = self.win.get_window()
         if window is not None:
             window.input_shape_combine_region(cairo.Region(), 0, 0)
 
-    # -- dragging (--place only) -----------------------------------------
+    def set_active(self, active):
+        """Recording started or stopped. Resident mode only."""
+        if active == self.active:
+            return
+        self.active = active
+        if not active:
+            self.level = 0.0
+        self.apply_layer()
+        self.win.queue_draw()
+
+    # -- dragging ---------------------------------------------------------
+    # Reachable exactly when the window has an input region: the resident
+    # pill always, a window opened only to be placed always, the piped pill
+    # never. No mode to enter, nothing to remember: grab it and move it.
     def on_press(self, _w, event):
         self.drag = (event.x, event.y)
         return True
@@ -243,6 +448,8 @@ class Overlay:
         return True
 
     def on_key(self, _w, event):
+        if not self.place_mode:
+            return False
         name = self.Gdk.keyval_name(event.keyval)
         if name in ("Escape", "Return", "KP_Enter", "space", "q"):
             write_position(self.x, self.y)
@@ -257,11 +464,14 @@ class Overlay:
         cr.paint()
         cr.set_operator(cairo.Operator.OVER)
 
+        ink, lamp = draw_levels(self.active)
+        border = ink
+
         rounded_rect(cr, BORDER / 2, BORDER / 2,
                      WIDTH - BORDER, HEIGHT - BORDER, RADIUS)
         cr.set_source_rgb(0, 0, 0)
         cr.fill_preserve()
-        cr.set_source_rgb(1, 1, 1)
+        cr.set_source_rgba(1, 1, 1, border)
         cr.set_line_width(BORDER)
         cr.stroke()
 
@@ -278,31 +488,46 @@ class Overlay:
             rounded_rect(cr, OFFSET_X + bx * MARK_SCALE,
                          OFFSET_Y + (BASELINE - height) * MARK_SCALE,
                          w, height * MARK_SCALE, w / 2)
-            cr.set_source_rgb(1, 1, 1)
+            cr.set_source_rgba(1, 1, 1, ink)
             cr.fill()
 
-        # The dot pulses while the mic is open but silent, and burns steady
-        # red as soon as the level rises: "open" vs "hearing you".
-        alpha = 1.0
-        if self.level < 0.5:
-            alpha = 0.45 + 0.55 * (0.5 + 0.5 * math.sin(self.frame / 7.0))
+        # The lamp burns steady, at rest and while recording alike. It used
+        # to pulse through silence; that was a second thing moving on a pill
+        # that is now up all day, and the bars already carry the signal.
         cr.arc(OFFSET_X + (DOT_X + DOT_D / 2.0) * MARK_SCALE,
                OFFSET_Y + (MARK_TOP + BASELINE) / 2.0 * MARK_SCALE,
                DOT_D / 2.0 * MARK_SCALE, 0, 2 * math.pi)
-        cr.set_source_rgba(1.0, 0.30, 0.30, alpha)
+        cr.set_source_rgba(1.0, 0.30, 0.30, lamp)
         cr.fill()
         return False
 
     def tick(self):
         self.frame += 1
-        if self.place_mode:                 # demo motion while positioning
-            self.level = 3.5 + 3.5 * math.sin(self.frame / 9.0)
-            if self.frame > PLACE_TIMEOUT_FRAMES:   # left open by mistake
-                write_position(self.x, self.y)
-                self.Gtk.main_quit()
-                return False
+        if self.place_mode and self.frame > PLACE_TIMEOUT_FRAMES:
+            write_position(self.x, self.y)      # left open by mistake
+            self.Gtk.main_quit()
+            return False
+        if self.resident and self.active:
+            # Audio stopping IS the recording ending: the meter's pw-cat is
+            # gone. Held open by our own writer, the FIFO never reports that
+            # as a hangup, so the silence is what has to be noticed. Checked
+            # while placing too, or a recording that ended mid-drag would
+            # leave the lamp lit with the microphone long since closed.
+            if time.monotonic() - self.last_audio > AUDIO_IDLE_S:
+                self.set_active(False)
+
         self.shown += (self.level - self.shown) * EASE
-        self.win.queue_draw()
+        # At rest the drawing is a still image; redrawing it 30 times a
+        # second for the whole session would be pure waste. Redraw until the
+        # eased level has settled, then stop asking.
+        if self.shown > 0.01 or self.active or self.place_mode:
+            self.win.queue_draw()
+
+        want = FPS_MS if (self.active or self.place_mode) else IDLE_FPS_MS
+        if want != self.tick_ms:
+            self.tick_ms = want
+            self.tick_id = self.GLib.timeout_add(want, self.tick)
+            return False                    # the new timer replaces this one
         return True
 
     # -- audio ------------------------------------------------------------
@@ -312,18 +537,27 @@ class Overlay:
         stdin read holds that stream's lock, and the interpreter then dies
         with a fatal error at shutdown instead of exiting when told to."""
         if condition & (self.GLib.IOCondition.HUP | self.GLib.IOCondition.ERR):
-            self.Gtk.main_quit()
-            return False
+            if not self.resident:
+                self.Gtk.main_quit()
+                return False
+            return True                     # the FIFO outlives any one writer
         try:
             chunk = os.read(fd, CHUNK)
         except BlockingIOError:
             return True
         except OSError:
-            self.Gtk.main_quit()
-            return False
+            if not self.resident:
+                self.Gtk.main_quit()
+                return False
+            return True
         if not chunk:                       # end of stream: recording stopped
-            self.Gtk.main_quit()
-            return False
+            if not self.resident:
+                self.Gtk.main_quit()
+                return False
+            return True
+        if self.resident:
+            self.last_audio = time.monotonic()
+            self.set_active(True)
         self.buf += chunk
         while len(self.buf) >= CHUNK:
             block, self.buf = self.buf[:CHUNK], self.buf[CHUNK:]
@@ -333,11 +567,12 @@ class Overlay:
             self.level = float(sum(1 for t in LEVELS if rms >= t))
         return True
 
-    def run(self):
+    def run(self, audio_fd=None):
         import gi
         from gi.repository import GLib
         self.win.show_all()
-        GLib.timeout_add(FPS_MS, self.tick)
+        self.tick_ms = FPS_MS if (self.active or self.place_mode) else IDLE_FPS_MS
+        self.tick_id = GLib.timeout_add(self.tick_ms, self.tick)
         try:                                # GLibUnix since pygobject 3.52
             gi.require_version("GLibUnix", "2.0")
             from gi.repository import GLibUnix
@@ -346,11 +581,14 @@ class Overlay:
             add_signal, add_fd = GLib.unix_signal_add, GLib.unix_fd_add_full
         for sig in (2, 15, 1):              # INT, TERM, HUP
             add_signal(GLib.PRIORITY_DEFAULT, sig, self.quit)
-        if not self.place_mode:
-            fd = sys.stdin.fileno()
-            os.set_blocking(fd, False)
+        # Resident, the audio arrives on the FIFO; piped, on stdin. Placing a
+        # pill that was opened only to be placed reads neither.
+        if audio_fd is None and not self.place_mode:
+            audio_fd = sys.stdin.fileno()
+            os.set_blocking(audio_fd, False)
+        if audio_fd is not None:
             add_fd(
-                GLib.PRIORITY_DEFAULT, fd,
+                GLib.PRIORITY_DEFAULT, audio_fd,
                 GLib.IOCondition.IN | GLib.IOCondition.HUP
                 | GLib.IOCondition.ERR,
                 self.on_audio)
@@ -369,9 +607,13 @@ def main():
         return 0
     place_mode = "--place" in args
     check_only = "--check" in args
+    resident = "--resident" in args
+    # --resident reports its failures so the service unit can retry; every
+    # other mode stays silent so it can never break dictation.
+    strict = check_only or resident
 
     if not os.environ.get("WAYLAND_DISPLAY"):
-        return 1 if check_only else 0       # not a Wayland session: no overlay
+        return 1 if strict else 0           # not a Wayland session: no overlay
     try:
         import gi
         gi.require_version("Gtk", "3.0")
@@ -380,19 +622,37 @@ def main():
         from gi.repository import Gdk, Gtk, GtkLayerShell  # noqa: F401
         import cairo                        # noqa: F401
     except (ImportError, ValueError):
-        return 1 if check_only else 0       # bindings missing: silent no-op
+        return 1 if strict else 0           # bindings missing: silent no-op
 
     if not Gtk.init_check()[0]:
-        return 1 if check_only else 0
+        return 1 if strict else 0
     if check_only:
         return 0                            # everything needed is present
+
+    # A resident pill is draggable at all times, so there is nothing to open
+    # and nothing to switch: say so rather than drawing a second pill on top
+    # of the one the user is looking at.
+    if place_mode and not resident and resident_pid() is not None:
+        sys.stderr.write(
+            "the pill on screen can be dragged as it is — just move it\n")
+        return 0
+
+    audio_fd = None
+    if resident:
+        audio_fd = open_fifo()
+        if audio_fd is None:
+            return 1                        # no inlet: the unit should retry
+        write_pid()
     try:
-        Overlay(Gtk, GtkLayerShell, Gdk, place_mode).run()
+        Overlay(Gtk, GtkLayerShell, Gdk, place_mode, resident).run(audio_fd)
     except Exception:                       # never fail the dictation pipeline
         if os.environ.get("SAYIT_DEBUG"):
             import traceback
             traceback.print_exc()
         return 0
+    finally:
+        if resident:
+            clear_runtime()
     return 0
 
 

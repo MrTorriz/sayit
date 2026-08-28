@@ -53,6 +53,26 @@ if [[ "$STYLE" == "overlay" ]]; then
     "$REPO_ROOT/bin/sayit-overlay" --check 2>/dev/null || STYLE="mark"
 fi
 
+# A resident overlay (sayit-overlay --resident, normally the sayit-overlay
+# user service) already keeps a pill on screen. Feed THAT one through its
+# FIFO instead of starting a second: the bytes are the same raw PCM a piped
+# overlay would have read on stdin, and audio arriving is what tells the
+# resident a recording has begun.
+OVERLAY_FIFO="${XDG_RUNTIME_DIR:-/tmp}/sayit.overlay"
+
+# The PID is trusted only after the same identity check the rest of sayit
+# uses: writing into a FIFO whose reader has died would block this meter
+# forever, and a recycled PID must never be mistaken for the overlay.
+resident_overlay() {
+    local pid cmdline
+    [[ -p "$OVERLAY_FIFO" ]] || return 1
+    pid=$(cat "$OVERLAY_FIFO.pid" 2>/dev/null) || return 1
+    [[ "$pid" =~ ^[0-9]+$ ]] || return 1
+    cmdline=$(tr '\0' ' ' < "/proc/$pid/cmdline" 2>/dev/null) || return 1
+    [[ "$cmdline" == *sayit-overlay* ]] || return 1
+    return 0
+}
+
 OSD=()
 OSD_ACTIVE=0
 SUFFIX=""
@@ -157,7 +177,12 @@ trap cleanup EXIT
 trap 'cleanup; exit 0' INT TERM HUP
 
 set -m
-if [[ "$STYLE" == "overlay" ]]; then
+if [[ "$STYLE" == "overlay" ]] && resident_overlay; then
+    # No renderer of our own: the capture stream alone, pointed at the pill
+    # that is already up. Stopping this meter closes the FIFO's only writer,
+    # which is how the resident learns the recording ended.
+    pw-cat "${ARGS[@]}" - 2>/dev/null > "$OVERLAY_FIFO" &
+elif [[ "$STYLE" == "overlay" ]]; then
     pw-cat "${ARGS[@]}" - 2>/dev/null \
         | "$REPO_ROOT/bin/sayit-overlay" >/dev/null 2>&1 &
 else

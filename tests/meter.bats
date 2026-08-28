@@ -234,3 +234,57 @@ install_icons() {
     [ "$status" -eq 0 ]
     ! grep -q "showText" "$STUB_CTL/calls.log"
 }
+
+# --- resident overlay -----------------------------------------------------
+# A resident sayit-overlay already has a pill on screen. The meter must feed
+# that one through its FIFO rather than starting a second renderer, and must
+# only do so when the PID beside the FIFO really belongs to an overlay.
+
+# Stands in for a running resident: a process whose command line names
+# sayit-overlay, holding the FIFO open as its reader.
+start_resident() {
+    mkfifo "$XDG_RUNTIME_DIR/sayit.overlay"
+    bash -c 'exec -a "sayit-overlay --resident" cat "$0"' \
+        "$XDG_RUNTIME_DIR/sayit.overlay" > "$STUB_CTL/fifo.out" &
+    RESIDENT=$!
+    echo "$RESIDENT" > "$XDG_RUNTIME_DIR/sayit.overlay.pid"
+}
+
+@test "a resident overlay is fed instead of a second pill being started" {
+    start_resident
+    touch "$STUB_CTL/pw-cat.loud"
+    run "$METER"
+    [ "$status" -eq 0 ]
+    ! grep -q "overlay-start" "$STUB_CTL/calls.log"
+    grep -q "pw-cat" "$STUB_CTL/calls.log"
+    kill "$RESIDENT" 2>/dev/null || true
+    [ -s "$STUB_CTL/fifo.out" ]             # the audio reached the pill
+}
+
+@test "a FIFO whose PID is not an overlay never gets written to" {
+    # Writing into a FIFO with no reader blocks forever, so a stale PID file
+    # must send the meter back to starting its own renderer.
+    mkfifo "$XDG_RUNTIME_DIR/sayit.overlay"
+    echo 999999 > "$XDG_RUNTIME_DIR/sayit.overlay.pid"
+    run "$METER"
+    [ "$status" -eq 0 ]
+    grep -q "overlay-start" "$STUB_CTL/calls.log"
+}
+
+@test "a FIFO with a live PID belonging to something else is refused" {
+    mkfifo "$XDG_RUNTIME_DIR/sayit.overlay"
+    sleep 30 &
+    other=$!
+    echo "$other" > "$XDG_RUNTIME_DIR/sayit.overlay.pid"
+    run "$METER"
+    kill "$other" 2>/dev/null || true
+    [ "$status" -eq 0 ]
+    grep -q "overlay-start" "$STUB_CTL/calls.log"
+}
+
+@test "a PID file without a FIFO is ignored" {
+    echo $$ > "$XDG_RUNTIME_DIR/sayit.overlay.pid"
+    run "$METER"
+    [ "$status" -eq 0 ]
+    grep -q "overlay-start" "$STUB_CTL/calls.log"
+}
