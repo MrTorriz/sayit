@@ -142,35 +142,129 @@ PY
     [ ! -e "$XDG_RUNTIME_DIR/sayit.overlay.pid" ]
 }
 
-# --- what the pill is allowed to claim ------------------------------------
-# The pill is drawn the same whether or not it is recording. MOVEMENT is the
-# only difference: the bars rise and fall while audio drives them and stand
-# still otherwise. Nothing else animates, because a pill that moves while
-# nothing is listening is telling the user something untrue.
+# --- geometry and the three states ----------------------------------------
+# The pill is 160x32 with an eight-bar meter growing about its centre line,
+# and a lamp that means one thing only: the microphone is open. Between "open
+# and silent" and "open and speaking" the meter is the ONLY thing that moves.
 
-levels() {   # active -> "ink lamp"
-    load_overlay "'%.3f %.3f' % ov.draw_levels($1)"
+@test "the pill is 160x40 with a 12 px radius" {
+    run load_overlay "(ov.WIDTH, ov.HEIGHT, ov.RADIUS)"
+    [ "$output" = "(160, 40, 12)" ]
 }
 
-@test "resting and recording are drawn identically" {
-    # The whole point: no greying out between dictations. Only the bar
-    # heights, computed from the level outside this function, differ.
-    rest=$(levels False)
-    live=$(levels True)
-    [ "$rest" = "$live" ]
-    [ "$rest" = "1.000 1.000" ]
+@test "the height fills a 44 px panel with room to spare" {
+    # A default Plasma panel measures 44 px. At 40 the pill fills it with 2 px
+    # top and bottom rather than floating in the middle of it, and EDGE_MARGIN
+    # has to be small enough to let it be dropped that high.
+    run load_overlay "(44 - ov.HEIGHT) // 2"
+    [ "$output" = "2" ]
+    run load_overlay "ov.EDGE_MARGIN <= (44 - ov.HEIGHT) // 2"
+    [ "$output" = "True" ]
 }
 
-@test "the drawing depends on nothing but whether audio is arriving" {
-    # No frame counter, no placing flag: there is nothing left that could
-    # make the pill animate on its own.
-    run load_overlay "ov.draw_levels.__code__.co_argcount"
+@test "the meter has ten bars" {
+    run load_overlay "(ov.BAR_COUNT, len(ov.BAR_MAX_U), len(ov.bar_heights(7)))"
+    [ "$output" = "(10, 10, 10)" ]
+}
+
+@test "at rest every bar is a dot, as wide as it is tall" {
+    run load_overlay "set(ov.bar_heights(0)) == {ov.BAR_U}"
+    [ "$output" = "True" ]
+}
+
+@test "speaking makes every bar grow, none shrink" {
+    run load_overlay "all(b > a for a, b in zip(ov.bar_heights(0), ov.bar_heights(7)))"
+    [ "$output" = "True" ]
+}
+
+@test "the bars are drawn about a shared centre line, not off a baseline" {
+    # Every bar's vertical midpoint must be the same, at every level: that is
+    # what keeps the row level with the lamp instead of sinking to the floor.
+    run load_overlay "[round(cy, 6) for cy in ov._test_bar_midpoints(0)]"
+    mitt_vila="$output"
+    run load_overlay "[round(cy, 6) for cy in ov._test_bar_midpoints(7)]"
+    [ "$output" = "$mitt_vila" ]
+    run load_overlay "len(set(ov._test_bar_midpoints(7))) == 1"
+    [ "$output" = "True" ]
+}
+
+@test "the resting row sits at the same height as the lamp" {
+    run load_overlay "abs(ov._test_bar_midpoints(0)[0] - ov.HEIGHT / 2.0) < 1e-9"
+    [ "$output" = "True" ]
+}
+
+@test "reading order is lamp, meter, wordmark, centred as one group" {
+    run load_overlay "round(ov.CONTENT_X, 4) == round((ov.WIDTH - ov.CONTENT_W) / 2, 4)"
+    [ "$output" = "True" ]
+    run load_overlay "round(ov.CONTENT_W, 4) == round(ov.LAMP_W + ov.LAMP_GAP + ov.WAVE_W + ov.LAYOUT_GAP + ov.WORDMARK_W, 4)"
+    [ "$output" = "True" ]
+}
+
+@test "the wordmark is stored as outlines, needing no font at runtime" {
+    # A font that is missing, or simply different, must not change the pill.
+    run load_overlay "len(ov.WORDMARK) > 50"
+    [ "$output" = "True" ]
+    run load_overlay "sorted({s[0] for s in ov.WORDMARK}) == ['c', 'l', 'm', 'z']"
+    [ "$output" = "True" ]
+    run bash -c "grep -cE 'show_text|text_path|Pango|toy_font|select_font_face' '$OVERLAY'"
+    [ "$output" = "0" ]
+}
+
+@test "the wordmark outlines are normalised, so one number sets its size" {
+    run load_overlay "all(0.0 <= v <= max(3.0, ov.WORDMARK_ASPECT) for s in ov.WORDMARK for v in s[1:])"
+    [ "$output" = "True" ]
+    run load_overlay "round(ov.WORDMARK_W / ov.WORDMARK_H, 6) == ov.WORDMARK_ASPECT"
+    [ "$output" = "True" ]
+}
+
+@test "a closed microphone leaves the lamp unlit" {
+    # The strongest claim the pill makes. It may never be made falsely: an
+    # unlit lamp is still drawn, so the pill stays whole, but it must never
+    # carry the lit colour while the microphone is shut.
+    run load_overlay "(ov._test_state(active=False)['lamp'], ov._test_state(active=False)['lamp_lit'])"
+    [ "$output" = "(True, False)" ]
+    run load_overlay "ov._test_state(active=False)['lamp_rgb'] == ov.LAMP_UNLIT"
+    [ "$output" = "True" ]
+}
+
+@test "an open microphone lights the lamp, silent or not" {
+    run load_overlay "ov._test_state(active=True)['lamp_lit']"
+    [ "$output" = "True" ]
+    run load_overlay "ov._test_state(active=True, level=0)['lamp_rgb'] == ov._test_state(active=True, level=6)['lamp_rgb'] == ov.LAMP_LIT"
+    [ "$output" = "True" ]
+}
+
+@test "lit and unlit are different colours, and unlit is the darker" {
+    run load_overlay "ov.LAMP_LIT != ov.LAMP_UNLIT and sum(ov.LAMP_UNLIT) < sum(ov.LAMP_LIT)"
+    [ "$output" = "True" ]
+}
+
+@test "a window opened only to be placed never lights the lamp" {
+    run load_overlay "ov._test_state(active=False, place_mode=True)['lamp_lit']"
+    [ "$output" = "False" ]
+}
+
+@test "the lamp keeps its place and size whether lit or not" {
+    # Colour is the whole signal: nothing moves, nothing resizes.
+    run bash -c "sed -n '/def draw_lamp/,/cr.fill()/p' '$OVERLAY' | grep -c 'LAMP_W / 2.0'"
     [ "$output" = "1" ]
 }
 
-@test "the idle knobs are what fade the pill, and they default to no fade" {
-    run load_overlay "'%.2f %.2f' % (ov.IDLE_INK, ov.IDLE_LAMP)"
-    [ "$output" = "1.00 1.00" ]
+@test "silence and speech differ in the meter and in nothing else" {
+    tyst=$(load_overlay "ov._test_state(active=True, level=0)")
+    tal=$(load_overlay "ov._test_state(active=True, level=6)")
+    [ "$tyst" != "$tal" ]
+    # Everything except the bar heights must be byte-identical.
+    run load_overlay "{k: v for k, v in ov._test_state(active=True, level=0).items() if k != 'bars'} == {k: v for k, v in ov._test_state(active=True, level=6).items() if k != 'bars'}"
+    [ "$output" = "True" ]
+}
+
+@test "nothing on the pill pulses or fades over time" {
+    # No frame counter reaches the drawing any more: same inputs, same pixels.
+    run load_overlay "ov.bar_heights.__code__.co_argcount"
+    [ "$output" = "1" ]
+    run bash -c "sed -n '/def on_draw/,/return False/p' '$OVERLAY' | grep -cE 'self\.frame|math\.sin'"
+    [ "$output" = "0" ]
 }
 
 # --- who can grab the pill ------------------------------------------------

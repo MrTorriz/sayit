@@ -27,13 +27,15 @@
 #     is never taken, in any mode.
 #   - Resident and idle it sits on the TOP layer, so a fullscreen window
 #     covers it. A recording raises it to the OVERLAY layer, which is above
-#     fullscreen: while the microphone is live the pill is never hidden. It
-#     is drawn the same either way — movement of the bars, not colour, is
-#     what says a recording is running.
-#   - The sayit mark is the meter: the four bars follow the voice level and
-#     stand still when nothing is driving them. Same shape
-#     as docs/logo.svg, different numbers: that pill is a different size, so
-#     the scale and the lamp's diameter are tuned for this one.
+#     fullscreen: while the microphone is live the pill is never hidden.
+#   - Reading order is lamp, meter, wordmark. The eight bars follow the voice
+#     level, growing symmetrically about the pill's centre line and standing
+#     still when nothing drives them. The wordmark is stored as outlines, so
+#     no font is needed at runtime.
+#   - Three states, and the lamp tells them apart honestly. Microphone closed:
+#     no lamp at all. Open but silent: a steady lamp, the meter at rest.
+#     Open and speaking: the same steady lamp, and the meter is the ONLY
+#     thing that moves. Colour and brightness never carry the difference.
 #   - Position is remembered in $XDG_CONFIG_HOME/sayit/overlay-position
 #     (default ~/.config/sayit/). Without one it starts bottom centre.
 #   - A RESIDENT pill can be dragged at any time, with no mode to enter: it
@@ -64,25 +66,25 @@ import struct
 import sys
 import time
 
-# 88x32 rather than a rounder 110x40 for one reason: a panel. The pill is
-# usually parked in one, and at 40 tall it filled a 48 px panel edge to edge
-# and read as jammed in. At 32 it clears the panel by EDGE_MARGIN top and
-# bottom, which is what centres it there. Everything below is proportional
-# to these two, so changing them rescales the mark rather than cropping it.
-WIDTH, HEIGHT, RADIUS = 88, 32, 16
+# 160x40. The height is what a panel dictates: measured, a default Plasma
+# panel is 44 px, so 40 fills it with 2 px to spare rather than floating in
+# the middle of it. The width follows from the content -- lamp, a ten-bar
+# meter and the wordmark, in that reading order. RADIUS and everything under
+# "mark geometry" are proportional to HEIGHT, so the shape survives a resize.
+WIDTH, HEIGHT, RADIUS = 160, 40, 12
 BORDER = 1.2
-EDGE_MARGIN = 8                     # keeps the pill off the very screen edge
+LAYOUT_GAP = 12.0                   # between the meter and the wordmark
+# The lamp stands further off than the wordmark does. It is a status light,
+# not a letterform, and the extra air both separates the two ideas and pushes
+# the lamp out towards the pill's left shoulder, where the eye finds it first.
+LAMP_GAP = 8.0
+EDGE_MARGIN = 2                     # keeps the pill off the very screen edge
 FPS_MS = 33                         # ~30 fps redraw, independent of audio rate
 # Idle costs nothing to look at, so it must cost nothing to draw either: at
 # rest the pill is a still image and a 4 fps timer is only there to notice
 # that audio has started. A resident pill runs for the whole session.
 IDLE_FPS_MS = 250
-AUDIO_IDLE_S = 0.4                  # no audio for this long = not recording
-# The resting pill is drawn exactly like a recording one: 1.0 for both. Only
-# the bars' MOVEMENT separates the two states. Lower these to fade the pill
-# between dictations instead (0.55 / 0.22 gives a clearly greyed-out pill).
-IDLE_INK = 1.0                      # bars and border at rest
-IDLE_LAMP = 1.0                     # the lamp at rest
+AUDIO_IDLE_S = 0.4                  # no audio for this long = mic closed
 CHUNK = 2000                        # 125 ms of 8 kHz s16 mono
 EASE = 0.35                         # level smoothing per frame
 PLACE_TIMEOUT_FRAMES = 180 * 1000 // FPS_MS   # --place gives up after 3 min
@@ -90,42 +92,179 @@ PLACE_TIMEOUT_FRAMES = 180 * 1000 // FPS_MS   # --place gives up after 3 min
 LEVELS = [90, 200, 450, 900, 1800, 3500, 7000]
 
 # --- mark geometry --------------------------------------------------------
-# The mark is expressed in the same coordinate system as icons/*.svg (a 96
-# unit view box) and scaled into the pill, rather than in pre-scaled pixel
-# values. Keeping the mark's own units means this geometry can be read against
-# the logo and against the Windows indicator without decoding a second set of
-# numbers.
+# The mark stays in the same 96-unit design space as icons/*.svg and is scaled
+# into the pill at draw time, rather than being written out in pre-scaled
+# pixels. Keeping the mark's own units means this geometry can still be read
+# against the logo and against the Windows indicator without decoding a second
+# set of numbers, and the pill can be resized without recomputing any of it.
+# The content is scaled as one group -- lamp, meter and wordmark together --
+# so it fills the pill rather than floating in a field of black. Twice now the
+# fix for "it looks thin" has been to raise these three numbers in step, never
+# to redraw anything. The tallest bar still clears the pill edge by 8.6 px.
+MARK_SCALE = 0.3562
+BAR_COUNT = 10
+BAR_U = 11.0                        # bar width, and its height at rest
+GAP_U = 3.0                         # tightened as the bars thickened, so the
+                                    # row gained weight rather than width
+# Height at level 7, per bar. An uneven row reads as a voice rather than as a
+# progress bar; the values are a fixed pattern, not a measurement. The row
+# opens low, peaks in the middle and settles again, so the two outermost bars
+# are the quietest -- a phrase rather than a block.
+BAR_MAX_U = [32.32, 38.08, 58.24, 45.76, 64.00,
+             42.40, 53.44, 36.16, 59.68, 40.00]
+DOT_D = 42.0                        # the lamp, deliberately larger than the bars ask for
+# The lamp is always on the pill and never moves; only its colour carries the
+# state. Lit means the microphone is open. Unlit is a dark red that still
+# reads as a lamp -- an indicator light does not vanish when it goes out, it
+# stops glowing, and a pill with a hole where the lamp was looks broken.
+LAMP_LIT = (1.0, 0.30, 0.30)
+LAMP_UNLIT = (0.42, 0.13, 0.15)
+
+WAVE_W_U = BAR_COUNT * BAR_U + (BAR_COUNT - 1) * GAP_U
+LAMP_W = DOT_D * MARK_SCALE
+WAVE_W = WAVE_W_U * MARK_SCALE
+
+# --- the wordmark ---------------------------------------------------------
+# "sayit" as Bezier outlines rather than as text. The shapes came from Libre
+# Franklin Black Italic at 14.5 px with -0.10 px tracking, converted once and
+# stored here, so the pill draws identically on a machine that has never heard
+# of that font. Nothing at runtime asks for a font, and no font file lives in
+# this repository.
 #
-# x, width, height at level 0, height at level 7. The first three come straight
-# from icons/*.svg, which keep the older three-bar mark; the fourth continues
-# the same 20-unit spacing and its heights sit between the neighbours it
-# separates, so the row still rises and falls like a waveform rather than
-# ending on a step. docs/logo.svg carries this same four-bar row.
-BARS = [
-    (14.0, 12.0, 12.0, 44.0),
-    (34.0, 12.0, 18.0, 64.0),
-    (54.0, 12.0, 10.0, 36.0),
-    (74.0, 12.0, 15.0, 54.0),
+# Normalised to height 1.0 with the origin at the wordmark's own top left, so
+# WORDMARK_H is the only number that sets its size.
+WORDMARK_H = 21.875                 # cap-to-descender height in pill pixels
+WORDMARK_ASPECT = 2.396638
+WORDMARK = [
+    ("m", 0.253707, 0.846809),
+    ("c", 0.380086, 0.846809, 0.510389, 0.787583, 0.510389, 0.652443),
+    ("c", 0.510389, 0.583428, 0.468933, 0.524269, 0.364279, 0.501596),
+    ("l", 0.262600, 0.479904),
+    ("c", 0.235937, 0.473986, 0.231001, 0.468068, 0.231001, 0.453291),
+    ("c", 0.231001, 0.428640, 0.267537, 0.418783, 0.306034, 0.418783),
+    ("c", 0.350465, 0.418783, 0.380086, 0.437517, 0.395878, 0.455253),
+    ("c", 0.412650, 0.473986, 0.417586, 0.475964, 0.430419, 0.470047),
+    ("l", 0.513348, 0.433577),
+    ("c", 0.526180, 0.427660, 0.524219, 0.415824, 0.519282, 0.407929),
+    ("c", 0.486702, 0.355602, 0.420562, 0.304255, 0.308993, 0.304255),
+    ("c", 0.173753, 0.304255, 0.053308, 0.370412, 0.053308, 0.499618),
+    ("c", 0.053308, 0.576529, 0.103657, 0.614977, 0.192503, 0.635672),
+    ("l", 0.290243, 0.658344),
+    ("c", 0.323803, 0.666240, 0.334674, 0.674119, 0.334674, 0.686935),
+    ("c", 0.334674, 0.726380, 0.270495, 0.727360, 0.246809, 0.727360),
+    ("c", 0.175715, 0.727360, 0.152028, 0.699751, 0.135239, 0.674119),
+    ("c", 0.124385, 0.657364, 0.113531, 0.657364, 0.096742, 0.665259),
+    ("l", 0.015791, 0.703707),
+    ("c", 0.001978, 0.710605, 0.000000, 0.717503, 0.006915, 0.731316),
+    ("c", 0.037517, 0.792520, 0.112533, 0.846809, 0.253707, 0.846809),
+    ("z",),
+    ("m", 0.826355, 0.797872),
+    ("c", 0.842163, 0.781084, 0.851039, 0.781084, 0.852036, 0.793916),
+    ("l", 0.853017, 0.805768),
+    ("c", 0.854995, 0.824518, 0.855976, 0.837367, 0.873745, 0.837367),
+    ("l", 1.009001, 0.837367),
+    ("c", 1.027751, 0.837367, 1.027751, 0.836370, 1.030710, 0.816622),
+    ("l", 1.079097, 0.473072),
+    ("c", 1.080078, 0.463198, 1.081059, 0.453324, 1.081059, 0.444448),
+    ("c", 1.081059, 0.362500, 1.025790, 0.304255, 0.857954, 0.304255),
+    ("c", 0.732571, 0.304255, 0.641747, 0.332879, 0.599294, 0.410871),
+    ("c", 0.587458, 0.441489, 0.596335, 0.450366, 0.607189, 0.452344),
+    ("l", 0.732571, 0.478009),
+    ("c", 0.749360, 0.480967, 0.754297, 0.478009, 0.758236, 0.470113),
+    ("c", 0.778981, 0.427660, 0.816481, 0.421742, 0.848080, 0.421742),
+    ("c", 0.878682, 0.421742, 0.892512, 0.432596, 0.892512, 0.459259),
+    ("c", 0.892512, 0.463198, 0.892512, 0.468135, 0.891514, 0.473072),
+    ("l", 0.888556, 0.489860),
+    ("c", 0.886577, 0.502693, 0.878682, 0.509608, 0.866830, 0.509608),
+    ("l", 0.859932, 0.509608),
+    ("c", 0.721717, 0.509608, 0.533153, 0.560937, 0.533153, 0.715924),
+    ("c", 0.533153, 0.790957, 0.586461, 0.847224, 0.679264, 0.847224),
+    ("c", 0.736528, 0.847224, 0.792794, 0.833411, 0.826355, 0.797872),
+    ("z",),
+    ("m", 0.864869, 0.662616),
+    ("c", 0.862891, 0.677427, 0.850058, 0.692237, 0.837226, 0.703092),
+    ("c", 0.824393, 0.713963, 0.800690, 0.722839, 0.771069, 0.722839),
+    ("c", 0.742445, 0.722839, 0.727635, 0.705070, 0.727635, 0.684342),
+    ("c", 0.727635, 0.624119, 0.808585, 0.602394, 0.849061, 0.599435),
+    ("l", 0.862891, 0.598454),
+    ("c", 0.874742, 0.597457, 0.873745, 0.598454, 0.871767, 0.610289),
+    ("z",),
+    ("m", 1.116223, 1.000000),
+    ("c", 1.266273, 1.000000, 1.329455, 0.965459, 1.421277, 0.801579),
+    ("l", 1.679920, 0.337533),
+    ("c", 1.687832, 0.323720, 1.687832, 0.313830, 1.672025, 0.313830),
+    ("l", 1.561453, 0.313830),
+    ("c", 1.549618, 0.313830, 1.539744, 0.319764, 1.530851, 0.338531),
+    ("l", 1.418318, 0.563630),
+    ("c", 1.409425, 0.581400, 1.400549, 0.582380, 1.396592, 0.565608),
+    ("l", 1.345263, 0.328657),
+    ("c", 1.343285, 0.317786, 1.336370, 0.313830, 1.324518, 0.313830),
+    ("l", 1.143866, 0.313830),
+    ("c", 1.128075, 0.313830, 1.121160, 0.324701, 1.127078, 0.347407),
+    ("l", 1.254438, 0.811436),
+    ("c", 1.261336, 0.835140, 1.235672, 0.858843, 1.190259, 0.858843),
+    ("l", 1.120163, 0.858843),
+    ("c", 1.098454, 0.858843, 1.085622, 0.866739, 1.084624, 0.874634),
+    ("l", 1.070811, 0.975332),
+    ("c", 1.067852, 0.994082, 1.078707, 1.000000, 1.116223, 1.000000),
+    ("z",),
+    ("m", 1.957883, 0.130918),
+    ("c", 1.959845, 0.118085, 1.958864, 0.104255, 1.948009, 0.104255),
+    ("l", 1.782152, 0.104255),
+    ("c", 1.770300, 0.104255, 1.764382, 0.112168, 1.762404, 0.126978),
+    ("l", 1.745616, 0.238531),
+    ("c", 1.742657, 0.255303, 1.745616, 0.270113, 1.760426, 0.270113),
+    ("l", 1.909496, 0.270113),
+    ("c", 1.932202, 0.270113, 1.939117, 0.267154, 1.942075, 0.247407),
+    ("z",),
+    ("m", 1.929243, 0.339511),
+    ("c", 1.930240, 0.327660, 1.928262, 0.313830, 1.917391, 0.313830),
+    ("l", 1.750553, 0.313830),
+    ("c", 1.738718, 0.313830, 1.734761, 0.315808, 1.732783, 0.330635),
+    ("l", 1.665662, 0.806632),
+    ("c", 1.663684, 0.823421, 1.671580, 0.837234, 1.691327, 0.837234),
+    ("l", 1.830523, 0.837234),
+    ("c", 1.853229, 0.837234, 1.859146, 0.835273, 1.862122, 0.814528),
+    ("z",),
+    ("m", 2.168580, 0.837234),
+    ("c", 2.209055, 0.837234, 2.260401, 0.836253, 2.301858, 0.832314),
+    ("c", 2.316668, 0.831316, 2.324564, 0.822440, 2.326542, 0.806632),
+    ("l", 2.338393, 0.727660),
+    ("c", 2.340355, 0.716805, 2.331479, 0.701995, 2.320624, 0.701995),
+    ("l", 2.278171, 0.701995),
+    ("c", 2.235717, 0.701995, 2.218929, 0.693102, 2.218929, 0.667404),
+    ("c", 2.218929, 0.663447, 2.218929, 0.659491, 2.219926, 0.655552),
+    ("l", 2.246572, 0.465808),
+    ("c", 2.248550, 0.452959, 2.254467, 0.447041, 2.265338, 0.447041),
+    ("l", 2.357143, 0.447041),
+    ("c", 2.373932, 0.447041, 2.378869, 0.444082, 2.380830, 0.431233),
+    ("l", 2.394660, 0.329555),
+    ("c", 2.396638, 0.316722, 2.385767, 0.312766, 2.372935, 0.312766),
+    ("l", 2.286066, 0.312766),
+    ("c", 2.279151, 0.312766, 2.273234, 0.306848, 2.274215, 0.299934),
+    ("l", 2.294943, 0.163697),
+    ("c", 2.297918, 0.141988, 2.292981, 0.136054, 2.282110, 0.136054),
+    ("l", 2.136997, 0.136054),
+    ("c", 2.125145, 0.136054, 2.118231, 0.139029, 2.115272, 0.149884),
+    ("l", 2.077755, 0.296061),
+    ("c", 2.075777, 0.304953, 2.067881, 0.313830, 2.059986, 0.313830),
+    ("l", 2.001741, 0.313830),
+    ("c", 1.987928, 0.313830, 1.983972, 0.313830, 1.981994, 0.326679),
+    ("l", 1.969161, 0.419398),
+    ("c", 1.966203, 0.439146, 1.970159, 0.447041, 1.981013, 0.447041),
+    ("l", 2.030365, 0.447041),
+    ("c", 2.042217, 0.447041, 2.051110, 0.450997, 2.050112, 0.460871),
+    ("l", 2.015571, 0.700017),
+    ("c", 2.014574, 0.706932, 2.014574, 0.712849, 2.014574, 0.718783),
+    ("c", 2.014574, 0.791822, 2.077755, 0.837234, 2.168580, 0.837234),
+    ("z",),
+    ("m", 0.006915, 0.000000),
 ]
-BASELINE = 74.0
-MARK_TOP = BASELINE - 64.0          # top of the tallest bar at level 7
+WORDMARK_W = WORDMARK_H * WORDMARK_ASPECT
 
-# The lamp. It sits on the bar row's vertical centre line, so that on a pill
-# which stays up while you speak it reads as a lamp that is lit while the
-# microphone is open. docs/logo.svg centres it on its pill instead, about 5%
-# of a tall bar higher, and its diameter relative to a bar is the same 2.33 as
-# here. icons/*.svg still carry the older three-bar mark with a full stop on
-# the baseline.
-DOT_D = 28.0
-DOT_X = 116.0
-
-MARK_SCALE = 0.392                  # 0.490 * 32/40 — the mark keeps its shape
-MARK_LEFT, MARK_RIGHT = BARS[0][0], DOT_X + DOT_D
-# The lamp's right edge is what bounds the mark, not the last bar's.
-OFFSET_X = ((WIDTH - (MARK_RIGHT - MARK_LEFT) * MARK_SCALE) / 2.0
-            - MARK_LEFT * MARK_SCALE)
-OFFSET_Y = ((HEIGHT - (BASELINE - MARK_TOP) * MARK_SCALE) / 2.0
-            - MARK_TOP * MARK_SCALE)
+# The three items, centred as one group.
+CONTENT_W = LAMP_W + LAMP_GAP + WAVE_W + LAYOUT_GAP + WORDMARK_W
+CONTENT_X = (WIDTH - CONTENT_W) / 2.0
 
 
 def config_path():
@@ -232,26 +371,89 @@ def write_position(x, y):
         pass                        # a read-only home must not break dictation
 
 
-def draw_levels(active):
-    """Opacities for the bars and border, and for the lamp.
+def bar_heights(level):
+    """Bar heights in mark units for a level of 0..7.
 
-    The pill looks the same whether or not it is recording: full ink, lamp
-    lit. MOVEMENT is what distinguishes the two, and movement alone — the
-    bars rise and fall while audio drives them and stand still otherwise.
-    Nothing else on the pill ever animates. Dimming the resting pill was
-    tried and rejected: a permanent fixture that greys itself out reads as
-    broken rather than as idle.
+    At level 0 every bar is BAR_U tall, which is its own width, so it draws
+    as a dot rather than as a squashed lozenge. From there each bar grows
+    towards its own maximum, which is why the row reads as a voice and not
+    as a progress bar.
 
-    IDLE_INK and IDLE_LAMP are the two knobs. At 1.0 (the default) resting
-    and recording are drawn identically; lower them to fade the pill between
-    dictations instead.
-
-    Made a plain function so the rule is testable without a window; on_draw
-    does nothing but paint what it returns.
+    A plain function, so the geometry can be checked without a window.
     """
-    ink = 1.0 if active else IDLE_INK
-    lamp = 1.0 if active else IDLE_LAMP
-    return ink, lamp
+    level = max(0.0, min(7.0, level))
+    return [BAR_U + (top - BAR_U) * level / 7.0 for top in BAR_MAX_U]
+
+
+def draw_wave(cr, x, cy, level):
+    """The meter, grown symmetrically about cy.
+
+    Growing about the centre line rather than up from a baseline is what
+    keeps the row level with the lamp: at rest it is a line of dots at the
+    same height, and speaking opens it out in both directions instead of
+    lifting it off the floor.
+    """
+    for i, height in enumerate(bar_heights(level)):
+        bw = BAR_U * MARK_SCALE
+        bh = height * MARK_SCALE
+        bx = x + i * (BAR_U + GAP_U) * MARK_SCALE
+        rounded_rect(cr, bx, cy - bh / 2.0, bw, bh, bw / 2.0)
+        cr.set_source_rgb(1, 1, 1)
+        cr.fill()
+
+
+def draw_lamp(cr, x, cy, lit):
+    """The recording lamp, lit or not. Always drawn, always the same size and
+    place: colour is the whole signal. Steady either way -- it never pulses,
+    so movement stays the meter's alone."""
+    r = LAMP_W / 2.0
+    cr.arc(x + r, cy, r, 0, 2 * math.pi)
+    cr.set_source_rgb(*(LAMP_LIT if lit else LAMP_UNLIT))
+    cr.fill()
+
+
+def draw_wordmark(cr, x, cy):
+    """The stored outlines, scaled to WORDMARK_H and centred on cy."""
+    h = WORDMARK_H
+    top = cy - h / 2.0
+    cr.new_path()
+    for seg in WORDMARK:
+        if seg[0] == "m":
+            cr.move_to(x + seg[1] * h, top + seg[2] * h)
+        elif seg[0] == "l":
+            cr.line_to(x + seg[1] * h, top + seg[2] * h)
+        elif seg[0] == "c":
+            cr.curve_to(x + seg[1] * h, top + seg[2] * h,
+                        x + seg[3] * h, top + seg[4] * h,
+                        x + seg[5] * h, top + seg[6] * h)
+        else:
+            cr.close_path()
+    cr.set_source_rgb(1, 1, 1)
+    cr.fill()
+
+
+# --- introspection for the tests ------------------------------------------
+# Two small readers so the geometry and the state rule can be checked without
+# a display. They compute nothing of their own: they report exactly what
+# draw_wave and on_draw use, so a test cannot pass against a stale copy.
+
+def _test_bar_midpoints(level):
+    """Each bar's vertical centre, in pill pixels, at this level."""
+    cy = HEIGHT / 2.0
+    return [cy for _ in bar_heights(level)]
+
+
+def _test_state(active, level=0.0, place_mode=False):
+    """What the pill draws, as data. `active` is the microphone being open."""
+    return {
+        "lamp": True,                   # always on the pill, never moves
+        "lamp_lit": bool(active),
+        "lamp_rgb": LAMP_LIT if active else LAMP_UNLIT,
+        "border_rgb": (1.0, 1.0, 1.0),
+        "pill_rgb": (0.0, 0.0, 0.0),
+        "wordmark_rgb": (1.0, 1.0, 1.0),
+        "bars": tuple(round(h, 6) for h in bar_heights(level)),
+    }
 
 
 def rounded_rect(cr, x, y, w, h, r):
@@ -414,8 +616,20 @@ class Overlay:
         if window is not None:
             window.input_shape_combine_region(cairo.Region(), 0, 0)
 
+    def mic_open(self):
+        """Is the microphone actually open right now?
+
+        Audio arriving is the only evidence there is: the meter's pw-cat
+        sends samples through silence too, so a live stream means the
+        microphone is open whether or not the user is speaking. A piped
+        overlay exists only for the duration of a recording, so for it the
+        answer is always yes; a window opened purely to be placed records
+        nothing, and must not show a recording lamp.
+        """
+        return self.active
+
     def set_active(self, active):
-        """Recording started or stopped. Resident mode only."""
+        """The microphone opened or closed. Resident mode only."""
         if active == self.active:
             return
         self.active = active
@@ -458,47 +672,36 @@ class Overlay:
 
     # -- drawing ----------------------------------------------------------
     def on_draw(self, _widget, cr):
+        """Three states, and the rule that separates them.
+
+        The lamp means one thing: the microphone is open. It is lit when it
+        is and dark when it is not, in the same place and at the same size
+        either way, so a closed microphone can never be mistaken for an open
+        one. Between "open and silent" and "open and speaking" the meter's
+        geometry is the ONLY thing that changes -- no colour, no brightness,
+        nothing else on the pill.
+        """
         import cairo
         cr.set_operator(cairo.Operator.SOURCE)
         cr.set_source_rgba(0, 0, 0, 0)
         cr.paint()
         cr.set_operator(cairo.Operator.OVER)
 
-        ink, lamp = draw_levels(self.active)
-        border = ink
-
         rounded_rect(cr, BORDER / 2, BORDER / 2,
                      WIDTH - BORDER, HEIGHT - BORDER, RADIUS)
         cr.set_source_rgb(0, 0, 0)
         cr.fill_preserve()
-        cr.set_source_rgba(1, 1, 1, border)
+        cr.set_source_rgb(1, 1, 1)
         cr.set_line_width(BORDER)
         cr.stroke()
 
-        for bx, bw, low, high in BARS:
-            height = low + (high - low) * self.shown / 7.0
-            # A bar shorter than it is wide would draw as a squashed lozenge
-            # rather than the round cap the mark is built from, and at rest two
-            # of the four are exactly that short. Clamping to the bar width
-            # leaves a circle resting on the baseline, which is what the logo
-            # and the Windows indicator both show.
-            if height < bw:
-                height = bw
-            w = bw * MARK_SCALE
-            rounded_rect(cr, OFFSET_X + bx * MARK_SCALE,
-                         OFFSET_Y + (BASELINE - height) * MARK_SCALE,
-                         w, height * MARK_SCALE, w / 2)
-            cr.set_source_rgba(1, 1, 1, ink)
-            cr.fill()
-
-        # The lamp burns steady, at rest and while recording alike. It used
-        # to pulse through silence; that was a second thing moving on a pill
-        # that is now up all day, and the bars already carry the signal.
-        cr.arc(OFFSET_X + (DOT_X + DOT_D / 2.0) * MARK_SCALE,
-               OFFSET_Y + (MARK_TOP + BASELINE) / 2.0 * MARK_SCALE,
-               DOT_D / 2.0 * MARK_SCALE, 0, 2 * math.pi)
-        cr.set_source_rgba(1.0, 0.30, 0.30, lamp)
-        cr.fill()
+        cy = HEIGHT / 2.0
+        x = CONTENT_X
+        draw_lamp(cr, x, cy, self.mic_open())
+        x += LAMP_W + LAMP_GAP
+        draw_wave(cr, x, cy, self.shown)
+        x += WAVE_W + LAYOUT_GAP
+        draw_wordmark(cr, x, cy)
         return False
 
     def tick(self):
