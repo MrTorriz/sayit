@@ -204,10 +204,11 @@ systemctl --user enable --now sayit-overlay.service
 ```
 
 At rest it looks exactly as it does while recording — same size, same colours,
-same place — except that the bars are still and the lamp is dark. It sits *below*
-fullscreen windows so a film covers it, and it holds no microphone stream at all.
-A recording lights the lamp and raises the pill above fullscreen. `systemctl
---user disable --now sayit-overlay` goes back to the default.
+same place — except that the bars are still and the lamp is dark. It holds no
+microphone stream at all. It stays above other windows in both states, a
+fullscreen video included, so that a pill parked in a desktop panel's strip
+cannot end up behind the panel. `systemctl --user disable --now sayit-overlay`
+goes back to the default.
 
 **A resident pill is draggable at any time.** There is no mode to enter and
 nothing to remember: point at it and drag, at rest or mid-dictation, and the new

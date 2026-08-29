@@ -444,8 +444,18 @@ requirements are missing, so the meter degrades instead of vanishing:
   | Recording starts | the process starting is the signal | audio arriving on the FIFO |
   | Recording ends | end of stream ends the process | `AUDIO_IDLE_S` (0.4 s) without audio |
   | At rest | does not exist | the same pill, the same colours; the meter still and the lamp dark |
-  | Layer | `OVERLAY`, above fullscreen | `TOP` at rest, raised to `OVERLAY` while lit |
+  | Layer | `OVERLAY`, above fullscreen | `OVERLAY`, in both states |
   | Redraw | ~30 fps | 4 fps at rest, ~30 fps while lit |
+
+  Both lifetimes stay on the `OVERLAY` layer. A resting resident used to
+  drop to `TOP` so that it would not cover a fullscreen video, and that cost
+  more than it bought: a desktop panel is on `TOP` as well, and stacking
+  within a layer follows map order, so a pill parked in the panel's strip was
+  visible at rest or hidden behind the panel depending on which surface the
+  compositor mapped last. It would work for days, then vanish after a
+  relogin and come back only while recording. One layer for both states
+  makes the pill a fixture; that it also sits over a fullscreen video is the
+  accepted cost.
 
   The FIFO is opened `O_RDWR`, so the resident holds a writer of its own and
   never sees a hangup when the meter's `pw-cat` exits. That is deliberate: it

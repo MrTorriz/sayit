@@ -575,17 +575,27 @@ class Overlay:
 
     # -- window state -----------------------------------------------------
     def apply_layer(self):
-        """OVERLAY is above fullscreen windows, TOP is below them.
+        """Always OVERLAY. The pill is visible or it is not the pill.
 
-        A lit pill has to be visible over anything, or it would claim the
-        microphone is closed by being hidden. A resting one has nothing to
-        say and must not sit on top of a film.
+        OVERLAY is above fullscreen windows; TOP is below them, and is also
+        where a desktop panel lives. Resting on TOP was tried, on the
+        reasoning that a pill with nothing to say should not cover a film.
+        It cost more than it bought: a pill parked in a panel's strip shares
+        a layer with the panel, and stacking within one layer is decided by
+        map order, so whether it was visible at rest came down to which
+        surface the compositor happened to map last. It would be there for
+        days, then disappear behind the panel after a relogin and reappear
+        only while recording -- which reads as the pill being broken.
+
+        One layer for both states, so the pill is where the user put it
+        whatever else is on screen. The cost is real and accepted: a resting
+        pill sits over a fullscreen video too. It is 160x40 px in a corner
+        the user chose, and a fixture that is only sometimes a fixture is
+        worse.
         """
-        shelf = (self.GtkLayerShell.Layer.OVERLAY
-                 if (self.active or self.place_mode or not self.resident)
-                 else self.GtkLayerShell.Layer.TOP)
         try:
-            self.GtkLayerShell.set_layer(self.win, shelf)
+            self.GtkLayerShell.set_layer(self.win,
+                                         self.GtkLayerShell.Layer.OVERLAY)
         except Exception:           # a compositor that will not restack it
             pass                    # is still a compositor showing the pill
 
@@ -635,7 +645,7 @@ class Overlay:
         self.active = active
         if not active:
             self.level = 0.0
-        self.apply_layer()
+        # No apply_layer here: the layer no longer follows the state.
         self.win.queue_draw()
 
     # -- dragging ---------------------------------------------------------

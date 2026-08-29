@@ -267,6 +267,28 @@ PY
     [ "$output" = "0" ]
 }
 
+# --- which layer the pill sits on -----------------------------------------
+# Regression: a resting resident pill used to drop to the TOP layer so it
+# would not cover a fullscreen video. A desktop panel is on TOP too, and
+# stacking within one layer follows map order, so a pill parked in the panel
+# strip was hidden behind the panel at rest and surfaced only while recording.
+
+@test "the pill is on the OVERLAY layer whatever the state" {
+    run bash -c "sed -n '/def apply_layer/,/def apply_keyboard/p' '$OVERLAY' \
+        | grep -c 'Layer.TOP'"
+    [ "$output" = "0" ]
+    run bash -c "sed -n '/def apply_layer/,/def apply_keyboard/p' '$OVERLAY' \
+        | grep -c 'Layer.OVERLAY'"
+    [ "$output" = "1" ]
+}
+
+@test "the layer is not re-applied when the microphone opens or closes" {
+    # It no longer depends on the state, so set_active must not touch it.
+    run bash -c "sed -n '/def set_active/,/queue_draw/p' '$OVERLAY' \
+        | grep -c 'self.apply_layer()'"
+    [ "$output" = "0" ]
+}
+
 # --- who can grab the pill ------------------------------------------------
 # A resident pill is a fixture the user has to be able to move, so it keeps a
 # normal input region and a drag moves it. A piped one is on screen for the
