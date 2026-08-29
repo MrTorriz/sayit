@@ -1,7 +1,3 @@
-<p align="center">
-  <img src="docs/logo-lockup.svg" alt="sayit: a recording lamp, a ten-bar level meter and the wordmark sayit inside a rounded pill, above the wordmark SAYIT and the line DON'T TYPE IT. SAY IT." width="280">
-</p>
-
 # sayit
 
 > Push-to-talk dictation for Linux and Windows 11. Hold a key, speak, release — your words are typed into whatever window has focus. Speech recognition runs on your machine: no cloud service, no account, no API keys.
