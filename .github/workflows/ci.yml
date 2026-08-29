@@ -2,8 +2,10 @@
 # test suite. Runs on push and pull requests.
 #
 # Two platforms, two jobs. The Linux jobs glob bin/, install.sh, tests/*.sh and
-# docs/*.py, so the Windows implementation in win/ is invisible to them and
-# cannot break them; the windows job covers win/ and nothing else.
+# docs/*.py, and the windows job covers win/. The one place a Linux job reads
+# win/ is the geometry check below, which compares the Windows pill's constants
+# against the overlay's as text: it needs no PowerShell, and it is the only
+# thing that notices when the two drawings of one pill drift apart.
 name: ci
 
 on:
@@ -36,6 +38,12 @@ jobs:
             esac
           done
           shellcheck "${scripts[@]}"
+
+      # The Windows indicator keeps a hand-made copy of the pill's geometry,
+      # because PowerShell cannot read the overlay's Python constants. Nothing
+      # else would notice if the two disagreed.
+      - name: Windows pill matches the overlay
+        run: python3 docs/check-geometry.py
 
   test:
     runs-on: ubuntu-latest

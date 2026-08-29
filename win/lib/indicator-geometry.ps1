@@ -10,6 +10,11 @@
 # implementations, not two drawings that resemble each other. The wordmark
 # outlines below were extracted from that file rather than converted again from
 # the font, because a second conversion is a second shape.
+#
+# docs/check-geometry.py compares every number below against the overlay's and
+# CI runs it, so a change to one side without the other fails the build rather
+# than shipping two different pills. Change bin/sayit-overlay, run that script,
+# and it will name what to edit here.
 
 Set-StrictMode -Version 2.0
 
