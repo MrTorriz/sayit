@@ -50,7 +50,8 @@ of them empty on purpose so the code can resolve a repo-relative path.
 | `INJECT_METHOD` | `auto` | Windows | `auto` types short text and pastes longer text; `type` always types; `clipboard` always pastes |
 | `INJECT_CLIPBOARD_THRESHOLD` | `100` | Windows | Length in characters above which `auto` switches from typing to pasting |
 | `MAX_RECORD_SECONDS` | `120` | Windows | Hard cap on a single recording |
-| `INDICATOR_SCALE` | `1.0` | Windows | Size of the on-screen pill; `1.0` is 100x52 px. Values outside `0.5`-`4.0` fall back to `1.0` |
+| `INDICATOR_SCALE` | `1.0` | Windows | Starting size of the on-screen pill; `1.0` is 160x40 px. Values outside `0.5`-`4.0` fall back to `1.0`. A size dragged out on screen is saved and takes precedence over this |
+| `INDICATOR_LOCKED` | `0` | Windows | `0` lets you drag the pill to move it and drag either end to resize it, saving where you leave it; the pill then catches clicks on its own area. `1` makes it click-through and immovable, placeable only with `.\win\sayit-indicator.ps1 place`. It never takes focus either way |
 | `INDICATOR_EXCLUDE_FROM_CAPTURE` | `1` | Windows | Keep the pill out of screen captures and screen shares. Needs Windows 10 2004 or later; older builds capture it anyway |
 
 The five Linux-only settings sit above the Windows section in

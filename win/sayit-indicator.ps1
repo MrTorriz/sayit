@@ -280,8 +280,13 @@ function Get-Position {
         ($wa.Bottom - $height - 48))
 }
 
+# A locked pill is click-through and cannot be grabbed: clicks pass to whatever
+# is beneath it. Unlocked - the default - it can be moved and resized at any
+# time, at the cost of catching clicks on its own 160x40 pixels.
+$locked = (Get-Setting -Env $cfg -Name 'INDICATOR_LOCKED' -Default '0') -eq '1'
+
 $form = New-Object Sayit.Overlay
-$form.ClickThrough = -not $placing
+$form.ClickThrough = $locked -and -not $placing
 $form.FormBorderStyle = 'None'
 $form.ShowInTaskbar = $false
 $form.StartPosition = 'Manual'
@@ -383,18 +388,23 @@ $form.Add_Paint({
     $wmPath.Dispose()
 })
 
-if ($placing) {
-    # Placement mode is the one time the window accepts input. It records
-    # nothing, so the lamp stays unlit: a window that is not recording must
-    # never show a lit lamp.
-    #
+if (-not $locked) {
+    # The pill can be moved and resized at any time, not only while placing it.
     # Drag the middle to move it, drag either end to resize it. The pill has one
     # fixed proportion, so a resize is a scale and not a stretch: the width the
     # user drags out sets the scale, and the height follows. Resizing from the
     # left edge also moves the window, so the end under the pointer is the one
     # that stays put - otherwise the pill appears to run away from the mouse.
-    $form.ClickThrough = $false
-
+    #
+    # This is what click-through is traded for. A click-through pill cannot be
+    # grabbed at all, so moving it meant a separate mode; being able to just
+    # take hold of it is worth the 160x40 pixels it now catches clicks on.
+    # INDICATOR_LOCKED=1 gives the old behaviour back.
+    #
+    # It still never takes focus. WS_EX_NOACTIVATE and the MA_NOACTIVATE reply
+    # to WM_MOUSEACTIVATE mean the pill can be dragged without the window you
+    # were dictating into losing focus, which is the whole point of the overlay.
+    #
     # How far in from each end counts as a resize grip. Scaled, so the grip
     # stays proportionally the same target on a pill dragged out to 4x.
     $script:GripWidth = [int][math]::Max(10, [math]::Round(14 * $script:scale))
@@ -477,7 +487,20 @@ if ($placing) {
         Set-PillScale -NewScale ($bredd / $script:PillWidth) -Anchor $script:mode
     })
 
-    $form.Add_MouseUp({ $script:mode = 'none' })
+    # Saved on release, not on Enter. The pill is moved in passing now rather
+    # than in a mode that is deliberately entered and left, so there is no
+    # moment at which the user would think to confirm - and a position that
+    # silently reverted at the next logon would read as the pill being broken.
+    $form.Add_MouseUp({
+        if ($script:mode -ne 'none') {
+            $script:mode = 'none'
+            try {
+                Save-Layout -X $form.Location.X -Y $form.Location.Y -Scale $script:scale
+            } catch {
+                # A pill that cannot save where it sits is still a working pill.
+            }
+        }
+    })
 
     $form.KeyPreview = $true
     $form.Add_KeyDown({
@@ -494,13 +517,25 @@ if ($placing) {
             'Subtract'     { $script:startBounds = $form.Bounds; Set-PillScale -NewScale ($script:scale - 0.1) -Anchor 'right'; return }
             'D0'           { $script:startBounds = $form.Bounds; Set-PillScale -NewScale 1.0 -Anchor 'right'; return }
         }
-        if ($e.KeyCode -eq 'Return' -or $e.KeyCode -eq 'Escape') {
+        # Keyboard changes are saved the same way a drag is.
+        switch ($e.KeyCode) {
+            { $_ -in 'Left', 'Right', 'Up', 'Down', 'Oemplus', 'Add', 'OemMinus', 'Subtract', 'D0' } {
+                try { Save-Layout -X $form.Location.X -Y $form.Location.Y -Scale $script:scale } catch { }
+            }
+        }
+        # Enter and Escape close a window opened purely to be placed. A resident
+        # pill ignores them: it is not a dialogue and has nothing to dismiss.
+        if ($placing -and ($e.KeyCode -eq 'Return' -or $e.KeyCode -eq 'Escape')) {
             Save-Layout -X $form.Location.X -Y $form.Location.Y -Scale $script:scale
             $form.Close()
         }
     })
-    # A level that shows the meter open, so the pill can be placed by its real
-    # size rather than by its resting one.
+}
+
+if ($placing) {
+    # 'place' still exists, and now differs only in showing the meter open, so
+    # the pill can be sized against its real extent rather than its resting one.
+    # It records nothing, so the lamp stays unlit.
     $script:level = 5.0
     $form.Show()
     $form.Activate()

@@ -306,7 +306,28 @@ Describe 'the saved position and size' {
     }
 }
 
-Describe 'placing and resizing' {
+Describe 'moving and resizing' {
+    It 'is grabbable by default, not only while placing' {
+        # The pill can be moved and resized at any time. Click-through is what
+        # that trades away, and INDICATOR_LOCKED brings it back.
+        $script:IndicatorSource | Should -Match "INDICATOR_LOCKED"
+        $script:IndicatorSource | Should -Match '\$form\.ClickThrough = \$locked -and -not \$placing'
+        # The interaction is bound outside the placing branch.
+        $script:IndicatorSource | Should -Match 'if \(-not \$locked\) \{'
+    }
+
+    It 'saves the layout on release, without asking for a confirmation' {
+        $ix = $script:IndicatorSource.IndexOf('Add_MouseUp')
+        $ix | Should -BeGreaterThan 0
+        $script:IndicatorSource.Substring($ix, 400) | Should -Match 'Save-Layout'
+    }
+
+    It 'still refuses to take focus, so dragging does not interrupt dictation' {
+        $script:IndicatorSource | Should -Match 'WS_EX_NOACTIVATE'
+        $script:IndicatorSource | Should -Match 'MA_NOACTIVATE'
+        $script:IndicatorSource | Should -Match 'ShowWithoutActivation'
+    }
+
     It 'resizes by scale, never by stretching one axis' {
         # One scale factor for the whole pill, so the proportion is fixed.
         $script:IndicatorSource | Should -Match 'Set-PillScale'
@@ -317,11 +338,6 @@ Describe 'placing and resizing' {
     It 'anchors the end opposite the one being dragged' {
         $script:IndicatorSource | Should -Match "Anchor -eq 'left'"
         $script:IndicatorSource | Should -Match 'startBounds\.Right - \$w'
-    }
-
-    It 'only accepts input while placing' {
-        # The resident pill is click-through; placement is the one exception.
-        $script:IndicatorSource | Should -Match '\$form\.ClickThrough = -not \$placing'
     }
 
     It 'saves position and size together' {
