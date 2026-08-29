@@ -82,7 +82,17 @@ shellcheck "${scripts[@]}"
 
 # 3. The bats suite
 bats tests/
+
+# 4. Only if you changed the overlay's pill: the logo is generated from it
+python3 docs/build-logo.py --check
 ```
+
+Step 4 exists because the logo is not a separate drawing. `docs/logo.svg` is
+the overlay's pill, written out of the overlay's own constants by
+`docs/build-logo.py`. Change `WIDTH`, `MARK_SCALE`, `BAR_MAX_U`, `LAMP_LIT` or
+the wordmark outlines and the check fails; rerun the script without `--check`
+and commit what it writes. The two were maintained separately once, and the
+README ended up showing a mark the product had stopped drawing.
 
 The shebang filter in steps 1 and 2 is not decoration. `bin/sayit-overlay` is
 Python, and a plain `shellcheck bin/*` fails on it with `SC1071` before it has

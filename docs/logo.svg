@@ -1,37 +1,37 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="56.5 56.5 441.08 257" width="441.08" height="257" role="img" aria-label="sayit: four waveform bars and a recording lamp inside a rounded pill">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 160 40" width="160" height="40" role="img" aria-label="sayit: a recording lamp, a ten-bar level meter and the wordmark sayit, inside a rounded pill">
   <title>sayit</title>
-  <!-- The mark on its own: four baseline-aligned waveform bars and a lamp,
-       inside a rounded pill. Speech becoming a written sentence, with the
-       lamp lit while the microphone is open. Self-contained, no external
-       resources.
+  <!-- The mark on its own: the pill exactly as bin/sayit-overlay draws it on
+       screen. Lamp, ten-bar meter and the wordmark, in that reading order,
+       inside a filled pill with a hairline border. The geometry is not drawn
+       by hand here; docs/build-logo.py reads it out of the overlay's own
+       constants, so the logo cannot drift away from the thing the user sees.
 
-       Size: the pill's stroke is 7 units of 441, and it is centred on the
-       viewBox edge, so antialiasing splits it. Measured ink coverage on the
-       outline is roughly half below 48 px wide, three quarters at 63, and
-       solid from about 84. Use 64 px as the practical floor and 84 or more
-       where the outline has to look drawn rather than suggested.
+       Colour: the pill is dark and the ink white in both themes, because the
+       pill itself is dark on every desktop. It is a screen object, not a piece
+       of page furniture, and inverting it would picture something that does
+       not exist. The lamp is #ff4d4d, the overlay's LAMP_LIT, shown lit
+       because a lit lamp is what the product looks like while it works.
 
-       Theme: the ink follows prefers-color-scheme; the lamp keeps its red in
-       both. That resolves against the embedding page only where the renderer
-       propagates color-scheme into an img-referenced SVG. Where it does not,
-       the ink follows the operating system instead, and a reader whose OS and
-       page disagree sees a very low-contrast mark. GitHub sets color-scheme
-       per theme, which is what this is aimed at.
+       Size: the wordmark's x-height is 5.6 units of 40, so it is legible from
+       about 160 px wide and marginal below 120. Use 160 as the floor.
 
-       docs/logo-lockup.svg adds the wordmark and the tagline. -->
+       docs/logo-lockup.svg adds the wordmark and the tagline below it. -->
   <style>
-    .m { fill: #1f2328; }
-    .s { fill: none; stroke: #1f2328; stroke-width: 7; }
-    .a { fill: #da4453; }
-    @media (prefers-color-scheme: dark) {
-      .m { fill: #e6edf3; }
-      .s { stroke: #e6edf3; }
-    }
+    .p { fill: #000000; stroke: #ffffff; stroke-width: 1.2; }
+    .w { fill: #ffffff; }
+    .a { fill: #ff4d4d; }
   </style>
-  <rect class="s" x="60" y="60" width="434.08" height="250" rx="125"/>
-  <rect class="m" x="184.74" y="174.45" width="17.04" height="55.99" rx="8.52"/>
-  <rect class="m" x="213.14" y="148.89" width="17.04" height="81.55" rx="8.52"/>
-  <rect class="m" x="241.54" y="184.59" width="17.04" height="45.85" rx="8.52"/>
-  <rect class="m" x="269.94" y="161.67" width="17.04" height="68.77" rx="8.52"/>
-  <circle class="a" cx="349.46" cy="185" r="19.88"/>
+  <rect class="p" x="0.60" y="0.60" width="158.80" height="38.80" rx="12"/>
+  <circle class="a" cx="19.387" cy="20.0" r="7.480"/>
+  <rect class="w" x="34.867" y="14.244" width="3.918" height="11.512" rx="1.959"/>
+  <rect class="w" x="39.854" y="13.218" width="3.918" height="13.564" rx="1.959"/>
+  <rect class="w" x="44.841" y="9.627" width="3.918" height="20.745" rx="1.959"/>
+  <rect class="w" x="49.828" y="11.850" width="3.918" height="16.300" rx="1.959"/>
+  <rect class="w" x="54.814" y="8.602" width="3.918" height="22.797" rx="1.959"/>
+  <rect class="w" x="59.801" y="12.449" width="3.918" height="15.103" rx="1.959"/>
+  <rect class="w" x="64.788" y="10.482" width="3.918" height="19.035" rx="1.959"/>
+  <rect class="w" x="69.775" y="13.560" width="3.918" height="12.880" rx="1.959"/>
+  <rect class="w" x="74.762" y="9.371" width="3.918" height="21.258" rx="1.959"/>
+  <rect class="w" x="79.748" y="12.876" width="3.918" height="14.248" rx="1.959"/>
+  <path class="w" d="M101.2165 27.5864 C103.9811 27.5864 106.8314 26.2909 106.8314 23.3347 C106.8314 21.8250 105.9246 20.5309 103.6353 20.0349 L101.4110 19.5604 C100.8278 19.4309 100.7198 19.3015 100.7198 18.9782 C100.7198 18.4390 101.5190 18.2234 102.3612 18.2234 C103.3331 18.2234 103.9811 18.6332 104.3265 19.0212 C104.6934 19.4309 104.8014 19.4742 105.0821 19.3448 L106.8962 18.5470 C107.1769 18.4176 107.1340 18.1587 107.0260 17.9859 C106.3133 16.8413 104.8665 15.7181 102.4259 15.7181 C99.4675 15.7181 96.8328 17.1653 96.8328 19.9916 C96.8328 21.6741 97.9342 22.5151 99.8777 22.9678 L102.0157 23.4638 C102.7499 23.6365 102.9877 23.8089 102.9877 24.0892 C102.9877 24.9521 101.5837 24.9735 101.0656 24.9735 C99.5104 24.9735 98.9923 24.3696 98.6250 23.8089 C98.3876 23.4423 98.1502 23.4423 97.7829 23.6150 L96.0121 24.4561 C95.7099 24.6070 95.6667 24.7579 95.8179 25.0600 C96.4874 26.3989 98.1283 27.5864 101.2165 27.5864 Z M113.7432 26.5160 C114.0890 26.1487 114.2831 26.1487 114.3050 26.4294 L114.3264 26.6887 C114.3697 27.0988 114.3911 27.3799 114.7798 27.3799 L117.7386 27.3799 C118.1487 27.3799 118.1487 27.3581 118.2135 26.9261 L119.2719 19.4109 C119.2934 19.1950 119.3148 18.9790 119.3148 18.7848 C119.3148 16.9922 118.1058 15.7181 114.4344 15.7181 C111.6917 15.7181 109.7049 16.3442 108.7762 18.0503 C108.5173 18.7201 108.7115 18.9143 108.9489 18.9575 L111.6917 19.5189 C112.0589 19.5837 112.1669 19.5189 112.2531 19.3462 C112.7069 18.4176 113.5272 18.2881 114.2184 18.2881 C114.8878 18.2881 115.1904 18.5255 115.1904 19.1088 C115.1904 19.1950 115.1904 19.3030 115.1685 19.4109 L115.1038 19.7782 C115.0605 20.0589 114.8878 20.2102 114.6286 20.2102 L114.4777 20.2102 C111.4542 20.2102 107.3294 21.3330 107.3294 24.7233 C107.3294 26.3647 108.4955 27.5955 110.5256 27.5955 C111.7782 27.5955 113.0090 27.2934 113.7432 26.5160 Z M114.5857 23.5572 C114.5424 23.8812 114.2617 24.2052 113.9810 24.4426 C113.7003 24.6804 113.1818 24.8746 112.5338 24.8746 C111.9077 24.8746 111.5837 24.4859 111.5837 24.0325 C111.5837 22.7151 113.3545 22.2399 114.2399 22.1751 L114.5424 22.1537 C114.8017 22.1319 114.7798 22.1537 114.7366 22.4126 Z M120.0840 30.9375 C123.3664 30.9375 124.7485 30.1819 126.7571 26.5970 L132.4149 16.4460 C132.5880 16.1439 132.5880 15.9275 132.2422 15.9275 L129.8235 15.9275 C129.5646 15.9275 129.3486 16.0573 129.1540 16.4679 L126.6924 21.3919 C126.4978 21.7806 126.3037 21.8021 126.2171 21.4352 L125.0943 16.2519 C125.0510 16.0141 124.8998 15.9275 124.6405 15.9275 L120.6887 15.9275 C120.3433 15.9275 120.1920 16.1653 120.3215 16.6620 L123.1075 26.8127 C123.2584 27.3312 122.6970 27.8497 121.7036 27.8497 L120.1702 27.8497 C119.6954 27.8497 119.4147 28.0224 119.3928 28.1951 L119.0907 30.3979 C119.0259 30.8080 119.2634 30.9375 120.0840 30.9375 Z M138.4954 11.9263 C138.5383 11.6456 138.5168 11.3431 138.2794 11.3431 L134.6512 11.3431 C134.3920 11.3431 134.2625 11.5162 134.2193 11.8401 L133.8520 14.2804 C133.7873 14.6473 133.8520 14.9712 134.1760 14.9712 L137.4369 14.9712 C137.9336 14.9712 138.0849 14.9065 138.1496 14.4745 Z M137.8689 16.4893 C137.8907 16.2301 137.8474 15.9275 137.6096 15.9275 L133.9600 15.9275 C133.7011 15.9275 133.6146 15.9708 133.5713 16.2951 L132.1030 26.7076 C132.0598 27.0748 132.2325 27.3770 132.6644 27.3770 L135.7094 27.3770 C136.2061 27.3770 136.3355 27.3341 136.4006 26.8803 Z M143.1044 27.3770 C143.9897 27.3770 145.1129 27.3555 146.0198 27.2694 C146.3438 27.2475 146.5165 27.0534 146.5598 26.7076 L146.8190 24.9801 C146.8619 24.7426 146.6678 24.4186 146.4303 24.4186 L145.5017 24.4186 C144.5730 24.4186 144.2057 24.2241 144.2057 23.6620 C144.2057 23.5754 144.2057 23.4889 144.2276 23.4027 L144.8104 19.2521 C144.8537 18.9710 144.9831 18.8415 145.2209 18.8415 L147.2292 18.8415 C147.5964 18.8415 147.7044 18.7768 147.7473 18.4957 L148.0499 16.2715 C148.0931 15.9908 147.8553 15.9043 147.5746 15.9043 L145.6744 15.9043 C145.5231 15.9043 145.3937 15.7748 145.4151 15.6236 L145.8685 12.6434 C145.9336 12.1685 145.8256 12.0387 145.5878 12.0387 L142.4135 12.0387 C142.1542 12.0387 142.0030 12.1038 141.9382 12.3412 L141.1176 15.5388 C141.0743 15.7333 140.9016 15.9275 140.7289 15.9275 L139.4548 15.9275 C139.1526 15.9275 139.0661 15.9275 139.0228 16.2086 L138.7421 18.2368 C138.6774 18.6688 138.7639 18.8415 139.0013 18.8415 L140.0809 18.8415 C140.3402 18.8415 140.5347 18.9281 140.5129 19.1441 L139.7573 24.3754 C139.7355 24.5266 139.7355 24.6561 139.7355 24.7859 C139.7355 26.3836 141.1176 27.3770 143.1044 27.3770 Z"/>
 </svg>

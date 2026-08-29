@@ -160,10 +160,9 @@ Add-Type -TypeDefinition $cs -Language CSharp -ReferencedAssemblies 'System.Wind
 # --- geometry ---------------------------------------------------------------
 # The mark is drawn in the coordinate system of icons/*.svg (a 96-unit view box)
 # so it stays the project mark: four baseline-aligned rounded bars and a lamp.
-# docs/logo.svg draws the same shape in units of its own, 1.42 times these, so
-# the proportions match but the numbers do not. Bar heights interpolate between
-# the level-0 and level-7 icon frames; the lamp burns red while the microphone
-# is open.
+# Bar heights interpolate between the level-0 and level-7 icon frames; the lamp
+# burns red while the microphone is open. docs/logo.svg is no longer a relation:
+# it pictures the Linux overlay's pill, not this row.
 # INDICATOR_SCALE multiplies all three together, so the pill keeps its
 # proportions and the mark keeps its position inside it at any size.
 $cfg   = Import-DotEnv
@@ -184,7 +183,7 @@ $height = [int][math]::Round(52 * $scale)
 # from icons/*.svg, which keep the older three-bar mark; the fourth continues the
 # same 20-unit spacing and its heights sit between the neighbours it separates,
 # so the row still rises and falls like a waveform rather than ending on a step.
-# docs/logo.svg carries this same four-bar row.
+# This four-bar row lives here alone; nothing else in the repository draws it.
 $bars = @(
     @{ X = 14.0; W = 12.0; H0 = 12.0; H7 = 44.0 },
     @{ X = 34.0; W = 12.0; H0 = 18.0; H7 = 64.0 },
@@ -198,10 +197,10 @@ $markTop = $baseline - 64.0
 
 # The lamp. It sits on the bar row's vertical centre line, so that on a small
 # always-on pill it reads as a lamp that is lit while the microphone is open.
-# docs/logo.svg centres it on its pill instead, and draws it proportionally
-# larger; this pill is smaller than the Linux overlay's, so the diameter is
-# tuned for it. icons/*.svg still carry the older three-bar mark with a full
-# stop on the baseline.
+# The Linux overlay centres its lamp on the pill instead, and draws it
+# proportionally larger; this pill is smaller, so the diameter is tuned for it.
+# icons/*.svg still carry the older three-bar mark with a full stop on the
+# baseline.
 $dotSize = 20.0
 $dotX    = 110.0
 $dotY    = ($markTop + $baseline) / 2.0 - $dotSize / 2.0

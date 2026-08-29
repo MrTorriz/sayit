@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/logo-lockup.svg" alt="sayit: four waveform bars and a recording lamp inside a rounded pill, above the wordmark SAYIT and the line DON'T TYPE IT. SAY IT." width="240">
+  <img src="docs/logo-lockup.svg" alt="sayit: a recording lamp, a ten-bar level meter and the wordmark sayit inside a rounded pill, above the wordmark SAYIT and the line DON'T TYPE IT. SAY IT." width="280">
 </p>
 
 # sayit
