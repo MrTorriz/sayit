@@ -25,10 +25,13 @@
 #   - Draws its own borderless window through the layer-shell protocol, so it
 #     floats above normal windows without ever taking focus — the keyboard
 #     is never taken, in any mode.
-#   - Resident and idle it sits on the TOP layer, so a fullscreen window
-#     covers it. A recording raises it to the OVERLAY layer, which is above
-#     fullscreen: while the microphone is live the pill is never hidden.
-#   - Reading order is lamp, meter, wordmark. The eight bars follow the voice
+#   - Always on the OVERLAY layer, whatever the state. TOP was tried for a
+#     resting resident pill, so it would not cover a fullscreen window, but
+#     a desktop panel lives on TOP too, and stacking within a layer follows
+#     map order: the pill was visible at rest or hidden behind the panel
+#     depending on which surface the compositor mapped last. A fixture that
+#     is only sometimes a fixture is worse than one that always covers.
+#   - Reading order is lamp, meter, wordmark. The ten bars follow the voice
 #     level, growing symmetrically about the pill's centre line and standing
 #     still when nothing drives them. The wordmark is stored as outlines, so
 #     no font is needed at runtime.
