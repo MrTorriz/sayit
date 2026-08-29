@@ -1,20 +1,49 @@
 # sayit-indicator.ps1 - the on-screen recording indicator.
 #
 # Usage:
-#   .\sayit-indicator.ps1 show    show the pill and animate it (blocks)
-#   .\sayit-indicator.ps1 hide    tell a running indicator to close
-#   .\sayit-indicator.ps1 place   drag it where you want it, Enter or Escape saves
+#   .\sayit-indicator.ps1 show    show the pill and keep it up (blocks)
+#   .\sayit-indicator.ps1 hide    turn the lamp off; a resident pill stays up
+#   .\sayit-indicator.ps1 stop    close a resident pill
+#   .\sayit-indicator.ps1 place   move and resize it; Enter or Escape saves
+#
+# In 'place' mode:
+#   drag the middle      move the pill
+#   drag either end      resize it, keeping the opposite end anchored
+#   arrow keys           nudge one pixel
+#   + and -              resize in steps, 0 returns to the standard size
+#   Enter or Escape      save position and size, and close
+#
+# The size is one scale factor, not a width and a height: the pill has a fixed
+# proportion and is never stretched out of it. Position and scale are saved
+# together in the overlay-position file.
 #
 # Arguments:
-#   -Managed   with 'show': the caller has already created the state file and
-#              owns its lifetime, so do not create one here. sayit.ps1 passes it
-#              because this process is far slower to start than a short
-#              dictation is to finish: a hide issued while it was still starting
-#              would be undone the moment it got around to writing the file, and
-#              the pill would then stay on screen for the rest of the session.
+#   -Managed   with 'show': the caller owns the state file's lifetime and the
+#              pill closes with it, instead of staying up for the session.
+#              sayit.ps1 passes it because this process is far slower to start
+#              than a short dictation is to finish: a hide issued while it was
+#              still starting would be undone the moment it got around to
+#              writing the file, and the pill would then stay on screen.
 #
-# The sayit mark IS the meter: the bars follow your voice level and the dot burns
-# red while the microphone is open. The level comes from the recorder, which has
+# The pill is resident and always on top
+# -------------------------------------
+# A pill stands from logon for the whole session, not only while a recording
+# runs. The scheduled logon task starts it, the same way it starts the daemon.
+#
+# It also stays on one layer. The Linux side tried the other way first: a
+# resting pill was put on a lower layer so it would not cover a fullscreen
+# video, and raised while recording. A desktop panel shares that layer and
+# stacking within one layer follows map order, so the pill was visible at rest
+# or hidden behind the panel depending on which surface was mapped last. It
+# read as a broken pill rather than as a layer policy. The price - a resting
+# pill sits over fullscreen video too - is real and accepted: a fixture that is
+# only sometimes a fixture is worse than one that is always there.
+#
+# So TopMost is set once, at creation, and nothing in the state path touches it
+# again. Only the lamp's colour and the meter's geometry change with the state.
+#
+# The mark IS the meter: the bars follow your voice level and the lamp burns red
+# while the microphone is open. The level comes from the recorder, which has
 # already computed it, so no second capture stream is opened.
 #
 # The window never takes focus. WS_EX_NOACTIVATE keeps the system from making it
@@ -30,7 +59,7 @@
 
 [CmdletBinding()]
 param(
-    [Parameter(Position = 0)][ValidateSet('show', 'hide', 'place')][string]$Action = 'show',
+    [Parameter(Position = 0)][ValidateSet('show', 'hide', 'stop', 'place')][string]$Action = 'show',
     [switch]$Managed
 )
 
@@ -38,17 +67,26 @@ Set-StrictMode -Version 2.0
 $ErrorActionPreference = 'Stop'
 
 . "$PSScriptRoot\lib\common.ps1"
+. "$PSScriptRoot\lib\indicator-geometry.ps1"
 Initialize-SayitDirs
 
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
 
+# The lamp follows this file: it exists exactly while the microphone is open.
 $stateFile    = Join-Path $script:RunDir 'indicator.on'
+# A resident pill closes when this appears, and deletes it on the way out.
+$quitFile     = Join-Path $script:RunDir 'indicator.quit'
 $levelFile    = Join-Path $script:RunDir 'level'
 $positionFile = Join-Path $script:ConfigDir 'overlay-position'
 
 if ($Action -eq 'hide') {
     Remove-Item -LiteralPath $stateFile -Force -ErrorAction SilentlyContinue
+    exit 0
+}
+
+if ($Action -eq 'stop') {
+    Write-Utf8Text -Path $quitFile -Text '1'
     exit 0
 }
 
@@ -147,7 +185,9 @@ namespace Sayit
         }
 
         /// HWND_TOPMOST grants membership of the topmost band, not a position
-        /// within it, so this is re-issued while visible.
+        /// within it, so this is re-issued while visible. It does not depend on
+        /// the recording state and must never be called from the state path:
+        /// the layer is the same whether the microphone is open or shut.
         public void KeepOnTop()
         {
             SetWindowPos(this.Handle, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
@@ -157,75 +197,88 @@ namespace Sayit
 '@
 Add-Type -TypeDefinition $cs -Language CSharp -ReferencedAssemblies 'System.Windows.Forms', 'System.Drawing'
 
-# --- geometry ---------------------------------------------------------------
-# The mark is drawn in the coordinate system of icons/*.svg (a 96-unit view box)
-# so it stays the project mark: four baseline-aligned rounded bars and a lamp.
-# Bar heights interpolate between the level-0 and level-7 icon frames; the lamp
-# burns red while the microphone is open. docs/logo.svg is no longer a relation:
-# it pictures the Linux overlay's pill, not this row.
-# INDICATOR_SCALE multiplies all three together, so the pill keeps its
-# proportions and the mark keeps its position inside it at any size.
-$cfg   = Import-DotEnv
-$scale = 1.0
-$raw   = Get-Setting -Env $cfg -Name 'INDICATOR_SCALE' -Default '1.0'
+# --- one pill at a time -----------------------------------------------------
+# A resident pill is already up when sayit.ps1 spawns one for a dictation. The
+# second process must not draw a second pill on top of the first, so it takes a
+# named mutex and leaves quietly if it loses. The resident pill then shows the
+# recording through its lamp, which is what the state file is for.
+#
+# A named mutex rather than a pid file, so the OS releases it if the process
+# dies. The same pattern sayit-autostart.ps1 uses for the supervisor.
+function Get-IndicatorMutex {
+    param([string]$Name = 'Local\sayit-indicator')
+
+    $mutex = New-Object System.Threading.Mutex($false, $Name)
+    $owned = $false
+    try {
+        $owned = $mutex.WaitOne(0)
+    } catch [System.Threading.AbandonedMutexException] {
+        # The previous holder died without releasing it. It is ours now.
+        $owned = $true
+    }
+    if (-not $owned) { $mutex.Dispose(); return $null }
+    return $mutex
+}
+
+$placing = ($Action -eq 'place')
+
+# Placement opens a window on purpose, even beside a resident pill, so it is the
+# one case that does not compete for the mutex.
+$mutex = $null
+if (-not $placing) {
+    $mutex = Get-IndicatorMutex
+    if ($null -eq $mutex) { exit 0 }
+}
+
+# --- size -------------------------------------------------------------------
+# The scale multiplies the whole pill, so it keeps its proportions and the mark
+# keeps its position inside it at any size. The geometry itself is defined in
+# lib\indicator-geometry.ps1 in unscaled pill pixels.
+#
+# Three sources, most specific first: the size dragged out in 'place' mode,
+# INDICATOR_SCALE in .env, then 1.0. What the user set by hand on screen wins
+# over a setting they may have written months ago.
+# MinScale and MaxScale come from lib\indicator-geometry.ps1.
+$cfg = Import-DotEnv
+$script:scale = 1.0
+$raw = Get-Setting -Env $cfg -Name 'INDICATOR_SCALE' -Default '1.0'
 $parsed = 0.0
 if ([double]::TryParse($raw, [System.Globalization.NumberStyles]::Float,
                        [System.Globalization.CultureInfo]::InvariantCulture, [ref]$parsed) -and
-    $parsed -ge 0.5 -and $parsed -le 4.0) {
-    $scale = $parsed
+    $parsed -ge $script:MinScale -and $parsed -le $script:MaxScale) {
+    $script:scale = $parsed
 }
 
-$markScale = 0.58 * $scale
-$width  = [int][math]::Round(100 * $scale)
-$height = [int][math]::Round(52 * $scale)
+# Reading and writing the file itself. The parsing and formatting live in
+# lib\indicator-geometry.ps1 so the tests can exercise them without a window.
+function Get-SavedLayout {
+    if (-not (Test-Path -LiteralPath $positionFile)) { return $null }
+    try {
+        return ConvertFrom-SayitLayout -Text (Read-Utf8Text -Path $positionFile)
+    } catch { return $null }
+}
 
-# x, width, height at level 0, height at level 7. The first three come straight
-# from icons/*.svg, which keep the older three-bar mark; the fourth continues the
-# same 20-unit spacing and its heights sit between the neighbours it separates,
-# so the row still rises and falls like a waveform rather than ending on a step.
-# This four-bar row lives here alone; nothing else in the repository draws it.
-$bars = @(
-    @{ X = 14.0; W = 12.0; H0 = 12.0; H7 = 44.0 },
-    @{ X = 34.0; W = 12.0; H0 = 18.0; H7 = 64.0 },
-    @{ X = 54.0; W = 12.0; H0 = 10.0; H7 = 36.0 },
-    @{ X = 74.0; W = 12.0; H0 = 15.0; H7 = 54.0 }
-)
-$baseline = 74.0
+function Save-Layout {
+    param([int]$X, [int]$Y, [double]$Scale)
+    Write-Utf8Text -Path $positionFile -Text (
+        ConvertTo-SayitLayout -X $X -Y $Y -Scale $Scale)
+}
 
-# Top of the tallest bar at level 7, which is where the mark begins vertically.
-$markTop = $baseline - 64.0
+$sparat = Get-SavedLayout
+if ($null -ne $sparat -and $null -ne $sparat.Scale) { $script:scale = $sparat.Scale }
 
-# The lamp. It sits on the bar row's vertical centre line, so that on a small
-# always-on pill it reads as a lamp that is lit while the microphone is open.
-# The Linux overlay centres its lamp on the pill instead, and draws it
-# proportionally larger; this pill is smaller, so the diameter is tuned for it.
-# icons/*.svg still carry the older three-bar mark with a full stop on the
-# baseline.
-$dotSize = 20.0
-$dotX    = 110.0
-$dotY    = ($markTop + $baseline) / 2.0 - $dotSize / 2.0
-
-# Centring uses the mark's real extent, so the lamp's right edge is what bounds
-# it rather than the last bar's.
-$markLeft  = 14.0
-$markRight = $dotX + $dotSize
-$offsetX   = ($width  - ($markRight - $markLeft) * $markScale) / 2.0 - $markLeft * $markScale
-$offsetY   = ($height - ($baseline - $markTop) * $markScale) / 2.0 - $markTop * $markScale
+$width  = [int][math]::Round($script:PillWidth  * $script:scale)
+$height = [int][math]::Round($script:PillHeight * $script:scale)
 
 function Get-Position {
-    if (Test-Path -LiteralPath $positionFile) {
-        try {
-            $p = (Read-Utf8Text -Path $positionFile).Trim() -split ','
-            if ($p.Count -eq 2) { return New-Object System.Drawing.Point([int]$p[0], [int]$p[1]) }
-        } catch { }
+    if ($null -ne $sparat) {
+        return New-Object System.Drawing.Point($sparat.X, $sparat.Y)
     }
     $wa = [System.Windows.Forms.Screen]::PrimaryScreen.WorkingArea
     return New-Object System.Drawing.Point(
         ($wa.Left + [int](($wa.Width - $width) / 2)),
         ($wa.Bottom - $height - 48))
 }
-
-$placing = ($Action -eq 'place')
 
 $form = New-Object Sayit.Overlay
 $form.ClickThrough = -not $placing
@@ -234,112 +287,229 @@ $form.ShowInTaskbar = $false
 $form.StartPosition = 'Manual'
 $form.Size = New-Object System.Drawing.Size($width, $height)
 $form.Location = Get-Position
-$form.BackColor = [System.Drawing.Color]::FromArgb(16, 16, 20)
-$form.Opacity = 0.92
+$form.BackColor = [System.Drawing.Color]::Black
+
+# Opacity is load-bearing, and it must stay below 1.0. CreateParams forces
+# WS_EX_LAYERED, and a layered window draws nothing until something calls
+# SetLayeredWindowAttributes for it. WinForms makes that call from the Opacity
+# setter - but only when the value is less than 1.0; at exactly 1.0 it decides
+# no layer is needed and skips it, while the forced style stays on. The result
+# is a window that is created, reports itself visible, sits at the right
+# coordinates with the right size, paints without error into its own bitmap -
+# and never appears on screen. Verified by showing three pills side by side at
+# 1.0, 0.99 and 0.92: only the lower two were visible.
+#
+# 0.99 is the practical maximum, and is indistinguishable from solid.
+$form.Opacity = 0.99
+
+# TopMost is set here, once, and never again. Nothing in the state path may
+# assign it: the pill sits on one layer whatever the microphone is doing.
 $form.TopMost = $true
 
-# Rounded pill shape.
-$path = New-Object System.Drawing.Drawing2D.GraphicsPath
-$r = $height
-$path.AddArc(0, 0, $r, $r, 90, 180)
-$path.AddArc(($width - $r), 0, $r, $r, 270, 180)
-$path.CloseFigure()
-# Region takes a copy of the path data, so the path itself is finished with here.
-$form.Region = New-Object System.Drawing.Region($path)
-$path.Dispose()
+# The pill shape, so the corners are transparent rather than black.
+$shape = New-SayitPillPath -Width $width -Height $height -Radius ($script:PillRadius * $scale)
+$form.Region = New-Object System.Drawing.Region($shape)
+$shape.Dispose()
 
-$script:level = 0
-$script:phase = 0
+# Recording state. $micOpen drives the lamp alone; $level drives the bars alone.
+# Placement records nothing, so it starts unlit whatever the state file says.
+if ($placing) {
+    $script:micOpen = $false
+} else {
+    $script:micOpen = Test-Path -LiteralPath $stateFile
+}
+$script:level = 0.0
+
+function New-RgbColor {
+    param([double[]]$Rgb)
+    return [System.Drawing.Color]::FromArgb(255,
+        [int][math]::Round($Rgb[0] * 255),
+        [int][math]::Round($Rgb[1] * 255),
+        [int][math]::Round($Rgb[2] * 255))
+}
 
 $form.Add_Paint({
     param($sender, $e)
     $g = $e.Graphics
     $g.SmoothingMode = 'AntiAlias'
 
-    # White outline around the pill. Drawn inset by half the pen width, because
-    # the form Region clips anything that falls outside the rounded shape.
-    $inset = 2.0 * $scale
-    $rr = [float]($height - 2 * $inset)
-    $border = New-Object System.Drawing.Drawing2D.GraphicsPath
-    $border.AddArc([float]$inset, [float]$inset, $rr, $rr, 90, 180)
-    $border.AddArc([float]($width - $inset - $rr), [float]$inset, $rr, $rr, 270, 180)
-    $border.CloseFigure()
-    $borderPen = New-Object System.Drawing.Pen(
-        [System.Drawing.Color]::FromArgb(255, 230, 237, 243), [float](2.5 * $scale))
-    $g.DrawPath($borderPen, $border)
-    $borderPen.Dispose()
-    $border.Dispose()
+    $g.ScaleTransform([float]$scale, [float]$scale)
 
-    $g.TranslateTransform([float]$offsetX, [float]$offsetY)
-    $g.ScaleTransform([float]$markScale, [float]$markScale)
+    $ink = New-RgbColor -Rgb $script:InkRgb
 
-    $lvl = [double]$script:level / 7.0
-
-    # A rx=6 corner on a 12-wide bar is a stadium, which a round-capped pen of
-    # width 12 draws exactly.
-    $pen = New-Object System.Drawing.Pen(
-        [System.Drawing.Color]::FromArgb(255, 230, 237, 243), 12.0)
-    $pen.StartCap = [System.Drawing.Drawing2D.LineCap]::Round
-    $pen.EndCap   = [System.Drawing.Drawing2D.LineCap]::Round
-
-    for ($i = 0; $i -lt $bars.Count; $i++) {
-        $b = $bars[$i]
-        # Per-bar wobble so the mark breathes instead of moving as one block.
-        $wobble = 0.88 + 0.12 * [math]::Sin(($script:phase / 2.5) + $i * 1.9)
-        $h = $b.H0 + ($b.H7 - $b.H0) * $lvl * $wobble
-        if ($h -lt $b.H0) { $h = $b.H0 }
-
-        $cx = $b.X + $b.W / 2.0
-        $yTop = $baseline - $h + $b.W / 2.0
-        $yBot = $baseline - $b.W / 2.0
-        if ($yTop -ge $yBot) {
-            # A bar no taller than the pen is wide leaves a zero-length line, and
-            # GDI+ draws nothing at all for one - round caps included. At rest two
-            # of the four bars are exactly that short, so they simply vanished
-            # whenever the microphone was open but quiet. Draw the cap itself.
-            $g.FillEllipse($pen.Brush, [float]($cx - $b.W / 2.0), [float]($yBot - $b.W / 2.0),
-                           [float]$b.W, [float]$b.W)
-        } else {
-            $g.DrawLine($pen, [float]$cx, [float]$yTop, [float]$cx, [float]$yBot)
-        }
-    }
+    # The pill: black fill, white border. The border is drawn inset by half its
+    # width, because the form Region clips anything outside the rounded shape.
+    $inset = $script:PillBorder / 2.0
+    $pill = New-SayitPillPath -Width $script:PillWidth -Height $script:PillHeight `
+                              -Radius $script:PillRadius -Inset $inset
+    $fill = New-Object System.Drawing.SolidBrush((New-RgbColor -Rgb $script:PillRgb))
+    $g.FillPath($fill, $pill)
+    $fill.Dispose()
+    $pen = New-Object System.Drawing.Pen($ink, [float]$script:PillBorder)
+    $g.DrawPath($pen, $pill)
     $pen.Dispose()
+    $pill.Dispose()
 
-    # The dot that ends the mark: red while the microphone is open.
-    $dot = New-Object System.Drawing.SolidBrush(
-        [System.Drawing.Color]::FromArgb(255, 218, 68, 83))
-    $g.FillEllipse($dot, [float]$dotX, [float]$dotY, [float]$dotSize, [float]$dotSize)
-    $dot.Dispose()
+    # The lamp. Always drawn, always the same size and place: only the colour
+    # carries the state, so an unlit pill still reads as a lamp that is off
+    # rather than as a pill with a hole in it.
+    $lampRgb = if ($script:micOpen) { $script:LampLit } else { $script:LampUnlit }
+    $lamp = Get-SayitLampRect
+    $lampBrush = New-Object System.Drawing.SolidBrush((New-RgbColor -Rgb $lampRgb))
+    $g.FillEllipse($lampBrush, [float]$lamp.X, [float]$lamp.Y,
+                   [float]$lamp.Diameter, [float]$lamp.Diameter)
+    $lampBrush.Dispose()
+
+    # The meter. Rounded capsules grown symmetrically about the pill's centre
+    # line, not up from a baseline: at rest the row is a line of dots level with
+    # the lamp, and speaking opens it out in both directions.
+    $barBrush = New-Object System.Drawing.SolidBrush($ink)
+    foreach ($b in (Get-SayitBarRects -Level $script:level)) {
+        $bar = New-SayitPillPath -Width $b.Width -Height $b.Height -Radius $b.Radius
+        $state = $g.Save()
+        $g.TranslateTransform([float]$b.X, [float]$b.Y)
+        $g.FillPath($barBrush, $bar)
+        $g.Restore($state)
+        $bar.Dispose()
+    }
+    $barBrush.Dispose()
+
+    # The wordmark, from stored outlines. No font is loaded at runtime.
+    $wm = Get-SayitWordmarkOrigin
+    $wmPath = New-SayitWordmarkPath -X $wm.X -Y $wm.Y -Height $wm.Height
+    $wmBrush = New-Object System.Drawing.SolidBrush($ink)
+    $g.FillPath($wmBrush, $wmPath)
+    $wmBrush.Dispose()
+    $wmPath.Dispose()
 })
 
 if ($placing) {
-    # Placement mode is the one time the window accepts input.
+    # Placement mode is the one time the window accepts input. It records
+    # nothing, so the lamp stays unlit: a window that is not recording must
+    # never show a lit lamp.
+    #
+    # Drag the middle to move it, drag either end to resize it. The pill has one
+    # fixed proportion, so a resize is a scale and not a stretch: the width the
+    # user drags out sets the scale, and the height follows. Resizing from the
+    # left edge also moves the window, so the end under the pointer is the one
+    # that stays put - otherwise the pill appears to run away from the mouse.
     $form.ClickThrough = $false
-    $script:drag = $false
+
+    # How far in from each end counts as a resize grip. Scaled, so the grip
+    # stays proportionally the same target on a pill dragged out to 4x.
+    $script:GripWidth = [int][math]::Max(10, [math]::Round(14 * $script:scale))
+
+    $script:mode = 'none'          # none | move | left | right
     $script:origin = New-Object System.Drawing.Point(0, 0)
-    $form.Add_MouseDown({ param($s, $e) $script:drag = $true; $script:origin = $e.Location })
+    $script:startBounds = $form.Bounds
+
+    function Get-Zone {
+        param([int]$X)
+        if ($X -le $script:GripWidth) { return 'left' }
+        if ($X -ge ($form.Width - $script:GripWidth)) { return 'right' }
+        return 'move'
+    }
+
+    # Applies a new scale and keeps the chosen edge anchored.
+    function Set-PillScale {
+        param([double]$NewScale, [string]$Anchor)
+
+        $NewScale = Get-SayitClampedScale -Scale $NewScale
+
+        $w = [int][math]::Round($script:PillWidth  * $NewScale)
+        $h = [int][math]::Round($script:PillHeight * $NewScale)
+
+        $x = $form.Location.X
+        $y = $form.Location.Y
+        if ($Anchor -eq 'left') {
+            # Dragging the left edge: the right edge is what must not move.
+            $x = $script:startBounds.Right - $w
+        }
+        # The vertical centre stays where it was, so the pill grows about its
+        # own middle rather than downwards from its top.
+        $y = $script:startBounds.Top + [int](($script:startBounds.Height - $h) / 2)
+
+        $script:scale = $NewScale
+        $form.Size = New-Object System.Drawing.Size($w, $h)
+        $form.Location = New-Object System.Drawing.Point($x, $y)
+
+        $shape = New-SayitPillPath -Width $w -Height $h -Radius ($script:PillRadius * $NewScale)
+        $gammal = $form.Region
+        $form.Region = New-Object System.Drawing.Region($shape)
+        $shape.Dispose()
+        if ($null -ne $gammal) { $gammal.Dispose() }
+        $form.Invalidate()
+    }
+
+    $form.Add_MouseDown({
+        param($s, $e)
+        $script:mode = Get-Zone -X $e.X
+        $script:origin = $form.PointToScreen($e.Location)
+        $script:startBounds = $form.Bounds
+    })
+
     $form.Add_MouseMove({
         param($s, $e)
-        if ($script:drag) {
-            $form.Location = New-Object System.Drawing.Point(
-                ($form.Location.X + $e.X - $script:origin.X),
-                ($form.Location.Y + $e.Y - $script:origin.Y))
+        if ($script:mode -eq 'none') {
+            # Not dragging: the cursor says what this end of the pill would do.
+            switch (Get-Zone -X $e.X) {
+                'left'  { $form.Cursor = [System.Windows.Forms.Cursors]::SizeWE }
+                'right' { $form.Cursor = [System.Windows.Forms.Cursors]::SizeWE }
+                default { $form.Cursor = [System.Windows.Forms.Cursors]::SizeAll }
+            }
+            return
         }
+
+        $nu = $form.PointToScreen($e.Location)
+        $dx = $nu.X - $script:origin.X
+        $dy = $nu.Y - $script:origin.Y
+
+        if ($script:mode -eq 'move') {
+            $form.Location = New-Object System.Drawing.Point(
+                ($script:startBounds.Left + $dx), ($script:startBounds.Top + $dy))
+            return
+        }
+
+        # Resize. Dragging the right edge outwards widens; dragging the left
+        # edge outwards means a negative dx, hence the sign flip.
+        $bredd = $script:startBounds.Width
+        if ($script:mode -eq 'right') { $bredd += $dx } else { $bredd -= $dx }
+        Set-PillScale -NewScale ($bredd / $script:PillWidth) -Anchor $script:mode
     })
-    $form.Add_MouseUp({ $script:drag = $false })
+
+    $form.Add_MouseUp({ $script:mode = 'none' })
+
     $form.KeyPreview = $true
     $form.Add_KeyDown({
         param($s, $e)
+        # Arrow keys nudge by one pixel, so the pill can be lined up exactly.
+        switch ($e.KeyCode) {
+            'Left'  { $form.Location = New-Object System.Drawing.Point(($form.Location.X - 1), $form.Location.Y); return }
+            'Right' { $form.Location = New-Object System.Drawing.Point(($form.Location.X + 1), $form.Location.Y); return }
+            'Up'    { $form.Location = New-Object System.Drawing.Point($form.Location.X, ($form.Location.Y - 1)); return }
+            'Down'  { $form.Location = New-Object System.Drawing.Point($form.Location.X, ($form.Location.Y + 1)); return }
+            'Oemplus'      { $script:startBounds = $form.Bounds; Set-PillScale -NewScale ($script:scale + 0.1) -Anchor 'right'; return }
+            'Add'          { $script:startBounds = $form.Bounds; Set-PillScale -NewScale ($script:scale + 0.1) -Anchor 'right'; return }
+            'OemMinus'     { $script:startBounds = $form.Bounds; Set-PillScale -NewScale ($script:scale - 0.1) -Anchor 'right'; return }
+            'Subtract'     { $script:startBounds = $form.Bounds; Set-PillScale -NewScale ($script:scale - 0.1) -Anchor 'right'; return }
+            'D0'           { $script:startBounds = $form.Bounds; Set-PillScale -NewScale 1.0 -Anchor 'right'; return }
+        }
         if ($e.KeyCode -eq 'Return' -or $e.KeyCode -eq 'Escape') {
-            Write-Utf8Text -Path $positionFile -Text ("{0},{1}" -f $form.Location.X, $form.Location.Y)
+            Save-Layout -X $form.Location.X -Y $form.Location.Y -Scale $script:scale
             $form.Close()
         }
     })
-    $script:level = 5
+    # A level that shows the meter open, so the pill can be placed by its real
+    # size rather than by its resting one.
+    $script:level = 5.0
     $form.Show()
     $form.Activate()
 } else {
-    if (-not $Managed) { Write-Utf8Text -Path $stateFile -Text '1' }
+    if ($Managed -and -not (Test-Path -LiteralPath $stateFile)) {
+        Write-Utf8Text -Path $stateFile -Text '1'
+        $script:micOpen = $true
+    }
+    Remove-Item -LiteralPath $quitFile -Force -ErrorAction SilentlyContinue
     $form.ShowNoActivate()
 }
 
@@ -354,15 +524,27 @@ if ((Get-Setting -Env $cfg -Name 'INDICATOR_EXCLUDE_FROM_CAPTURE' -Default '1') 
 $timer = New-Object System.Windows.Forms.Timer
 $timer.Interval = 80
 $timer.Add_Tick({
-    $script:phase++
     if (-not $placing) {
-        if (-not (Test-Path -LiteralPath $stateFile)) { $form.Close(); return }
-        try {
-            $raw = [System.IO.File]::ReadAllText($levelFile)
-            $script:level = [int]$raw
-        } catch {
-            # A missing or half-written level file just means "no update yet".
+        if (Test-Path -LiteralPath $quitFile) { $form.Close(); return }
+
+        $open = Test-Path -LiteralPath $stateFile
+        # A managed pill belongs to one dictation and goes when it does. A
+        # resident one stays up and just puts its lamp out.
+        if ($Managed -and -not $open) { $form.Close(); return }
+        $script:micOpen = $open
+
+        if ($open) {
+            try {
+                $script:level = [double][int]([System.IO.File]::ReadAllText($levelFile))
+            } catch {
+                # A missing or half-written level file means "no update yet".
+            }
+        } else {
+            $script:level = 0.0
         }
+
+        # Re-asserted every tick, never in response to a state change: the pill
+        # holds one layer whatever the microphone is doing.
         $form.KeepOnTop()
     }
     $form.Invalidate()
@@ -374,6 +556,8 @@ try {
 } finally {
     $timer.Stop()
     $timer.Dispose()
-    if (-not $placing) { Remove-Item -LiteralPath $stateFile -Force -ErrorAction SilentlyContinue }
+    Remove-Item -LiteralPath $quitFile -Force -ErrorAction SilentlyContinue
+    if ($Managed) { Remove-Item -LiteralPath $stateFile -Force -ErrorAction SilentlyContinue }
+    if ($null -ne $mutex) { try { $mutex.ReleaseMutex() } catch { }; $mutex.Dispose() }
 }
 exit 0

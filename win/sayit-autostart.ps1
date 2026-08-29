@@ -3,11 +3,16 @@
 # Usage:
 #   .\sayit-autostart.ps1               supervise until the session ends
 #   .\sayit-autostart.ps1 -NoDaemon     do not start the warm model server
+#   .\sayit-autostart.ps1 -NoIndicator  do not put the resident pill up
 #   .\sayit-autostart.ps1 -Seconds 60   supervise for 60 s, then stop and exit
 #
 # Arguments:
 #   -NoDaemon   skip the sayit-daemon.ps1 start that normally runs once at
 #               startup; the trigger is supervised either way
+#   -NoIndicator
+#               skip the resident indicator. RECORDING_INDICATOR=0 in .env
+#               turns it off too; this flag is for a run that wants the trigger
+#               supervised without a pill on screen
 #   -Seconds    stop supervising after this many seconds, stop the trigger this
 #               run started, and exit. For testing; 0 (the default) never stops
 #
@@ -48,7 +53,8 @@
 [CmdletBinding()]
 param(
     [int]$Seconds = 0,
-    [switch]$NoDaemon
+    [switch]$NoDaemon,
+    [switch]$NoIndicator
 )
 
 Set-StrictMode -Version 2.0
@@ -88,9 +94,10 @@ $script:SupervisorMutexName = 'Local\sayit-autostart'
 $script:TriggerMutexName    = 'Local\sayit-trigger'
 
 $script:PowerShellExe = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
-$script:TriggerScript = Join-Path $PSScriptRoot 'sayit-trigger.ps1'
-$script:DaemonScript  = Join-Path $PSScriptRoot 'sayit-daemon.ps1'
-$script:SayitScript   = Join-Path $PSScriptRoot 'sayit.ps1'
+$script:TriggerScript   = Join-Path $PSScriptRoot 'sayit-trigger.ps1'
+$script:DaemonScript    = Join-Path $PSScriptRoot 'sayit-daemon.ps1'
+$script:SayitScript     = Join-Path $PSScriptRoot 'sayit.ps1'
+$script:IndicatorScript = Join-Path $PSScriptRoot 'sayit-indicator.ps1'
 $script:LogFile       = Join-Path $script:RunDir 'autostart.log'
 $script:BeatFile      = Join-Path $script:RunDir 'trigger.beat'
 
@@ -248,6 +255,31 @@ if ($NoDaemon) {
         Write-AutostartLog 'autostart: warm daemon start requested'
     } catch {
         Write-AutostartLog ('autostart: could not start the warm daemon: {0}' -f $_.Exception.Message)
+    }
+}
+
+# --- Put the resident pill up -----------------------------------------------
+# The pill stands for the whole session, not only while a recording runs, which
+# is what makes it a fixture rather than something that appears and vanishes.
+# This is the Windows counterpart of sayit-overlay.service on the Linux side.
+#
+# Fire and forget, like the daemon. The indicator takes a named mutex of its
+# own, so a second one - the short-lived pill sayit.ps1 spawns per dictation -
+# exits immediately rather than drawing over this one. Started once and never
+# restarted: a pill the user closed on purpose should stay closed.
+
+if ($NoIndicator) {
+    Write-AutostartLog 'autostart: -NoIndicator, leaving the pill down'
+} elseif (-not (Test-Path -LiteralPath $script:IndicatorScript)) {
+    Write-AutostartLog 'autostart: sayit-indicator.ps1 not found - no pill'
+} elseif ((Get-Setting -Env (Import-DotEnv) -Name 'RECORDING_INDICATOR' -Default '1') -eq '0') {
+    Write-AutostartLog 'autostart: RECORDING_INDICATOR=0 - no pill'
+} else {
+    try {
+        Start-SayitChild -Script $script:IndicatorScript -Arguments @('show') | Out-Null
+        Write-AutostartLog 'autostart: resident indicator requested'
+    } catch {
+        Write-AutostartLog ('autostart: could not start the indicator: {0}' -f $_.Exception.Message)
     }
 }
 
