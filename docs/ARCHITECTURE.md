@@ -15,11 +15,11 @@ helpers in `win\` for Windows 11. Each stage can be run and tested on its own;
 `bin/sayit` and `win\sayit.ps1` are the orchestrators that wire the stages
 together and manage per-session recording state.
 
-The pipeline is identical on both platforms:
+Both platforms use the same four stages; Linux can select a different transcription engine:
 
 ```mermaid
 flowchart LR
-    A["capture<br>16 kHz mono WAV"] -->|release| B["whisper.cpp<br>VAD, beam search,<br>warm daemon, Vulkan"]
+    A["capture<br>16 kHz mono WAV"] -->|release| B["local transcription<br>whisper.cpp / Vulkan<br>or Linux OpenVINO / Turbo"]
     B --> C["wordlist<br>replacement"]
     C --> D["inject into<br>focused window"]
 ```
@@ -30,12 +30,12 @@ flowchart LR
 
 | Shared | Contract |
 |---|---|
-| **Model handling** | The same pinned whisper.cpp release (`v1.9.2`), the same GGML model and Silero VAD file, the same flags (`-fa`, `-sns`, beam, VAD), and the same daemon-first rule: POST to a local `whisper-server`, fall back to `whisper-cli` **only** on a transport failure |
+| **Model handling** | The base engine uses pinned whisper.cpp, GGML Whisper and Silero VAD. Linux can substitute the OpenVINO server. Both use the local daemon first and `whisper-cli` on HTTP/transport failure; an empty successful response is final |
 | **Wordlist format** | `original<TAB>replacement`; rules sorted by original length descending, applied sequentially and globally, case-insensitive on Unicode word boundaries, originals treated as literal strings rather than regexes |
 | **History format** | `history.jsonl`, one JSON object per line: `time` (local ISO-8601 to seconds), `seconds`, `words`, `text`. Same field names, order and types, so a history file is portable between the platforms |
 | **Settings** | One `.env` from one `.env.example`. A setting that exists on both platforms has the same name and the same meaning; the file carries a clearly marked Windows-only section at the end |
 | **Diagnostics discipline** | A separate read-only `doctor` command on each platform; error logs record error *classes*, never dictated text; profiling records timings, never text |
-| **Documentation and identity** | This document, the README, and the mark's *vocabulary* — a row of rounded bars and a lamp, laid out in the 96-unit coordinate system of `icons/*.svg`. That much is shared; the drawing is not, and the two platforms have drifted apart on purpose. `win\sayit-indicator.ps1` draws four baseline-aligned bars on a 100x52 pill, a row that now lives only there. `bin/sayit-overlay` draws ten bars that grow about a centre line, next to the `sayit` wordmark, on a 160x40 pill — it is a fixture that sits on screen for a whole session, so it says its own name; the Windows pill appears only while recording and does not need to. `docs/logo.svg` is that same overlay pill, its geometry generated from the overlay's own constants rather than redrawn, so the logo pictures what the user actually sees and cannot drift from it; `docs/logo-lockup.svg` scales it to the width the old four-bar mark occupied and sets the wordmark and tagline beneath. Scale and lamp diameter are tuned per platform. Nor is the red — `win\sayit-indicator.ps1` and the sixteen `icons/sayit-level-*.svg` frames use `#da4453`, while `bin/sayit-overlay` and the two logo files use `#ff4d4d` lit, the overlay adding a dark `#6b2126` unlit because its lamp is always on the pill and only changes colour; the logo files keep `#da4453` for the typographic accent on light backgrounds, where the lit red would fall to 3.3:1; `icons/sayit.svg`, `icons/sayit-light.svg` and the two `icons/sayit-idle*.svg` frames carry no red at all, drawing the dot in the ink colour. All twenty files in `icons/` keep the older three-bar mark on purpose: four bars and a lamp are not square, and a square is what a `hicolor/scalable` icon slot wants |
+| **Documentation and identity** | Shared documentation and logo. Linux transient recording feedback is a 26-bar waveform without a lamp or wordmark. Its optional resident/placement view and the Windows indicator retain the 160×40 lamp, ten-bar meter and wordmark. `docs/check-geometry.py` checks their shared geometry; `docs/build-logo.py` generates the logo from the resident design |
 
 ### Where they diverge, and why
 
@@ -56,6 +56,20 @@ forced by the platform, not chosen for taste.
 | Bluetooth | `bin/sayit-bt` switches A2DP to HFP and restores it | nothing | Windows selects the HFP profile itself when an application opens a capture endpoint. The whole stage, its state file and the intent marker that covered the switch window are absent |
 | Transient state | `$XDG_RUNTIME_DIR`, RAM-backed and wiped at logout | `%LOCALAPPDATA%\sayit\run`, on disk | Windows has no tmpfs equivalent, so cleanup is explicit: the WAV is deleted after transcription, stale WAVs older than an hour are swept at the next start, and `sayit-doctor.ps1` reports whatever is left |
 | Config parsing | `.env` is sourced as bash | `.env` is parsed as `KEY=VALUE` data | Running arbitrary code from a config file is a worse trade on either platform, and nothing in `.env.example` needs it. The Windows reader expands `%VAR%` and nothing else |
+
+## Optional Linux transcription engine
+
+`bin/sayit-openvino` reads `.env` and starts `engines/openvino/server.py` using
+an isolated virtual environment. The server loads Whisper large-v3-turbo into
+OpenVINO and uses the installed libwhisper for Silero VAD on CPU. Silero gates
+whole recordings instead of cutting segments. A single HTTP worker serializes
+both model states. `/health` identifies the engine after warm-up; `/inference`
+accepts Sayit's multipart WAV requests and returns text or an empty success.
+
+`bin/sayit-engine` manages one user-service override. A shared file lock held by
+recording/transcription prevents switching during dictation. Failed startup
+restores the prior override; successful selection enables the service at login.
+The existing CLI remains a local fallback. [Details and limits](OPENVINO.md).
 
 ## The Linux pipeline
 
@@ -416,8 +430,8 @@ The live meter takes the same idea further. While recording, `sayit-meter`
 opens its own low-rate PipeWire capture (sources allow concurrent readers,
 so the recording itself is untouched) and reduces the audio to a single
 level about 8 times per second. The meter is the mark's own row of bars:
-they follow the voice level, and the lamp burns red while the microphone is
-open.
+they follow the voice level. The transient overlay shows a wide meter without
+a red lamp or wordmark; its presence already indicates that recording is active.
 The samples are used only for that computation; no audio is stored.
 
 Three styles render it, each falling back to the next when its
@@ -440,6 +454,7 @@ requirements are missing, so the meter degrades instead of vanishing:
   | | Piped (default) | Resident (`sayit-overlay.service`) |
   | --- | --- | --- |
   | On screen | only while recording | the whole session |
+  | Contents | wide meter only | lamp, meter and wordmark |
   | Audio inlet | stdin, from the meter's `pw-cat` | `$XDG_RUNTIME_DIR/sayit.overlay`, written by the same `pw-cat` |
   | Recording starts | the process starting is the signal | audio arriving on the FIFO |
   | Recording ends | end of stream ends the process | `AUDIO_IDLE_S` (0.4 s) without audio |
@@ -482,15 +497,16 @@ requirements are missing, so the meter degrades instead of vanishing:
   fixture that cannot be grabbed is worse than one that catches a click on
   its own 160x40 px.
 
-  `on_draw` puts three items on the pill in one row — the lamp, the meter,
-  the wordmark — and separates three states with one rule. The lamp is lit
+  `on_draw` uses the transient pill's available width for its meter alone.
+  Resident and placement windows instead include a lamp and wordmark. In
+  those windows the lamp is lit
   by an open microphone and by nothing else, in the same place and at the
   same size either way, so a closed microphone can never be mistaken for an
   open one. Between "open and silent" and "open and speaking" the meter's
   geometry is the only thing that changes: no colour, no brightness, nothing
   else on the pill, and the lamp never pulses, so movement stays the meter's
-  alone. `_test_state` and `_test_bar_midpoints` report exactly what the
-  draw path uses, so the rule and the geometry can be checked without a
+  alone. `_test_state` reports the resident lamp states; `_test_bar_midpoints`
+  reports the shared meter geometry, so these can be checked without a
   window and a test cannot pass against a stale copy.
 - **`mark`** — the same mark in Plasma's on-screen display, animated
   through pre-rendered theme icons (`sayit-level-0..7` plus an idle frame

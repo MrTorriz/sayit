@@ -26,7 +26,7 @@ details in the issue.
   point `LLM_URL` somewhere else — which the setting lets you do. Treat any
   non-loopback `LLM_URL` as sending your dictated text to that host in plain
   HTTP. See [docs/CONFIGURATION.md](docs/CONFIGURATION.md#settings).
-- The optional warm daemon (`whisper-server`) listens on `127.0.0.1` only and
+- The optional warm daemon (`whisper-server` or OpenVINO) listens on `127.0.0.1` only and
   has no authentication — any local process can reach it. Do not bind it to a
   non-loopback address.
 - **Daemon logs are `whisper-server`'s own output and can contain transcribed
@@ -109,3 +109,19 @@ details in the issue.
 - Nothing requires administrator rights, and the logon task deliberately runs
   as the logged-in user. An elevated trigger could not type into the
   non-elevated windows you actually work in.
+
+## Optional OpenVINO engine (Linux)
+
+The adapter binds only to `127.0.0.1`. Audio is decoded in memory and neither
+transcripts nor prompts are logged by the adapter. Error responses contain
+error classes only. The client's history, clipboard and optional cleanup
+behavior above still apply, including native daemon/CLI logging on fallback.
+The launcher disables the OpenVINO package's telemetry through `CI=true` and
+uses an isolated Python environment. No model download occurs during dictation.
+
+`install-openvino.sh` downloads Python packages from PyPI and model files from
+Hugging Face. Versions are pinned in `engines/openvino/requirements.txt`; the
+model manifest pins a repository revision, size and SHA-256 for every file.
+Existing or locally copied model files are checked too. Python packages are
+version-pinned, not hash-locked. The loopback endpoint has no authentication;
+other processes running on the same machine can use it.

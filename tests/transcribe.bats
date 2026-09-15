@@ -27,6 +27,14 @@ case "${CURL_MODE:-ok}" in
     ok)    printf 'daemon text from server' ;;
     empty) ;;
     token) printf ' <|nospeech|> ' ;;
+    wrapped)
+        # Reproduce the server's default mid-word segment boundary.
+        if [[ " $* " == *' --form-string no_timestamps=true '* ]]; then
+            printf 'Ditt nummer finns här.\nNästa mening.'
+        else
+            printf 'Ditt num\nmer finns här.\nNästa mening.'
+        fi
+        ;;
     fail)  exit 7 ;;
 esac
 exit 0
@@ -68,6 +76,13 @@ EOF
     CURL_MODE=empty run "$TRANSCRIBE" "$WAV"
     [ "$status" -eq 0 ]
     [ -z "$output" ]
+    [ ! -f "$STUB_CTL/cli.args" ]
+}
+
+@test "daemon text keeps words intact while joining sentence segments" {
+    CURL_MODE=wrapped run "$TRANSCRIBE" "$WAV"
+    [ "$status" -eq 0 ]
+    [ "$output" = "Ditt nummer finns här. Nästa mening." ]
     [ ! -f "$STUB_CTL/cli.args" ]
 }
 

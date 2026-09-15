@@ -8,23 +8,26 @@
 [![local speech recognition](https://img.shields.io/badge/speech--to--text-runs_locally-success)](#privacy)
 
 <p align="center">
-  <img src="docs/demo.gif" alt="sayit's pill sits above the terminal with its lamp dark; holding the thumb button lights the lamp and the bars follow the voice; on release the transcribed Swedish sentence lands in the focused window in one paste" width="760">
+  <img src="docs/demo.gif" alt="Linux hold-to-talk: a waveform appears while recording, disappears on release, and the transcribed sentence is pasted into the focused window" width="760">
 </p>
 
-sayit runs [whisper.cpp](https://github.com/ggml-org/whisper.cpp) with Vulkan GPU acceleration and injects the transcribed text into the focused window — terminal, editor, browser, anything. It ships tuned for Swedish via [KB-Whisper](https://huggingface.co/KBLab/kb-whisper-medium), the National Library of Sweden's Whisper fine-tune, which beats OpenAI's `whisper-large-v3` on every Swedish benchmark at a fraction of the size ([KBLab's numbers](https://huggingface.co/KBLab/kb-whisper-medium): 47% lower WER on average for `kb-whisper-large`, around 38% for the default `medium`). It works with any GGML Whisper model and language.
+sayit transcribes speech locally and injects the text into the focused window —
+terminal, editor or browser. The default engine is
+[whisper.cpp](https://github.com/ggml-org/whisper.cpp) with Vulkan acceleration,
+tuned for Swedish through [KB-Whisper](https://huggingface.co/KBLab/kb-whisper-medium).
+Linux also has an optional **Whisper large-v3-turbo / OpenVINO** engine for Intel
+graphics, with the original engine available at any time.
 
-Four stages are the whole product, and they are the same on both platforms:
-capture 16 kHz mono WAV, transcribe it with whisper.cpp, apply your wordlist,
-inject the result into the focused window. Only the first and the last are
-platform code — how the microphone is opened, and how the finished text reaches
-the window you are working in. [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) draws
-the pipeline and both platforms' sequences.
+The pipeline is capture → transcribe → apply your wordlist → paste. The optional
+engine changes transcription; your microphone, trigger, wordlist and text
+injection work as before. See [engine setup and limits](docs/OPENVINO.md).
 
 ## Documentation
 
 | Document | What it answers |
 | --- | --- |
 | [docs/INSTALL-LINUX.md](docs/INSTALL-LINUX.md) | Requirements, install, triggers, ydotool, the meter, Bluetooth, the daemon |
+| [docs/OPENVINO.md](docs/OPENVINO.md) | Optional Linux Turbo engine, installation, switching, rollback and limits |
 | [docs/INSTALL-WINDOWS.md](docs/INSTALL-WINDOWS.md) | Requirements, install, the trigger, autostart, the indicator, injection |
 | [docs/CONFIGURATION.md](docs/CONFIGURATION.md) | Every setting, its default, its platform, and when a change takes effect |
 | [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) | Symptom, cause, and the command that fixes it |
@@ -38,7 +41,7 @@ the pipeline and both platforms' sequences.
 | | |
 | --- | --- |
 | **Local** | Speech recognition runs on your machine. No cloud service, no API key, no telemetry, no account — audio never leaves the machine |
-| **Fast** | Vulkan GPU inference and a warm model daemon ([measured](docs/PERFORMANCE.md)) |
+| **Fast** | Warm local inference: whisper.cpp/Vulkan, or optional OpenVINO/Turbo on Linux with Intel graphics ([measurements](docs/PERFORMANCE.md)) |
 | **Works anywhere** | Layout-independent text injection — terminals, editors, browsers; Wayland and X11 on Linux |
 | **Push-to-talk** | Hold-to-talk on a mouse thumb button and toggle on a hotkey, with a live voice meter and a recording indicator |
 | **Learns your vocabulary** | Teach it your terms: `sayit-learn "get hub" "GitHub"` |
@@ -54,11 +57,10 @@ the pipeline and both platforms' sequences.
 
 ## Two platforms, one repository
 
-The two implementations share everything except code: the same pinned
-whisper.cpp release and model contract, the same wordlist format, the same
-`history.jsonl`, one `.env` from one `.env.example`, and one identity. The code
-itself is not shared and there is nothing to share — bash, PipeWire and ydotool
-on one side; PowerShell, `waveIn` and `SendInput` on the other.
+Both platforms share the wordlist and history formats and the base `.env`
+settings. Their default engine is whisper.cpp with a GGML model. The optional
+OpenVINO engine and `sayit-engine` command are **Linux only**; Windows keeps its
+existing whisper.cpp implementation.
 
 Which stage differs, and the reasoning behind every divergence, is in
 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#where-they-diverge-and-why).
@@ -76,7 +78,17 @@ Then bind a trigger — a Logitech thumb button through Solaar, or any global ho
 and, on KWin/Plasma, set up `ydotoold` once. Text injection does not work there
 without it.
 
-Full walkthrough: [docs/INSTALL-LINUX.md](docs/INSTALL-LINUX.md).
+For the optional Intel GPU engine, complete the base installation above, then:
+
+```bash
+./install-openvino.sh       # isolated Python runtime and checksummed Turbo model
+./bin/sayit-engine fast     # verify startup and enable the user service at login
+./bin/sayit-engine status
+./bin/sayit-engine accurate # return to the configured whisper.cpp model
+```
+
+See [OpenVINO requirements](docs/OPENVINO.md) before installing. Full Linux
+walkthrough: [docs/INSTALL-LINUX.md](docs/INSTALL-LINUX.md).
 
 ## Quickstart: Windows 11
 
@@ -150,10 +162,13 @@ Faster than editing it by hand — teach sayit directly from a mistake:
 The format, the matching rules and where the file lives are in
 [docs/CONFIGURATION.md](docs/CONFIGURATION.md#custom-wordlist).
 
+Linux daemon requests disable token timestamps, just like the CLI fallback.
+This keeps the server from wrapping output inside words before normalization.
+
 ## Privacy
 
 **Speech recognition and all audio processing run on your machine.** Audio never
-leaves it: the only place a recording is ever sent is the warm `whisper-server`
+leaves it: the only place a recording is ever sent is the warm local daemon (`whisper-server` or the OpenVINO adapter)
 on `127.0.0.1`, and the fallback path hands it to a local binary instead. There
 is no telemetry and no account.
 
@@ -169,7 +184,7 @@ are safe to paste into an issue — is in [SECURITY.md](SECURITY.md).
 
 ## Performance
 
-With the warm daemon, a 2.2-second Swedish sentence transcribes in a median of
+In the August 2026 whisper.cpp benchmark, a 2.2-second Swedish sentence transcribed in a median of
 **1.62 s** on the Linux reference machine, about a second faster than the cold
 `whisper-cli` fallback. On Windows, Vulkan is roughly **13.7x** faster than the CPU
 build on encode.
@@ -177,15 +192,24 @@ build on encode.
 Both figures come from one machine each, with the method, the dates and the
 limitations stated: [docs/PERFORMANCE.md](docs/PERFORMANCE.md).
 
+A separate September 2026 comparison on eight Swedish FLEURS clips measured
+**2.16 s mean with OpenVINO/Turbo versus 3.89 s with KB-Whisper-medium/Vulkan**.
+That is 44% less transcription time on the tested Intel GPU. The small sample
+had 18 versus 17 word errors, so it does not establish a general accuracy win.
+These are warm HTTP timings, not button-release-to-paste timings; see the
+[method and individual results](docs/PERFORMANCE.md#linux-openvinoturbo-comparison-2026-09-14).
+
 ## Project structure
 
 ```text
 sayit/
-├── bin/            Linux implementation — bash, plus one Python file for the overlay
+├── bin/            Linux commands and recording overlay
 ├── win/            Windows implementation — PowerShell 5.1, plus runtime-compiled C# in win/lib/
 ├── config/         desktop entry, systemd unit, example wordlist, example Solaar rules
 ├── docs/           the documents linked above, the mark, and demo.gif with the make-demo.py that generates it
 ├── icons/          theme icons: notification mark and OSD meter levels, light and dark
+├── engines/        Optional OpenVINO server, model manifest and tests
+├── install-openvino.sh  Optional Linux runtime installer
 ├── tests/          bats suite and the benchmark harness (Linux)
 ├── win/tests/      Pester suite (Windows)
 ├── models/         GGML model and Silero VAD — gitignored, fetched by the installer
@@ -212,7 +236,7 @@ Each implementation has its own tests, and neither can break the other's CI job.
 - **Why push-to-talk instead of a wake word?** Deliberate scope: push-to-talk is more
   reliable, more private, and has no idle CPU cost.
 - **Why one repository for two implementations?** The parts worth keeping identical —
-  the model contract, the wordlist, the history format, the settings — are exactly the
+  the wordlist, history format and shared settings — are exactly the
   parts that are not code.
 
 The full reasoning, both pipelines and the runtime state of each is in
@@ -224,8 +248,9 @@ Bug reports, fixes and focused features are welcome. [CONTRIBUTING.md](CONTRIBUT
 has the setup, the style rules, and the exact checks to run for a Linux change and for
 a Windows change — they are different lists, and neither side needs the other's.
 
-CI runs three jobs. Two Linux jobs cover syntax, `shellcheck` and the
-[Bats](https://github.com/bats-core/bats-core) suite; a Windows job parses every
+CI runs four jobs: syntax and `shellcheck`, the
+[Bats](https://github.com/bats-core/bats-core) suite, OpenVINO protocol and
+installation tests without a GPU, and Windows checks. The Windows job parses every
 `win\*.ps1`, compiles the C# helpers with `Add-Type`, runs PSScriptAnalyzer and
 executes the Pester suite.
 

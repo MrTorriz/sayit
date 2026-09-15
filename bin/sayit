@@ -37,6 +37,10 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 [[ -f "$REPO_ROOT/.env" ]] && source "$REPO_ROOT/.env"
 
 RUN_DIR="${XDG_RUNTIME_DIR:-/tmp}"
+# Shared with the engine switcher. Children retain this lock while recording;
+# stop/transcribe can run together, but a service restart cannot cut them off.
+exec 8>"$RUN_DIR/sayit-engine.lock"
+flock -sn 8 || { echo 'Engine switch in progress; try again when ready.' >&2; exit 1; }
 SESSION_FILE="$RUN_DIR/sayit.session"
 INTENT_FILE="$RUN_DIR/sayit.starting"
 ERROR_LOG="$RUN_DIR/sayit-last-error.log"

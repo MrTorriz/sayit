@@ -191,7 +191,7 @@ elif [[ ! -x "$WHISPER_BIN" || $REBUILD -eq 1 ]]; then
             https://github.com/ggml-org/whisper.cpp.git "$WHISPER_SRC"
     else
         # Guard against a directory left behind by a hard-killed clone.
-        git -C "$WHISPER_SRC" rev-parse --git-dir >/dev/null 2>&1 \
+        [[ "$(git -C "$WHISPER_SRC" rev-parse --show-toplevel 2>/dev/null)" == "$(cd "$WHISPER_SRC" && pwd -P)" ]] \
             || die "$WHISPER_SRC exists but is not a git repository (interrupted clone?) — remove the directory and re-run"
         git -C "$WHISPER_SRC" fetch --depth 1 origin tag "$WHISPER_REF" 2>/dev/null \
             || git -C "$WHISPER_SRC" fetch --depth 1 origin "$WHISPER_REF"

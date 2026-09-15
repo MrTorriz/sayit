@@ -83,12 +83,8 @@ def pill(level, lit):
     cr.stroke()
 
     cy = PH / 2.0
-    x = OV["CONTENT_X"]
-    OV["draw_lamp"](cr, x, cy, lit)
-    x += OV["LAMP_W"] + OV["LAMP_GAP"]
-    OV["draw_wave"](cr, x, cy, level)
-    x += OV["WAVE_W"] + OV["LAYOUT_GAP"]
-    OV["draw_wordmark"](cr, x, cy)
+    OV["draw_wave"](cr, OV["TRANSIENT_WAVE_INSET"], cy, level,
+                    OV["TRANSIENT_WAVE_SCALE"], OV["TRANSIENT_BAR_MAX_U"])
 
     surf.flush()
     im = Image.frombuffer("RGB", (PW * SS, PH * SS), bytes(surf.get_data()),
@@ -106,7 +102,8 @@ def frame(text, cursor, level, lit, caption):
     if cursor:
         x += d.textlength(text, font=F)
         d.rectangle([x + 1, PY + 1, x + 9, PY + 18], fill=FG)
-    img.paste(pill(level, lit), ((W - PW) // 2, 62))
+    if lit:
+        img.paste(pill(level, lit), ((W - PW) // 2, 62))
     cw = d.textlength(caption, font=FS)
     d.text(((W - cw) / 2, 118), caption, font=FS, fill=(138, 140, 148))
     return img
@@ -116,18 +113,14 @@ frames, durs = [], []
 def add(im, ms):
     frames.append(im); durs.append(ms)
 
-REST  = "the pill stays on screen; the lamp is dark while the microphone is closed"
-OPEN  = "hold the thumb button -- the lamp lights and the meter follows your voice"
+REST  = "ready to dictate -- the microphone is closed"
+OPEN  = "hold the thumb button -- the waveform follows your voice"
 PASTE = "release, and the transcription arrives in one paste"
 
-# 1. Idle. The pill is already there: it is a resident window, not something
-# that appears with the recording. A terminal cursor blinks around once a
-# second, so at 90 ms a frame the sequence has to run one full 12-frame cycle
-# or the blink reads as a glitch rather than as a cursor.
+# 1. Idle. The transient pill is hidden while the microphone is closed.
 for i in range(13):
     add(frame(CMD, i % 12 < 6, 0, False, REST), 90)
-# 2. Button held, microphone open, still silent. The lamp is the only thing
-# that changed; the meter has not moved.
+# 2. Button held, microphone open, still silent. The waveform appears.
 for _ in range(6):
     add(frame(CMD, True, 0, True, OPEN), 90)
 # 3. Speaking. Now the meter moves and nothing else does.
@@ -135,7 +128,7 @@ env = [1.6, 3.4, 5.1, 6.2, 5.4, 3.9, 4.8, 6.6, 6.9, 5.7,
        4.1, 5.5, 6.8, 6.1, 4.4, 2.8, 4.6, 6.3, 5.2, 3.1]
 for lv in env:
     add(frame(CMD, True, lv, True, OPEN), 90)
-# 4. Released: the lamp goes out first, and the meter settles.
+# 4. Released: the recording waveform disappears.
 for lv in (2.0, 0.7, 0.0):
     add(frame(CMD, True, lv, False, PASTE), 90)
 # 5. The text lands in one paste, not typed.

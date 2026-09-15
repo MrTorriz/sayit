@@ -12,6 +12,34 @@ measurements, which are estimates, and which are arithmetic. Each is labelled.
 - [What is not measured](#what-is-not-measured)
 - [Profiling your own dictations](#profiling-your-own-dictations)
 
+## Linux OpenVINO/Turbo comparison (2026-09-14)
+
+A paired comparison used eight Swedish FLEURS clips (142 reference words) on
+Fedora 44, an Intel Core Ultra 9 185H with integrated Arc graphics and 32 GB RAM.
+Both models were warm, used the same 16 kHz mono recordings, and were called
+once per clip in the same comparison run. Timings cover local HTTP requests,
+including VAD and inference; recording, wordlist processing and pasting are
+outside the measurement.
+
+| Engine | Mean | Median | Word errors / reference words |
+| --- | ---: | ---: | ---: |
+| KB-Whisper-medium q5_0, whisper.cpp/Vulkan, beam 5 | 3.887 s | 3.974 s | 17 / 142 |
+| Whisper large-v3-turbo FP16, OpenVINO GPU, greedy | 2.164 s | 2.237 s | 18 / 142 |
+
+The mean is 44% lower with Turbo in this run. Eight clips do not establish a
+general accuracy ranking: strict token scoring counts number formatting and
+word splits too. These timings must not be compared directly with the older
+2.2-second synthetic sentence below, or described as button-release-to-paste
+latency. Windows and other GPUs were not tested with the OpenVINO adapter.
+
+The native build reported libwhisper 1.8.4; OpenVINO was 2026.3.1 with the
+2026.3.1.0 speech package and Intel compute runtime 26.22.38646.6. The Turbo model
+revision and checksums are in the [model manifest](../engines/openvino/model-provenance.json).
+[Individual paired measurements](openvino-benchmark-20260914.json) contain
+only clip identifiers, timings and error counts, with no personal audio or text.
+The model's language support does not imply equal accuracy for every language;
+this comparison covers Swedish only.
+
 ## Linux reference machine
 
 Measured with the bundled harness ([`tests/benchmark.sh`](../tests/benchmark.sh))
