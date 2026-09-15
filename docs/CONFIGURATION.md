@@ -14,6 +14,14 @@ exists on only one of them is ignored by the other.
 - [Custom wordlist](#custom-wordlist)
 - [How .env is read](#how-env-is-read)
 
+The base transcription tables below describe whisper.cpp. For the optional
+Linux engine, see [OpenVINO settings](OPENVINO.md#configuration): `OPENVINO_HOME`,
+`OPENVINO_DEVICE` and `WHISPER_LIB`. It shares `DAEMON_PORT`, `SPEECH_LANGUAGE`,
+`INITIAL_PROMPT`, `VAD_MODEL`, `VAD_THRESHOLD` and the client wordlist. GGML model
+selection, `BEAM`, `THREADS` and `SUPPRESS_REGEX` affect the native engine and
+CLI fallback; they do not change OpenVINO inference. The other VAD settings
+control whisper.cpp segment cutting and are unused by the OpenVINO speech gate.
+
 ## Settings
 
 The Default column is the value the code falls back to when the setting is

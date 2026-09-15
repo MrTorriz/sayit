@@ -36,6 +36,10 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # shellcheck source=/dev/null
 [[ -f "$REPO_ROOT/.env" ]] && source "$REPO_ROOT/.env"
 
+# Direct invocations need the same protection as the main recording command.
+exec 8>"${XDG_RUNTIME_DIR:-/tmp}/sayit-engine.lock"
+flock -sn 8 || { echo 'Engine switch in progress; try again when ready.' >&2; exit 1; }
+
 WAV="${1:?Usage: sayit-transcribe <file.wav>}"
 [[ -f "$WAV" ]] || { echo "File not found: $WAV" >&2; exit 1; }
 
@@ -94,7 +98,10 @@ transcribe_daemon() {
                  -F file=@"$WAV"
                  --form-string language="$SPEECH_LANGUAGE"
                  --form-string prompt="$INITIAL_PROMPT"
+                 --form-string no_timestamps=true
                  --form-string response_format=text )
+    # Match the CLI's -nt: whisper-server otherwise wraps text at 60 characters,
+    # even inside a word. Joining those segments would insert a false space.
     # VAD tuning travels with the request, so a change in .env takes effect on
     # the next dictation without restarting the daemon. The server reads these
     # in the C locale, where a decimal comma parses as a whole number: "0,30"

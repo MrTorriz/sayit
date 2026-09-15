@@ -107,3 +107,12 @@ setup() {
     done
     grep -qE 'WHISPER_REF="?\$\{WHISPER_REF:-v[0-9]+\.[0-9]+\.[0-9]+\}"?' "$INSTALL"
 }
+
+@test "a parent Git repository is not accepted as the whisper.cpp checkout" {
+    git init -q "$SANDBOX"
+    export WHISPER_SRC="$SANDBOX/not-a-checkout"
+    mkdir -p "$WHISPER_SRC"
+    run "$INSTALL" --skip-packages --skip-model -y
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"not a git repository"* ]]
+}

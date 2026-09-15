@@ -31,12 +31,14 @@
 #     map order: the pill was visible at rest or hidden behind the panel
 #     depending on which surface the compositor mapped last. A fixture that
 #     is only sometimes a fixture is worse than one that always covers.
-#   - Reading order is lamp, meter, wordmark. The ten bars follow the voice
+#   - The transient recording pill shows only a 26-bar waveform. Resident
+#     and placement windows retain lamp, ten-bar meter and wordmark.
+#     The bars follow the voice
 #     level, growing symmetrically about the pill's centre line and standing
 #     still when nothing drives them. The wordmark is stored as outlines, so
 #     no font is needed at runtime.
-#   - Three states, and the lamp tells them apart honestly. Microphone closed:
-#     no lamp at all. Open but silent: a steady lamp, the meter at rest.
+#   - In resident mode the lamp distinguishes three states. Microphone closed:
+#     a dark lamp. Open but silent: a steady lamp, the meter at rest.
 #     Open and speaking: the same steady lamp, and the meter is the ONLY
 #     thing that moves. Colour and brightness never carry the difference.
 #   - Position is remembered in $XDG_CONFIG_HOME/sayit/overlay-position
@@ -71,9 +73,10 @@ import time
 
 # 160x40. The height is what a panel dictates: measured, a default Plasma
 # panel is 44 px, so 40 fills it with 2 px to spare rather than floating in
-# the middle of it. The width follows from the content -- lamp, a ten-bar
-# meter and the wordmark, in that reading order. RADIUS and everything under
-# "mark geometry" are proportional to HEIGHT, so the shape survives a resize.
+# the middle of it. The transient pill uses that whole width for the meter;
+# resident and placement windows instead hold a lamp, meter and wordmark.
+# RADIUS and everything under "mark geometry" are proportional to HEIGHT, so
+# the shape survives a resize.
 WIDTH, HEIGHT, RADIUS = 160, 40, 12
 BORDER = 1.2
 LAYOUT_GAP = 12.0                   # between the meter and the wordmark
@@ -126,6 +129,20 @@ LAMP_UNLIT = (0.42, 0.13, 0.15)
 WAVE_W_U = BAR_COUNT * BAR_U + (BAR_COUNT - 1) * GAP_U
 LAMP_W = DOT_D * MARK_SCALE
 WAVE_W = WAVE_W_U * MARK_SCALE
+# The recording-only pill has no static label to read. Let the moving waveform
+# use its width instead, while leaving a small, deliberate shoulder inside the
+# border. Its tallest bar still has more than 4 px of breathing room vertically.
+TRANSIENT_WAVE_INSET = 13.0
+# Keep the physical stroke close to the original meter. More bars, rather
+# than scaled-up bars, make the wide transient meter read as a waveform.
+TRANSIENT_BAR_MAX_U = (26.0, 31.0, 37.0, 45.0, 54.0, 61.0, 50.0, 42.0,
+                       33.0, 29.0, 39.0, 53.0, 64.0, 58.0, 45.0, 35.0,
+                       28.0, 40.0, 54.0, 47.0, 36.0, 60.0, 52.0, 43.0,
+                       34.0, 28.0)
+TRANSIENT_WAVE_W_U = (len(TRANSIENT_BAR_MAX_U) * BAR_U
+                       + (len(TRANSIENT_BAR_MAX_U) - 1) * GAP_U)
+TRANSIENT_WAVE_SCALE = (WIDTH - 2 * TRANSIENT_WAVE_INSET) / TRANSIENT_WAVE_W_U
+TRANSIENT_WAVE_W = TRANSIENT_WAVE_W_U * TRANSIENT_WAVE_SCALE
 
 # --- the wordmark ---------------------------------------------------------
 # "sayit" as Bezier outlines rather than as text. The shapes came from Libre
@@ -374,6 +391,12 @@ def write_position(x, y):
         pass                        # a read-only home must not break dictation
 
 
+def wave_heights(level, maxima):
+    """Heights for one waveform at a level of 0..7."""
+    level = max(0.0, min(7.0, level))
+    return [BAR_U + (top - BAR_U) * level / 7.0 for top in maxima]
+
+
 def bar_heights(level):
     """Bar heights in mark units for a level of 0..7.
 
@@ -384,11 +407,10 @@ def bar_heights(level):
 
     A plain function, so the geometry can be checked without a window.
     """
-    level = max(0.0, min(7.0, level))
-    return [BAR_U + (top - BAR_U) * level / 7.0 for top in BAR_MAX_U]
+    return wave_heights(level, BAR_MAX_U)
 
 
-def draw_wave(cr, x, cy, level):
+def draw_wave(cr, x, cy, level, scale=MARK_SCALE, maxima=BAR_MAX_U):
     """The meter, grown symmetrically about cy.
 
     Growing about the centre line rather than up from a baseline is what
@@ -396,10 +418,10 @@ def draw_wave(cr, x, cy, level):
     same height, and speaking opens it out in both directions instead of
     lifting it off the floor.
     """
-    for i, height in enumerate(bar_heights(level)):
-        bw = BAR_U * MARK_SCALE
-        bh = height * MARK_SCALE
-        bx = x + i * (BAR_U + GAP_U) * MARK_SCALE
+    for i, height in enumerate(wave_heights(level, maxima)):
+        bw = BAR_U * scale
+        bh = height * scale
+        bx = x + i * (BAR_U + GAP_U) * scale
         rounded_rect(cr, bx, cy - bh / 2.0, bw, bh, bw / 2.0)
         cr.set_source_rgb(1, 1, 1)
         cr.fill()
@@ -436,9 +458,8 @@ def draw_wordmark(cr, x, cy):
 
 
 # --- introspection for the tests ------------------------------------------
-# Two small readers so the geometry and the state rule can be checked without
-# a display. They compute nothing of their own: they report exactly what
-# draw_wave and on_draw use, so a test cannot pass against a stale copy.
+# Two small readers for the shared geometry and the resident lamp state.
+# The transient pill omits the lamp entirely.
 
 def _test_bar_midpoints(level):
     """Each bar's vertical centre, in pill pixels, at this level."""
@@ -447,7 +468,7 @@ def _test_bar_midpoints(level):
 
 
 def _test_state(active, level=0.0, place_mode=False):
-    """What the pill draws, as data. `active` is the microphone being open."""
+    """Resident pill state. `active` is the microphone being open."""
     return {
         "lamp": True,                   # always on the pill, never moves
         "lamp_lit": bool(active),
@@ -685,14 +706,11 @@ class Overlay:
 
     # -- drawing ----------------------------------------------------------
     def on_draw(self, _widget, cr):
-        """Three states, and the rule that separates them.
+        """A voice meter and wordmark, centred together.
 
-        The lamp means one thing: the microphone is open. It is lit when it
-        is and dark when it is not, in the same place and at the same size
-        either way, so a closed microphone can never be mistaken for an open
-        one. Between "open and silent" and "open and speaking" the meter's
-        geometry is the ONLY thing that changes -- no colour, no brightness,
-        nothing else on the pill.
+        A transient pill exists only during recording, so its visibility
+        already signals an open microphone. Resident and placement windows
+        keep the lamp because they can also be visible with the mic closed.
         """
         import cairo
         cr.set_operator(cairo.Operator.SOURCE)
@@ -709,12 +727,16 @@ class Overlay:
         cr.stroke()
 
         cy = HEIGHT / 2.0
-        x = CONTENT_X
-        draw_lamp(cr, x, cy, self.mic_open())
-        x += LAMP_W + LAMP_GAP
-        draw_wave(cr, x, cy, self.shown)
-        x += WAVE_W + LAYOUT_GAP
-        draw_wordmark(cr, x, cy)
+        if self.resident or self.place_mode:
+            x = CONTENT_X
+            draw_lamp(cr, x, cy, self.mic_open())
+            x += LAMP_W + LAMP_GAP
+            draw_wave(cr, x, cy, self.shown)
+            x += WAVE_W + LAYOUT_GAP
+            draw_wordmark(cr, x, cy)
+        else:
+            draw_wave(cr, TRANSIENT_WAVE_INSET, cy, self.shown,
+                      TRANSIENT_WAVE_SCALE, TRANSIENT_BAR_MAX_U)
         return False
 
     def tick(self):

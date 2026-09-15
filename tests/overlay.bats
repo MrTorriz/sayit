@@ -193,11 +193,22 @@ PY
     [ "$output" = "True" ]
 }
 
-@test "reading order is lamp, meter, wordmark, centred as one group" {
+@test "resident reading order is lamp, meter, wordmark, centred as one group" {
     run load_overlay "round(ov.CONTENT_X, 4) == round((ov.WIDTH - ov.CONTENT_W) / 2, 4)"
     [ "$output" = "True" ]
     run load_overlay "round(ov.CONTENT_W, 4) == round(ov.LAMP_W + ov.LAMP_GAP + ov.WAVE_W + ov.LAYOUT_GAP + ov.WORDMARK_W, 4)"
     [ "$output" = "True" ]
+}
+
+@test "the transient wave spans the pill without a wordmark" {
+    run load_overlay "(round(ov.TRANSIENT_WAVE_INSET, 4), round(ov.TRANSIENT_WAVE_W, 4), round(ov.TRANSIENT_WAVE_INSET + ov.TRANSIENT_WAVE_W, 4))"
+    [ "$output" = "(13.0, 134.0, 147.0)" ]
+    run load_overlay "len(ov.TRANSIENT_BAR_MAX_U) > ov.BAR_COUNT"
+    [ "$output" = "True" ]
+    run load_overlay "ov.TRANSIENT_WAVE_SCALE > ov.MARK_SCALE"
+    [ "$output" = "True" ]
+    run bash -c "sed -n '/def on_draw/,/return False/p' '$OVERLAY' | grep -c 'draw_wordmark'"
+    [ "$output" = "1" ]
 }
 
 @test "the wordmark is stored as outlines, needing no font at runtime" {

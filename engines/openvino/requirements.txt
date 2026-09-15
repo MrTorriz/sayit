@@ -1,0 +1,5 @@
+openvino-genai==2026.3.1.0
+openvino==2026.3.1
+openvino-tokenizers==2026.3.1.0
+numpy==2.5.3
+openvino-telemetry==2025.2.0

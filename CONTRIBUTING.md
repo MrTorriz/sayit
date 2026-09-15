@@ -4,7 +4,7 @@ Thanks for your interest in improving sayit. Bug reports, fixes and focused
 features are all welcome.
 
 sayit is one repository with two implementations. `bin/` is Linux (bash, plus
-one Python file); `win/` is Windows (PowerShell 5.1, plus small C# helpers).
+the Python overlay and optional OpenVINO adapter); `win/` is Windows (PowerShell 5.1, plus small C# helpers).
 They share no code. Almost every change belongs to exactly one of them, and
 knowing which decides what you have to run.
 
@@ -12,19 +12,18 @@ knowing which decides what you have to run.
 
 | You touched | Platform | CI jobs that judge it |
 | --- | --- | --- |
-| `bin/`, `install.sh`, `tests/`, `docs/*.py` | Linux | `lint` and `test` |
+| `bin/`, `install*.sh`, `tests/`, `docs/*.py` | Linux | `lint` and `test` |
+| `engines/openvino/` | Linux | `lint` and `openvino-protocol`; inference also needs hardware checks |
 | `win/` (`.ps1`, `lib/*.cs`, `tests/`) | Windows | `windows` |
 | `README.md`, `docs/*.md`, `.github/` | Neither | review only |
 | `.env.example` plus the code that reads the setting | Whichever side reads it | that side's jobs |
 
-The workflow's globs make this exact: the lint job looks only at `bin/`,
-`install.sh`, `tests/*.sh` and `docs/*.py`, the test job runs `bats tests/`,
-and the Windows job covers `win/` and nothing else. The Windows
-implementation cannot break the Linux jobs, or the reverse.
-
-An unrecognised shebang inside one of those four globs is a hard CI failure,
-not a skip — a new script needs a `bash`, `sh` or `python` shebang, or the
-workflow needs a new arm.
+The lint job covers shell scripts and Python sources, including the optional
+engine. The Bats job checks Linux commands; `openvino-protocol` checks the
+adapter without a GPU or model download. The Windows job covers PowerShell and
+C#. A separate geometry check reads the Windows indicator from Linux to catch
+drift in shared drawing constants. New scripts need a recognized shebang and
+must be included in the relevant workflow glob.
 
 Note that CI triggers only on pushes to `main` and on pull requests. A feature
 branch gets no run of its own — open the pull request to get one.
@@ -250,3 +249,15 @@ the machine and everything is driven from the command line. The one optional
 step that sends anything anywhere is `LLM_CLEANUP`, which POSTs text to a
 configurable URL and is off by default; see
 [docs/CONFIGURATION.md](docs/CONFIGURATION.md#settings).
+
+## Optional Linux engine checks
+
+Run `python -m unittest discover -s engines/openvino -v` with NumPy installed.
+These tests need no model or GPU: they cover HTTP/audio validation, prompt
+handling, silence/fallback behavior, model integrity, service selection,
+dictation locking and rollback. CI runs them in a separate Python job.
+
+For inference changes, also run `./bin/sayit-openvino --check` and speech/silence
+requests on supported hardware. A passing protocol suite does not establish
+GPU compatibility or transcription quality. Keep model files, personal audio,
+transcripts, `.env` and wordlists outside commits.

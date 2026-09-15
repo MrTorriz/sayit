@@ -4,6 +4,7 @@
 
 - [Requirements](#requirements)
 - [Installation](#installation)
+- [Optional OpenVINO/Turbo engine](OPENVINO.md)
 - [Upgrading and rollback](#upgrading-and-rollback)
 - [Text injection on KWin/Wayland (ydotool)](#text-injection-on-kwinwayland-ydotool)
 - [Trigger: mouse button via Solaar](#trigger-mouse-button-via-solaar)
@@ -88,6 +89,18 @@ To reinstall only the theme icons:
 ```bash
 ./install.sh --skip-packages --skip-build --skip-model
 ```
+
+## Optional OpenVINO/Turbo engine
+
+After the base installation, run `./install-openvino.sh`, followed by
+`./bin/sayit-engine fast`. The switcher creates the user service if needed,
+checks that the requested engine responds and enables it at login. It preserves
+existing service settings and restores the previous engine override if startup
+fails. `./bin/sayit-engine accurate` switches back.
+
+The optional engine needs its own Python environment and Intel compute driver;
+see [requirements, configuration and recovery](OPENVINO.md). Windows uses the
+existing whisper.cpp engine.
 
 ## Upgrading and rollback
 

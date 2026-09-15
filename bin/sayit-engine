@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+# sayit-engine — select a persistent Linux dictation engine.
+# Usage: sayit-engine fast|accurate|status
+# Exit 1 on a busy recording, failed start or failed health check.
+set -euo pipefail
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck source=/dev/null
+[[ -f "$REPO_ROOT/.env" ]] && source "$REPO_ROOT/.env"
+exec python3 "$REPO_ROOT/engines/openvino/manage.py" \
+    --repo "$REPO_ROOT" --port "${DAEMON_PORT:-9876}" "${1:-status}"

@@ -1,0 +1,167 @@
+{
+  "date": "2026-09-14",
+  "dataset": "FLEURS Swedish; eight clips, 142 reference words",
+  "scope": "Warm local HTTP transcription; no clipboard, recording or wordlist timing",
+  "summary": {
+    "kb-medium": {
+      "clips": 8,
+      "mean": 3.8865504115055955,
+      "median": 3.973913410503883,
+      "errors": 17,
+      "words": 142
+    },
+    "openvino-turbo": {
+      "clips": 8,
+      "mean": 2.1642139642463007,
+      "median": 2.237253083498217,
+      "errors": 18,
+      "words": 142
+    }
+  },
+  "measurements": [
+    {
+      "id": "fleurs-3",
+      "kind": "human-fleurs",
+      "engine": "openvino-turbo",
+      "rep": 0,
+      "elapsed": 2.489527016005013,
+      "errors": 8,
+      "words": 31
+    },
+    {
+      "id": "fleurs-3",
+      "kind": "human-fleurs",
+      "engine": "kb-medium",
+      "rep": 0,
+      "elapsed": 4.902809884020826,
+      "errors": 6,
+      "words": 31
+    },
+    {
+      "id": "fleurs-0",
+      "kind": "human-fleurs",
+      "engine": "openvino-turbo",
+      "rep": 0,
+      "elapsed": 1.9808013009896968,
+      "errors": 3,
+      "words": 12
+    },
+    {
+      "id": "fleurs-7",
+      "kind": "human-fleurs",
+      "engine": "kb-medium",
+      "rep": 0,
+      "elapsed": 3.7328217100002803,
+      "errors": 2,
+      "words": 19
+    },
+    {
+      "id": "fleurs-0",
+      "kind": "human-fleurs",
+      "engine": "kb-medium",
+      "rep": 0,
+      "elapsed": 3.4127886189962737,
+      "errors": 0,
+      "words": 12
+    },
+    {
+      "id": "fleurs-2",
+      "kind": "human-fleurs",
+      "engine": "openvino-turbo",
+      "rep": 0,
+      "elapsed": 1.7492982179974206,
+      "errors": 2,
+      "words": 8
+    },
+    {
+      "id": "fleurs-1",
+      "kind": "human-fleurs",
+      "engine": "kb-medium",
+      "rep": 0,
+      "elapsed": 4.2150051110074855,
+      "errors": 0,
+      "words": 21
+    },
+    {
+      "id": "fleurs-6",
+      "kind": "human-fleurs",
+      "engine": "openvino-turbo",
+      "rep": 0,
+      "elapsed": 2.373983692988986,
+      "errors": 0,
+      "words": 16
+    },
+    {
+      "id": "fleurs-2",
+      "kind": "human-fleurs",
+      "engine": "kb-medium",
+      "rep": 0,
+      "elapsed": 2.976066258008359,
+      "errors": 2,
+      "words": 8
+    },
+    {
+      "id": "fleurs-7",
+      "kind": "human-fleurs",
+      "engine": "openvino-turbo",
+      "rep": 0,
+      "elapsed": 2.1950761009939015,
+      "errors": 0,
+      "words": 19
+    },
+    {
+      "id": "fleurs-4",
+      "kind": "human-fleurs",
+      "engine": "kb-medium",
+      "rep": 0,
+      "elapsed": 4.292776376998518,
+      "errors": 6,
+      "words": 24
+    },
+    {
+      "id": "fleurs-5",
+      "kind": "human-fleurs",
+      "engine": "kb-medium",
+      "rep": 0,
+      "elapsed": 3.039856638002675,
+      "errors": 1,
+      "words": 11
+    },
+    {
+      "id": "fleurs-6",
+      "kind": "human-fleurs",
+      "engine": "kb-medium",
+      "rep": 0,
+      "elapsed": 4.520278695010347,
+      "errors": 0,
+      "words": 16
+    },
+    {
+      "id": "fleurs-5",
+      "kind": "human-fleurs",
+      "engine": "openvino-turbo",
+      "rep": 0,
+      "elapsed": 1.9100507629918866,
+      "errors": 1,
+      "words": 11
+    },
+    {
+      "id": "fleurs-4",
+      "kind": "human-fleurs",
+      "engine": "openvino-turbo",
+      "rep": 0,
+      "elapsed": 2.279430066002533,
+      "errors": 4,
+      "words": 24
+    },
+    {
+      "id": "fleurs-1",
+      "kind": "human-fleurs",
+      "engine": "openvino-turbo",
+      "rep": 0,
+      "elapsed": 2.3355445560009684,
+      "errors": 0,
+      "words": 21
+    }
+  ]
+}

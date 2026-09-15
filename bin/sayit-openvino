@@ -1,0 +1,34 @@
+#!/usr/bin/env bash
+# sayit-openvino — run the optional local Turbo server (Linux).
+# Usage: sayit-openvino [--check | --port PORT]
+# Exit 1 if the optional runtime, model or VAD library is unavailable.
+set -euo pipefail
+
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck source=/dev/null
+[[ -f "$REPO_ROOT/.env" ]] && source "$REPO_ROOT/.env"
+runtime="${OPENVINO_HOME:-${XDG_DATA_HOME:-$HOME/.local/share}/sayit/openvino}"
+server="${WHISPER_SERVER:-$HOME/.local/src/whisper.cpp/build/bin/whisper-server}"
+library="${WHISPER_LIB:-}"
+if [[ -z "$library" ]]; then
+    server_dir="$(dirname "$(readlink -f "$server")")"
+    # New builds put libraries beside the executable; older builds used src/.
+    for candidate in "$server_dir/libwhisper.so" "$server_dir/../src/libwhisper.so" "$server_dir/../lib/libwhisper.so"; do
+        if [[ -f "$candidate" ]]; then library="$candidate"; break; fi
+    done
+fi
+[[ -f "$library" ]] || { echo 'Shared libwhisper missing — set WHISPER_LIB in .env; see docs/OPENVINO.md.' >&2; exit 1; }
+[[ -x "$runtime/venv/bin/python" ]] || {
+    echo 'OpenVINO runtime missing — run ./install-openvino.sh' >&2; exit 1;
+}
+export CI=true
+export PYTHONNOUSERSITE=1
+unset PYTHONPATH
+exec "$runtime/venv/bin/python" "$REPO_ROOT/engines/openvino/server.py" \
+    --model "$runtime/model" \
+    --vad-model "${VAD_MODEL:-$REPO_ROOT/models/ggml-silero-v5.1.2.bin}" \
+    --whisper-lib "$library" \
+    --device "${OPENVINO_DEVICE:-GPU}" \
+    --language "${SPEECH_LANGUAGE:-sv}" \
+    --cache "${XDG_CACHE_HOME:-$HOME/.cache}/sayit/openvino" \
+    --port "${DAEMON_PORT:-9876}" "$@"
