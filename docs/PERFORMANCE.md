@@ -12,6 +12,29 @@ measurements, which are estimates, and which are arithmetic. Each is labelled.
 - [What is not measured](#what-is-not-measured)
 - [Profiling your own dictations](#profiling-your-own-dictations)
 
+## Windows OpenVINO/Turbo comparison (2026-09-17)
+
+Eight public FLEURS Swedish test recordings (218 reference words, three
+distinct reference texts) were converted from float WAV to 16 kHz mono PCM16.
+Both engines were warm and received the same clips, with engine order
+alternated per clip. Measured on Windows 11, Core Ultra 9 185H, Intel Arc iGPU,
+driver 32.0.101.8991, Python 3.13.15 and OpenVINO 2026.3.1.
+
+| Engine | Mean | Median | Word errors / reference words |
+| --- | ---: | ---: | ---: |
+| KB-Whisper-medium q5_0, whisper.cpp/Vulkan, beam 5 | 3.906 s | 4.079 s | 17 / 218 |
+| Whisper large-v3-turbo FP16, OpenVINO GPU, greedy | 2.235 s | 2.266 s | 12 / 218 |
+
+Turbo's mean HTTP transcription time was 43% lower in this run. This excludes
+recording, wordlist processing and text injection. The small, repeated-text
+sample does not establish a general recognition-quality ranking. Scoring
+lowercases Unicode word tokens and counts insertions, deletions and
+substitutions; number formatting can still count as errors. The Linux run
+below used different clips and is not a direct operating-system comparison.
+
+[Individual Windows measurements](openvino-benchmark-windows-20260917.json)
+contain clip identifiers, timings and error counts, without audio or text.
+
 ## Linux OpenVINO/Turbo comparison (2026-09-14)
 
 A paired comparison used eight Swedish FLEURS clips (142 reference words) on
@@ -30,7 +53,7 @@ The mean is 44% lower with Turbo in this run. Eight clips do not establish a
 general accuracy ranking: strict token scoring counts number formatting and
 word splits too. These timings must not be compared directly with the older
 2.2-second synthetic sentence below, or described as button-release-to-paste
-latency. Windows and other GPUs were not tested with the OpenVINO adapter.
+latency. Windows was not part of that run; its separate results appear above.
 
 The native build reported libwhisper 1.8.4; OpenVINO was 2026.3.1 with the
 2026.3.1.0 speech package and Intel compute runtime 26.22.38646.6. The Turbo model

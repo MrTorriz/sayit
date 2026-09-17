@@ -248,24 +248,26 @@ daemon means "no speech" and is final. Same contract as the Linux side.
 
 ## Recording indicator
 
-`RECORDING_INDICATOR=1`, the default, shows sayit's mark as a small pill above
-your other windows while the microphone is open: the bars follow your voice
-level and the lamp burns red.
+`RECORDING_INDICATOR=1`, the default, shows a black rounded rectangle with
+26 white waveform bars while recording. There is no outline, red lamp or wordmark.
+The background process stays warm after login, but the window is hidden
+between recordings. The waveform matches the Linux transient overlay.
 
 ```powershell
-.\win\sayit-indicator.ps1 place   # drag it where you want it, Enter or Escape saves
-.\win\sayit-indicator.ps1 hide    # tell a running indicator to close
+.\win\sayit-indicator.ps1 place   # preview, move and resize; records nothing
+.\win\sayit-indicator.ps1 hide    # hide the recording window
+.\win\sayit-indicator.ps1 stop    # close the background indicator process
 ```
 
-The position is remembered in `%APPDATA%\sayit\overlay-position`. The window is
-layered, click-through and never activating — `WS_EX_LAYERED`,
-`WS_EX_TOOLWINDOW`, `WS_EX_TRANSPARENT`, `WS_EX_NOACTIVATE`, shown with
-`SW_SHOWNOACTIVATE` — so it never steals the focus you are dictating into and
-clicks pass straight through it. The level comes from the recorder, which has
-already computed it, so the microphone is opened only once. The Linux meter
-opens a second capture stream instead.
+Drag the middle to move it or either end to resize it. Position and scale are
+saved in `%APPDATA%\sayit\overlay-position`; `INDICATOR_SCALE` is the default
+when no saved scale exists. At scale 1 it is 160 by 40 pixels. Set
+`INDICATOR_LOCKED=1` for click-through behavior. Neither mode takes focus from
+the application receiving your text. The level comes from the recorder, so
+the indicator does not open a second microphone stream.
 
-`INDICATOR_SCALE` resizes it; the pill and the mark inside it scale together.
+The former always-visible lamp and wordmark layout remains available for
+manual use with `sayit-indicator.ps1 show -Resident` after stopping the watcher.
 
 By default the pill is excluded from screen captures, screen shares and
 recordings (`INDICATOR_EXCLUDE_FROM_CAPTURE=1`), so a shared screen does not
@@ -407,3 +409,10 @@ symptom table.
 
 Next: [Configuration](CONFIGURATION.md) for every setting, or
 [Architecture](ARCHITECTURE.md) for why the pipeline is built this way.
+
+## Optional Turbo engine
+
+For Whisper large-v3-turbo on Intel graphics, follow the
+[Windows OpenVINO setup](OPENVINO.md#windows-11). It uses the same microphone,
+trigger, wordlist, waveform and text injection. The original engine remains
+available with `win/sayit-engine.ps1 accurate` and as the CLI fallback.

@@ -3,17 +3,17 @@
 Thanks for your interest in improving sayit. Bug reports, fixes and focused
 features are all welcome.
 
-sayit is one repository with two implementations. `bin/` is Linux (bash, plus
-the Python overlay and optional OpenVINO adapter); `win/` is Windows (PowerShell 5.1, plus small C# helpers).
-They share no code. Almost every change belongs to exactly one of them, and
-knowing which decides what you have to run.
+sayit is one repository with two platform implementations. `bin/` is Linux
+(bash plus the Python overlay); `win/` is Windows (PowerShell 5.1 and small
+C# helpers). Both platforms use the optional server in `engines/openvino/`.
+Check both platforms when changing that shared server or its protocol.
 
 ## Which platform does your change belong to?
 
 | You touched | Platform | CI jobs that judge it |
 | --- | --- | --- |
 | `bin/`, `install*.sh`, `tests/`, `docs/*.py` | Linux | `lint` and `test` |
-| `engines/openvino/` | Linux | `lint` and `openvino-protocol`; inference also needs hardware checks |
+| `engines/openvino/` | Both | `lint`, `openvino-protocol` and `windows`; inference also needs hardware checks |
 | `win/` (`.ps1`, `lib/*.cs`, `tests/`) | Windows | `windows` |
 | `README.md`, `docs/*.md`, `.github/` | Neither | review only |
 | `.env.example` plus the code that reads the setting | Whichever side reads it | that side's jobs |
@@ -21,7 +21,7 @@ knowing which decides what you have to run.
 The lint job covers shell scripts and Python sources, including the optional
 engine. The Bats job checks Linux commands; `openvino-protocol` checks the
 adapter without a GPU or model download. The Windows job covers PowerShell and
-C#. A separate geometry check reads the Windows indicator from Linux to catch
+C# plus the shared HTTP protocol on Windows. A separate geometry check reads the Windows indicator from Linux to catch
 drift in shared drawing constants. New scripts need a recognized shebang and
 must be included in the relevant workflow glob.
 

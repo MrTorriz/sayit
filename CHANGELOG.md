@@ -1,5 +1,16 @@
 # Changelog
 
+## 2026-09-17
+
+- Add optional OpenVINO/Turbo support on Windows with an isolated installer,
+  verified model files, engine selection, health checks, rollback and logon
+  startup. Keep the original native engine as a local fallback.
+- Match the Windows recording indicator to the Linux transient waveform:
+  26 bars, no lamp or wordmark, hidden between recordings without losing focus.
+  Use a plain black background without an outline on Windows.
+- Record a paired Windows HTTP benchmark: 3.906 s to 2.235 s mean across eight
+  public Swedish clips; a small sample, not a general accuracy claim.
+
 ## 2026-09-15
 
 - Add an optional Linux Whisper large-v3-turbo engine using OpenVINO on Intel
