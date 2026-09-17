@@ -15,7 +15,8 @@ Check both platforms when changing that shared server or its protocol.
 | `bin/`, `install*.sh`, `tests/`, `docs/*.py` | Linux | `lint` and `test` |
 | `engines/openvino/` | Both | `lint`, `openvino-protocol` and `windows`; inference also needs hardware checks |
 | `win/` (`.ps1`, `lib/*.cs`, `tests/`) | Windows | `windows` |
-| `README.md`, `docs/*.md`, `.github/` | Neither | review only |
+| `README.md`, `docs/*.md` | Documentation | Review content and links |
+| `.github/workflows/` | Both | Check every affected job |
 | `.env.example` plus the code that reads the setting | Whichever side reads it | that side's jobs |
 
 The lint job covers shell scripts and Python sources, including the optional
@@ -62,7 +63,7 @@ All three run on any Linux machine. None needs a microphone, a compositor,
 
 ```bash
 # 1. Syntax, dispatched by shebang — the same loop CI runs
-for f in bin/* install.sh tests/*.sh docs/*.py; do
+for f in bin/* install*.sh tests/*.sh docs/*.py engines/openvino/*.py; do
     [ -f "$f" ] || continue
     case "$(head -1 "$f")" in
         *python*)     python3 -m py_compile "$f" ;;
@@ -73,7 +74,7 @@ done
 
 # 2. shellcheck over the shell scripts only
 scripts=()
-for f in bin/* install.sh tests/*.sh docs/*.py; do
+for f in bin/* install*.sh tests/*.sh docs/*.py engines/openvino/*.py; do
     [ -f "$f" ] || continue
     case "$(head -1 "$f")" in *bash*|*/sh) scripts+=("$f") ;; esac
 done

@@ -2,6 +2,9 @@
 
 ## 2026-09-17
 
+- Simplify the project overview, put platform setup first and clarify runtime
+  resource use, installation requirements and text-injection limits.
+
 - Keep capture compiled in the Windows trigger host, opening the microphone
   on a native thread per press. Signal the waveform only after capture starts,
   and stop capture immediately on release.

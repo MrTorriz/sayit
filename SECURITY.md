@@ -43,8 +43,10 @@ details in the issue.
   `win\install.ps1` prints the sha256 of the models you supplied so you can
   check them yourself.
 - Dictated text is stored in plain text in `history.jsonl` and kept until you
-  clear it. See the [README's privacy section](README.md#privacy) for the paths
-  and the cleanup commands.
+  clear it. See the history sections in the
+  [Linux guide](docs/INSTALL-LINUX.md#history-and-statistics) and
+  [Windows guide](docs/INSTALL-WINDOWS.md#history-and-statistics) for usage,
+  and [runtime state](docs/ARCHITECTURE.md#runtime-state) for storage paths.
 - Diagnostics record error *classes* only — never dictated text, never audio.
   Profiling records stage names and timings, never text.
 
