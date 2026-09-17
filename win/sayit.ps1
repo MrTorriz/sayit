@@ -29,7 +29,7 @@
 # the session its own press created.
 
 [CmdletBinding()]
-param([Parameter(Position = 0)][string]$Action = 'toggle')
+param([Parameter(Position = 0)][string]$Action = 'toggle', [switch]$Library)
 
 Set-StrictMode -Version 2.0
 $ErrorActionPreference = 'Stop'
@@ -82,6 +82,17 @@ function Show-Indicator {
     if (-not (Test-Path -LiteralPath $script)) { return }
     try {
         Write-Utf8Text -Path $indicatorFile -Text '1'
+        # The logon watcher is already compiled and waiting. Do not start another
+        # PowerShell and compile the same window on every button press.
+        $watcher = $null
+        try {
+            $watcher = [System.Threading.Mutex]::OpenExisting('Local\sayit-indicator')
+            $free = $false
+            try { $free = $watcher.WaitOne(0) }
+            catch [System.Threading.AbandonedMutexException] { $free = $true }
+            if (-not $free) { return }
+            $watcher.ReleaseMutex()
+        } catch { } finally { if ($null -ne $watcher) { $watcher.Dispose() } }
         Start-Process -FilePath 'powershell.exe' -WindowStyle Hidden `
             -ArgumentList '-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass',
                           '-File',(Format-ProcessArgument $script),
@@ -146,6 +157,12 @@ function Stop-Recorder {
         # exit poll below, which is what guaranteed a complete file then.
     }
 
+    if ($Session.EventName -like 'Local\sayit-warm-*') {
+        # A warm recorder shares the trigger process. Never kill that host to
+        # stop one recording; its native capture has its own bounded lifetime.
+        throw 'Warm capture did not finish; refusing to terminate the trigger.'
+    }
+
     for ($i = 0; $i -lt 200; $i++) {
         if (-not (Test-SessionRecorder $Session)) { return }
         Start-Sleep -Milliseconds 20
@@ -162,6 +179,7 @@ function Stop-Recorder {
 }
 
 function Start-Recording {
+    param([switch]$Warm)
     Write-Mark 'start.enter'
     $lock = Enter-SessionLock
     if (-not $lock) {
@@ -169,13 +187,14 @@ function Start-Recording {
         return 0
     }
     try {
-        return (Start-RecordingLocked)
+        return (Start-RecordingLocked -Warm:$Warm)
     } finally {
         Exit-SessionLock $lock
     }
 }
 
 function Start-RecordingLocked {
+    param([switch]$Warm)
     $existing = Get-Session
     if ($existing -and (Test-SessionRecorder $existing)) { return 0 }
     # Everything else here is stale: a dead recorder, or a file too damaged for
@@ -189,16 +208,26 @@ function Start-RecordingLocked {
         Where-Object { $_.LastWriteTime -lt (Get-Date).AddHours(-1) } |
         Remove-Item -Force -ErrorAction SilentlyContinue
 
-    $eventName = "Local\sayit-stop-$PID"
-    $wav = Join-Path $script:RunDir "sayit-$PID.wav"
+    $captureId = if ($Warm) { "$PID-$([guid]::NewGuid().ToString('N'))" } else { [string]$PID }
+    $eventName = if ($Warm) { "Local\sayit-warm-$captureId" } else { "Local\sayit-stop-$PID" }
+    $wav = Join-Path $script:RunDir "sayit-$captureId.wav"
     $recorder = Join-Path $PSScriptRoot 'sayit-record.ps1'
     $start = [DateTimeOffset]::Now.ToUnixTimeMilliseconds() / 1000.0
 
-    $proc = Start-Process -FilePath 'powershell.exe' -WindowStyle Hidden -PassThru `
+    if ($Warm) {
+        $device = [Sayit.Recorder]::ResolveDevice((Get-Setting -Env $cfg -Name 'AUDIO_SOURCE'))
+        if ($device -eq -2) { throw 'Configured microphone is unavailable.' }
+        $limit = [int](Get-Setting -Env $cfg -Name 'MAX_RECORD_SECONDS' -Default '120')
+        [Sayit.Recorder]::LevelFile = Join-Path $script:RunDir 'level'
+        $script:WarmCapture = New-Object Sayit.WarmCapture($wav, $device, $eventName, $limit)
+        $proc = Get-Process -Id $PID
+    } else {
+        $proc = Start-Process -FilePath 'powershell.exe' -WindowStyle Hidden -PassThru `
         -ArgumentList '-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass',
                       '-File',(Format-ProcessArgument $recorder),
                       '-OutFile',(Format-ProcessArgument $wav),
                       '-StopEvent',(Format-ProcessArgument $eventName)
+    }
 
     Write-Mark 'record.spawned' $proc.Id
 
@@ -228,6 +257,10 @@ function Start-RecordingLocked {
     }
     Write-Mark 'session.written'
 
+    # The trigger polls Ready without blocking its input hook. It signals the
+    # pill only after waveInStart succeeds, and stops immediately on release.
+    if ($Warm) { return 0 }
+
     Start-Sleep -Milliseconds 300
     if ($proc.HasExited) {
         Remove-Item -LiteralPath $sessionFile -Force -ErrorAction SilentlyContinue
@@ -243,18 +276,20 @@ function Start-RecordingLocked {
 }
 
 function Stop-Recording {
-    param([switch]$Discard)
+    param([switch]$Discard, $ClaimedSession = $null)
 
     Write-Mark 'stop.enter'
     # Held across the claim only. Transcription takes seconds, and the press that
     # begins the next dictation must not have to wait behind it.
-    $lock = Enter-SessionLock
-    $session = $null
-    try {
-        $session = Claim-Session
-        Show-Indicator 'hide'
-    } finally {
-        Exit-SessionLock $lock
+    $session = $ClaimedSession
+    if ($null -eq $session) {
+        $lock = Enter-SessionLock
+        try {
+            $session = Claim-Session
+            Show-Indicator 'hide'
+        } finally {
+            Exit-SessionLock $lock
+        }
     }
     if (-not $session) { return 0 }
     Write-Mark 'session.claimed'
@@ -280,7 +315,7 @@ function Stop-Recording {
     Write-Mark 'transcribe.begin'
     $text = ''
     try {
-        . "$PSScriptRoot\lib\transcribe.ps1"
+        if (-not (Test-Path Function:\Convert-WavToText)) { . "$PSScriptRoot\lib\transcribe.ps1" }
         $text = Convert-WavToText -Path $session.Wav -Settings (New-TranscribeSettings -Env $cfg)
     } catch {
         Write-SayitError "stop: transcribe failed ($($_.Exception.Message))"
@@ -300,7 +335,7 @@ function Stop-Recording {
     # only remaining record of what was said, so a failure here must not take it
     # down as well.
     try {
-        . "$PSScriptRoot\lib\inject.ps1"
+        if (-not (Test-Path Function:\Invoke-TextInjection)) { . "$PSScriptRoot\lib\inject.ps1" }
         $threshold = [int](Get-Setting -Env $cfg -Name 'INJECT_CLIPBOARD_THRESHOLD' -Default '100')
         $method    = Get-Setting -Env $cfg -Name 'INJECT_METHOD' -Default 'auto'
         Invoke-TextInjection -Text $text -Threshold $threshold -Method $method | Out-Null
@@ -330,6 +365,9 @@ function Stop-Recording {
     return 0
 }
 
+if ($Library) { return }
+$engineGate = Open-SayitEngineGate
+try {
 switch ($Action.ToLowerInvariant()) {
     'start'  { exit (Start-Recording) }
     'stop'   { exit (Stop-Recording) }
@@ -352,3 +390,5 @@ switch ($Action.ToLowerInvariant()) {
         exit 1
     }
 }
+
+} finally { $engineGate.Dispose() }

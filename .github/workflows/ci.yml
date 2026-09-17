@@ -73,6 +73,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Windows OpenVINO protocol
+        run: |
+          python -m pip install numpy==2.5.3
+          python -m unittest discover -s engines/openvino -p test_server.py -v
+
       - name: Syntax check
         run: |
           $failed = $false
@@ -92,7 +100,9 @@ jobs:
         run: |
           . .\win\lib\common.ps1
           Add-Type -AssemblyName System.Windows.Forms
-          Add-Type -TypeDefinition (Read-Utf8Text "win\lib\Recorder.cs") -Language CSharp
+          Add-Type -TypeDefinition (Merge-CSharpSources -Sources @(
+                     (Read-Utf8Text "win\lib\Recorder.cs"),
+                     (Read-Utf8Text "win\lib\WarmCapture.cs"))) -Language CSharp
           Add-Type -TypeDefinition (Merge-CSharpSources -Sources @(
                      (Read-Utf8Text "win\lib\Trigger.cs"),
                      (Read-Utf8Text "win\lib\Injector.cs"))) `

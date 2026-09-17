@@ -258,10 +258,9 @@ if ($NoDaemon) {
     }
 }
 
-# --- Put the resident pill up -----------------------------------------------
-# The pill stands for the whole session, not only while a recording runs, which
-# is what makes it a fixture rather than something that appears and vanishes.
-# This is the Windows counterpart of sayit-overlay.service on the Linux side.
+# --- Keep the indicator ready -----------------------------------------------
+# The process stays warm for the session, avoiding a PowerShell startup on the
+# visible path. Its waveform window appears only while recording.
 #
 # Fire and forget, like the daemon. The indicator takes a named mutex of its
 # own, so a second one - the short-lived pill sayit.ps1 spawns per dictation -
@@ -277,7 +276,7 @@ if ($NoIndicator) {
 } else {
     try {
         Start-SayitChild -Script $script:IndicatorScript -Arguments @('show') | Out-Null
-        Write-AutostartLog 'autostart: resident indicator requested'
+        Write-AutostartLog 'autostart: recording indicator watcher requested'
     } catch {
         Write-AutostartLog ('autostart: could not start the indicator: {0}' -f $_.Exception.Message)
     }

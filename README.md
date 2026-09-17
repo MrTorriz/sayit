@@ -15,7 +15,7 @@ sayit transcribes speech locally and injects the text into the focused window �
 terminal, editor or browser. The default engine is
 [whisper.cpp](https://github.com/ggml-org/whisper.cpp) with Vulkan acceleration,
 tuned for Swedish through [KB-Whisper](https://huggingface.co/KBLab/kb-whisper-medium).
-Linux also has an optional **Whisper large-v3-turbo / OpenVINO** engine for Intel
+Linux and Windows also have an optional **Whisper large-v3-turbo / OpenVINO** engine for Intel
 graphics, with the original engine available at any time.
 
 The pipeline is capture → transcribe → apply your wordlist → paste. The optional
@@ -27,7 +27,7 @@ injection work as before. See [engine setup and limits](docs/OPENVINO.md).
 | Document | What it answers |
 | --- | --- |
 | [docs/INSTALL-LINUX.md](docs/INSTALL-LINUX.md) | Requirements, install, triggers, ydotool, the meter, Bluetooth, the daemon |
-| [docs/OPENVINO.md](docs/OPENVINO.md) | Optional Linux Turbo engine, installation, switching, rollback and limits |
+| [docs/OPENVINO.md](docs/OPENVINO.md) | Optional Turbo engine, installation, switching, rollback and limits |
 | [docs/INSTALL-WINDOWS.md](docs/INSTALL-WINDOWS.md) | Requirements, install, the trigger, autostart, the indicator, injection |
 | [docs/CONFIGURATION.md](docs/CONFIGURATION.md) | Every setting, its default, its platform, and when a change takes effect |
 | [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) | Symptom, cause, and the command that fixes it |
@@ -41,7 +41,7 @@ injection work as before. See [engine setup and limits](docs/OPENVINO.md).
 | | |
 | --- | --- |
 | **Local** | Speech recognition runs on your machine. No cloud service, no API key, no telemetry, no account — audio never leaves the machine |
-| **Fast** | Warm local inference: whisper.cpp/Vulkan, or optional OpenVINO/Turbo on Linux with Intel graphics ([measurements](docs/PERFORMANCE.md)) |
+| **Fast** | Warm local inference: whisper.cpp/Vulkan, or optional OpenVINO/Turbo with Intel graphics ([measurements](docs/PERFORMANCE.md)) |
 | **Works anywhere** | Layout-independent text injection — terminals, editors, browsers; Wayland and X11 on Linux |
 | **Push-to-talk** | Hold-to-talk on a mouse thumb button and toggle on a hotkey, with a live voice meter and a recording indicator |
 | **Learns your vocabulary** | Teach it your terms: `sayit-learn "get hub" "GitHub"` |
@@ -51,7 +51,7 @@ injection work as before. See [engine setup and limits](docs/OPENVINO.md).
 ## Why sayit
 
 - **Your audio stays here.** Unlike cloud dictation services there is no account, no audio upload, no word quota and no subscription — the model runs on your own GPU or CPU, and works offline. One optional Linux feature does send text off the machine, and it is off by default; see [Privacy](#privacy).
-- **Native to the platform, not a port of one to the other.** The Linux side speaks PipeWire, systemd and Wayland — including KWin/Plasma, where most injection tricks fail. The Windows side is Windows PowerShell 5.1 plus small C# helpers and nothing else: no runtime to install, no package manager, no Python.
+- **Native to the platform.** The Linux side speaks PipeWire, systemd and Wayland, including KWin/Plasma. The base Windows implementation uses PowerShell 5.1 and small C# helpers. Only the optional Turbo engine adds an isolated Python runtime.
 - **No wake word, no idle cost.** Push-to-talk with a real button: the microphone is only open while you hold it, and nothing runs between dictations except an idle warm model.
 - **Small enough to audit.** A handful of scripts, one `.env`, a test suite per platform. No Electron, no framework.
 
@@ -59,8 +59,8 @@ injection work as before. See [engine setup and limits](docs/OPENVINO.md).
 
 Both platforms share the wordlist and history formats and the base `.env`
 settings. Their default engine is whisper.cpp with a GGML model. The optional
-OpenVINO engine and `sayit-engine` command are **Linux only**; Windows keeps its
-existing whisper.cpp implementation.
+OpenVINO engine is available on both platforms. Linux uses `bin/sayit-engine`;
+Windows uses `win/sayit-engine.ps1`. The original engine remains the fallback.
 
 Which stage differs, and the reasoning behind every divergence, is in
 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#where-they-diverge-and-why).
@@ -104,6 +104,15 @@ into `models\` yourself, and — if your mouse diverts its thumb button in firmw
 map that button in the vendor utility before the trigger can see it.
 
 Full walkthrough: [docs/INSTALL-WINDOWS.md](docs/INSTALL-WINDOWS.md).
+
+The logon task starts sayit automatically after signing in to Windows. Hold
+Mouse 5 to record; the black waveform appears only while recording, with no
+border, lamp or label. Capture and text delivery stay loaded between uses to
+avoid per-dictation process startup; the microphone is closed while idle.
+
+For the optional Intel GPU Turbo engine, follow the
+[Windows OpenVINO setup](docs/OPENVINO.md#windows-11), then select it with
+`.\win\sayit-engine.ps1 fast`. The selection survives a reboot.
 
 ## Verifying an installation
 

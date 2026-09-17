@@ -19,7 +19,7 @@ Both platforms use the same four stages; Linux can select a different transcript
 
 ```mermaid
 flowchart LR
-    A["capture<br>16 kHz mono WAV"] -->|release| B["local transcription<br>whisper.cpp / Vulkan<br>or Linux OpenVINO / Turbo"]
+    A["capture<br>16 kHz mono WAV"] -->|release| B["local transcription<br>whisper.cpp / Vulkan<br>or OpenVINO / Turbo"]
     B --> C["wordlist<br>replacement"]
     C --> D["inject into<br>focused window"]
 ```
@@ -30,12 +30,12 @@ flowchart LR
 
 | Shared | Contract |
 |---|---|
-| **Model handling** | The base engine uses pinned whisper.cpp, GGML Whisper and Silero VAD. Linux can substitute the OpenVINO server. Both use the local daemon first and `whisper-cli` on HTTP/transport failure; an empty successful response is final |
+| **Model handling** | The base engine uses pinned whisper.cpp, GGML Whisper and Silero VAD. Both platforms can substitute the OpenVINO server. Both use the local daemon first and `whisper-cli` on HTTP/transport failure; an empty successful response is final |
 | **Wordlist format** | `original<TAB>replacement`; rules sorted by original length descending, applied sequentially and globally, case-insensitive on Unicode word boundaries, originals treated as literal strings rather than regexes |
 | **History format** | `history.jsonl`, one JSON object per line: `time` (local ISO-8601 to seconds), `seconds`, `words`, `text`. Same field names, order and types, so a history file is portable between the platforms |
 | **Settings** | One `.env` from one `.env.example`. A setting that exists on both platforms has the same name and the same meaning; the file carries a clearly marked Windows-only section at the end |
 | **Diagnostics discipline** | A separate read-only `doctor` command on each platform; error logs record error *classes*, never dictated text; profiling records timings, never text |
-| **Documentation and identity** | Shared documentation and logo. Linux transient recording feedback is a 26-bar waveform without a lamp or wordmark. Its optional resident/placement view and the Windows indicator retain the 160×40 lamp, ten-bar meter and wordmark. `docs/check-geometry.py` checks their shared geometry; `docs/build-logo.py` generates the logo from the resident design |
+| **Documentation and identity** | Shared documentation and logo. Both platforms use a 26-bar recording waveform without a lamp or wordmark; Windows also omits the outline. Optional resident views retain the legacy lamp and wordmark. `docs/check-geometry.py` checks shared geometry; `docs/build-logo.py` generates the logo from the resident design |
 
 ### Where they diverge, and why
 
@@ -152,35 +152,44 @@ so a recycled PID — even another recorder — is never signalled.
 
 ## The Windows pipeline
 
+The optional `engines/openvino/server.py` serves the same local HTTP protocol
+as whisper-server. `win/lib/engine.ps1` owns launch, health checking, engine
+selection and rollback. `%APPDATA%\sayit\engine-mode` persists only a successful
+selection, and `%LOCALAPPDATA%\sayit\run\engine-process.json` records process
+identity for safe shutdown. A shared file lease allows overlapping dictations
+but excludes an engine switch until they finish. The existing scheduled task
+starts the selected engine; HTTP failure still uses the native CLI fallback.
+
 ```mermaid
 sequenceDiagram
     autonumber
     participant U as User (button/hotkey)
     participant TR as sayit-trigger.ps1
-    participant S as sayit.ps1
-    participant R as sayit-record.ps1
+    participant S as Warm STA worker
+    participant R as WarmCapture / waveIn
     participant IN as sayit-indicator.ps1
-    participant T as sayit-transcribe.ps1
-    participant D as whisper-server (daemon)
+    participant T as lib/transcribe.ps1
+    participant D as Local engine (native or Turbo)
 
     U->>TR: press (WH_MOUSE_LL / WH_KEYBOARD_LL, event suppressed)
-    TR->>S: sayit.ps1 start
-    S->>R: spawn recorder (waveIn, 16 kHz mono WAV, named stop event)
-    Note over S: session file: pid + wav + start + event name
-    S->>IN: show
+    TR->>R: start capture thread (16 kHz mono WAV)
+    Note over TR: save unique session and named stop event
+    R-->>TR: microphone ready
+    TR->>IN: show
     R-->>IN: level 0..7 through the run directory
     U->>TR: release
-    TR->>S: sayit.ps1 stop
-    Note over S: claim the session (atomic rename — one stop wins)
-    S->>IN: hide
-    S->>R: set the stop event; the recorder writes its final RIFF header
+    TR->>R: signal stop; finalize RIFF header
+    TR->>IN: hide
+    Note over TR: claim the session atomically
+    TR->>S: queue completed recording in order
+    S->>R: wait for capture completion
     S->>T: WAV file
     T->>D: POST /inference (warm model)
     alt transport failure (daemon down/unreachable)
         T->>T: whisper-cli fallback (cold start)
     end
     Note over T: strip special tokens, collapse whitespace, then the wordlist
-    T-->>S: final text on stdout
+    T-->>S: final text
     Note over S: inject in-process — SendInput Unicode, or clipboard + Ctrl+V
     S->>S: append {time, seconds, words, text} to history.jsonl
 ```
@@ -193,7 +202,7 @@ sequenceDiagram
 | `sayit-trigger.ps1` | The push-to-talk hook: binds one button, optionally suppresses it, and runs `start`/`stop`. `-Probe` reports transitions without binding or suppressing anything |
 | `sayit-rawprobe.ps1` | Diagnostic only: Raw Input observation for buttons that report as HID consumer-control usages rather than as mouse buttons |
 | `sayit-record.ps1` | Audio capture only — `waveIn` to 16 kHz mono WAV, stopped by a named event, capped by `MAX_RECORD_SECONDS`. Also publishes the level and reports a digitally silent capture |
-| `sayit-daemon.ps1` | Starts, stops and probes `whisper-server` from `.env` so the model stays warm |
+| `sayit-daemon.ps1` | Starts, stops and probes the selected native or Turbo engine so the model stays warm |
 | `sayit-transcribe.ps1` | Model I/O: daemon first, CLI fallback on transport errors, token cleanup, wordlist |
 | `sayit-wordlist.ps1` | Command-line front end to the wordlist engine in `lib\common.ps1` |
 | `sayit-inject.ps1` | Text delivery front end for manual use and for `sayit-history.ps1 -Inject` |
@@ -210,6 +219,8 @@ sequenceDiagram
 | `lib\inject.ps1` | The injection decision: elevated-target check, method by length, clipboard fallback |
 | `lib\transcribe.ps1` | The transcription itself: the daemon request, the CLI fallback, token cleanup and the wordlist call — dot-sourced so no second PowerShell is spawned |
 | `lib\Recorder.cs` | `waveIn` capture, the RIFF writer, peak tracking and level publishing, device enumeration and resolution |
+| `lib\WarmCapture.cs` | Per-recording native thread in the trigger host, with ready, stop and completion events |
+| `lib\transcription-worker.ps1` | Reusable STA runspace for ordered transcription and text delivery without per-release process startup |
 | `lib\Trigger.cs` | The low-level keyboard and mouse hooks, the event queue and the injection signature |
 | `lib\Injector.cs` | `SendInput` Unicode typing, the clipboard with its history and cloud opt-outs, the paste chord, the integrity-level check |
 | `lib\RawInput.cs` | Raw Input registration and decoding for the diagnostic probe |
@@ -219,7 +230,7 @@ so they are kept to C# 5 syntax — Windows PowerShell 5.1 supports no later
 language version. `Injector.cs` references a constant from `Trigger.cs`, so the
 two must be compiled together; `Merge-CSharpSources` hoists every `using`
 directive to the top before concatenating, because the naive concatenation is
-invalid C#. CI compiles all four files for exactly this reason: a syntax error
+invalid C#. CI compiles the helpers for exactly this reason: a syntax error
 in them would otherwise only surface on a user's machine.
 
 ### Runtime state
@@ -230,10 +241,11 @@ lives on disk under `%LOCALAPPDATA%\sayit\run` and is cleaned up explicitly.
 | Path | Purpose |
 |---|---|
 | `%LOCALAPPDATA%\sayit\run\sayit.session` | One line: `pid<TAB>wav<TAB>start<TAB>stop-event-name`. Presence means "recording". Claimed by an atomic rename, so exactly one stop or cancel wins |
-| `%LOCALAPPDATA%\sayit\run\sayit-<pid>.wav` | The recording in progress — unique per session. Deleted after transcription; stragglers older than an hour are swept when the next recording starts |
+| `%LOCALAPPDATA%\sayit\run\sayit-<id>.wav` | The recording in progress — unique per session. Deleted after transcription; stragglers older than an hour are swept when the next recording starts |
 | `%LOCALAPPDATA%\sayit\run\level` | The current level, `0`–`7`, written by the recorder and read by the indicator |
-| `%LOCALAPPDATA%\sayit\run\indicator.on` | Presence means the indicator should stay up; `sayit-indicator.ps1 hide` removes it and the indicator closes itself on its next tick |
-| `%LOCALAPPDATA%\sayit\run\daemon.pid` | PID of `whisper-server`, identity-checked against the binary's file name before it is ever signalled |
+| `%LOCALAPPDATA%\sayit\run\indicator.on` | Presence means the indicator should be visible; removing it hides the window while its process stays ready |
+| `%LOCALAPPDATA%\sayit\run\engine-process.json` | Engine process identity: PID, executable and start time, checked before stopping its process tree |
+| `%APPDATA%\sayit\engine-mode` | Persisted native (`accurate`) or Turbo (`fast`) selection for the next logon |
 | `%LOCALAPPDATA%\sayit\run\sayit-last-error.log` | Error classes from failed stages (never dictated text). Unlike its Linux counterpart it survives logout |
 | `%LOCALAPPDATA%\sayit\run\sayit-profile.csv` | Per-stage timestamps when `SAYIT_PROFILE` is set (timing data only) |
 | `%LOCALAPPDATA%\sayit\run\trigger-probe.log`, `rawprobe.log` | Transcripts of the two diagnostic probes: button transitions, never text |
@@ -243,8 +255,9 @@ lives on disk under `%LOCALAPPDATA%\sayit\run` and is cleaned up explicitly.
 
 The stop path does not depend on the recorded PID being the right process: it
 signals the session's own named event, which no other session can be waiting on.
-The PID is used to wait for the recorder to exit and, only as a last resort after
-four seconds, to force it down. `sayit-doctor.ps1` identifies recorders by
+Warm capture waits for its completion event and never kills the shared trigger
+host to stop one recording. The standalone CLI recorder retains its separate
+process and identity-checked termination fallback. `sayit-doctor.ps1` identifies recorders by
 command line instead, which is how it distinguishes an orphan from the live
 session's own recorder.
 

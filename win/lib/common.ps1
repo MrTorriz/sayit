@@ -31,6 +31,20 @@ function Initialize-SayitDirs {
     }
 }
 
+# Shared file handles allow overlapping dictations. An exclusive handle makes
+# an engine switch fail immediately while any dictation is using the pipeline.
+# Windows closes the handle even if its owning process crashes.
+function Open-SayitEngineGate {
+    param([switch]$Exclusive)
+    $sharing = if ($Exclusive) { [System.IO.FileShare]::None } else { [System.IO.FileShare]::ReadWrite }
+    try {
+        return [System.IO.File]::Open((Join-Path $script:RunDir 'engine.lock'),
+            [System.IO.FileMode]::OpenOrCreate, [System.IO.FileAccess]::ReadWrite, $sharing)
+    } catch [System.IO.IOException] {
+        throw 'Engine is busy switching or transcribing; try again when it is idle.'
+    }
+}
+
 # --- UTF-8 file IO ----------------------------------------------------------
 # PowerShell 5.1's Out-File -Encoding utf8 writes a BOM, which corrupts
 # history.jsonl for any strict JSONL reader. These helpers never write one.
