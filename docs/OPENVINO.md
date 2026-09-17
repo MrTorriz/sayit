@@ -1,51 +1,14 @@
 [README](../README.md) · [Linux installation](INSTALL-LINUX.md) · [Performance](PERFORMANCE.md)
 
-# Optional Turbo engine
+# Optional Linux Turbo engine
 
 This mode runs Whisper large-v3-turbo FP16 locally through OpenVINO. It has been
 tested on Fedora 44 with an Intel Core Ultra 9 185H, integrated Arc graphics,
 32 GB RAM and Python 3.14. The default whisper.cpp/Vulkan engine remains
-available. Windows 11 can use the same server through the PowerShell adapter
-described below. Its measurements are separate from the Linux results.
+available. Windows uses its existing implementation; this adapter does not add
+OpenVINO support to Windows.
 
-## Windows 11
-
-Complete the base [Windows installation](INSTALL-WINDOWS.md) first. Use Python
-3.12 or newer with compatible binary wheels; Python 3.13 was verified. The
-installer keeps packages, the model and GPU cache under
-`%LOCALAPPDATA%\sayit\openvino`, or `OPENVINO_HOME` when set. It verifies the
-configured GPU before downloading the model, checks every model checksum,
-and warms up both the model and Silero speech detector. It does not select
-the engine or modify the running native server.
-
-```powershell
-.\win\install-openvino.ps1
-.\win\sayit-engine.ps1 fast
-.\win\sayit-engine.ps1 status
-.\win\sayit-engine.ps1 accurate
-```
-
-`-Python` selects an interpreter; `-ModelSource` reuses an exact model copy
-after verifying checksums. The pinned packages must have compatible Windows
-wheels. The adapter loads `whisper.dll` and its dependencies from beside the
-configured `WHISPER_SERVER`, or uses `WHISPER_LIB` when explicitly set.
-The same supported native VAD versions listed below apply.
-
-A successful switch saves `fast` or `accurate` in
-`%APPDATA%\sayit\engine-mode`. The existing scheduled logon task starts that
-engine through `sayit-daemon.ps1`. Switching is refused during recording or
-transcription. Startup waits up to 120 seconds for the expected HTTP health
-response. A failed switch restarts the previous engine and leaves the saved
-selection unchanged. Switch to `accurate` before updating Turbo packages.
-
-The daemon and CLI fallback retain the existing wordlist and text-injection
-path. Silence returns an empty result without invoking the fallback. Requests
-that fail use the original local whisper-cli. First compilation is slower
-than a warm start; test the model with the installer before selecting it.
-
-See the [Windows comparison](PERFORMANCE.md#windows-openvinoturbo-comparison-2026-09-17).
-
-## Linux installation
+## Install
 
 First complete the base [Linux installation](INSTALL-LINUX.md), including
 microphone access, the trigger and text injection. The optional installer
@@ -168,5 +131,5 @@ Startup checks are bounded to 60 seconds; slow first compilation may require
 running `--check` first to populate the cache.
 
 After installation, model inference requires no internet connection. See
-[security and data handling](../SECURITY.md#optional-openvino-engine)
+[security and data handling](../SECURITY.md#optional-openvino-engine-linux)
 and the [paired Swedish measurements](PERFORMANCE.md#linux-openvinoturbo-comparison-2026-09-14).

@@ -330,8 +330,6 @@ function Stop-Recording {
     return 0
 }
 
-$engineGate = Open-SayitEngineGate
-try {
 switch ($Action.ToLowerInvariant()) {
     'start'  { exit (Start-Recording) }
     'stop'   { exit (Stop-Recording) }
@@ -354,5 +352,3 @@ switch ($Action.ToLowerInvariant()) {
         exit 1
     }
 }
-
-} finally { $engineGate.Dispose() }

@@ -33,8 +33,7 @@ class Protocol(unittest.TestCase):
                 response.read()
             worker.join(timeout=5)
         with socket.socket() as original:
-            original.setsockopt(socket.SOL_SOCKET,
-                                getattr(socket, "SO_REUSEPORT", socket.SO_REUSEADDR), 1)
+            original.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)
             original.bind(("127.0.0.1", port))
 
     def test_unicode_prompt_is_literal(self):

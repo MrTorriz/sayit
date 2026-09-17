@@ -29,7 +29,6 @@ Set-StrictMode -Version 2.0
 $ErrorActionPreference = 'Stop'
 
 . "$PSScriptRoot\lib\common.ps1"
-. "$PSScriptRoot\lib\engine.ps1"
 Initialize-SayitDirs
 
 # Device names carry non-ASCII characters on a localised system.
@@ -172,13 +171,19 @@ if ($vad -and (Test-Path -LiteralPath $vad)) {
 
 Write-Section 'Warm daemon'
 
-$engineMode = Get-SayitEngineMode
-$daemonUp = Test-SayitEngineHealth (Get-SayitEngineHealth ([int]$port)) $engineMode
+$daemonUp = $false
+try {
+    $client = New-Object System.Net.Sockets.TcpClient
+    $daemonUp = $client.ConnectAsync('127.0.0.1', [int]$port).Wait(500)
+    $client.Close()
+} catch {
+    $daemonUp = $false
+}
 
 if ($daemonUp) {
-    Write-Ok "$engineMode ready on 127.0.0.1:$port"
+    Write-Ok "answers on 127.0.0.1:$port"
 } else {
-    Write-Warn "$engineMode is not ready on 127.0.0.1:$port"
+    Write-Warn "nothing answers on 127.0.0.1:$port"
     Write-More 'the first dictation falls back to whisper-cli and loads the model'
     Write-More 'each time. Start it with: .\win\sayit-daemon.ps1 start'
 }

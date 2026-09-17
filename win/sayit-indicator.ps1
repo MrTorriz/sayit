@@ -1,16 +1,66 @@
-# Recording-only waveform matching the Linux transient overlay.
-# Usage: sayit-indicator.ps1 show|hide|stop|place [-Managed] [-Resident]
-# The background process stays warm but its window is hidden between recordings.
-# -Resident opts into the older always-visible lamp and wordmark layout.
-# -Managed follows one caller-owned recording and exits when it ends.
-# Placement previews the waveform without opening the microphone.
-# Drag the middle to move; drag either end to resize. Layout is saved on release.
+# sayit-indicator.ps1 - the on-screen recording indicator.
+#
+# Usage:
+#   .\sayit-indicator.ps1 show    show the pill and keep it up (blocks)
+#   .\sayit-indicator.ps1 hide    turn the lamp off; a resident pill stays up
+#   .\sayit-indicator.ps1 stop    close a resident pill
+#   .\sayit-indicator.ps1 place   move and resize it; Enter or Escape saves
+#
+# In 'place' mode:
+#   drag the middle      move the pill
+#   drag either end      resize it, keeping the opposite end anchored
+#   arrow keys           nudge one pixel
+#   + and -              resize in steps, 0 returns to the standard size
+#   Enter or Escape      save position and size, and close
+#
+# The size is one scale factor, not a width and a height: the pill has a fixed
+# proportion and is never stretched out of it. Position and scale are saved
+# together in the overlay-position file.
+#
+# Arguments:
+#   -Managed   with 'show': the caller owns the state file's lifetime and the
+#              pill closes with it, instead of staying up for the session.
+#              sayit.ps1 passes it because this process is far slower to start
+#              than a short dictation is to finish: a hide issued while it was
+#              still starting would be undone the moment it got around to
+#              writing the file, and the pill would then stay on screen.
+#
+# The pill is resident and always on top
+# -------------------------------------
+# A pill stands from logon for the whole session, not only while a recording
+# runs. The scheduled logon task starts it, the same way it starts the daemon.
+#
+# It also stays on one layer. The Linux side tried the other way first: a
+# resting pill was put on a lower layer so it would not cover a fullscreen
+# video, and raised while recording. A desktop panel shares that layer and
+# stacking within one layer follows map order, so the pill was visible at rest
+# or hidden behind the panel depending on which surface was mapped last. It
+# read as a broken pill rather than as a layer policy. The price - a resting
+# pill sits over fullscreen video too - is real and accepted: a fixture that is
+# only sometimes a fixture is worse than one that is always there.
+#
+# So TopMost is set once, at creation, and nothing in the state path touches it
+# again. Only the lamp's colour and the meter's geometry change with the state.
+#
+# The mark IS the meter: the bars follow your voice level and the lamp burns red
+# while the microphone is open. The level comes from the recorder, which has
+# already computed it, so no second capture stream is opened.
+#
+# The window never takes focus. WS_EX_NOACTIVATE keeps the system from making it
+# foreground, WS_EX_TRANSPARENT lets clicks pass through to whatever is beneath,
+# WS_EX_TOOLWINDOW keeps it out of Alt-Tab, and it is shown with
+# SW_SHOWNOACTIVATE. Without all four a topmost form steals focus on first show,
+# which would defeat the point of dictating into the window you were using.
+#
+# Known limits: it cannot appear over a true exclusive-fullscreen application, or
+# on the UAC secure desktop. Both are architectural, not bugs.
+#
+# Exit codes: 0 normal, 1 the indicator could not be created.
 
 [CmdletBinding()]
 param(
     [Parameter(Position = 0)][ValidateSet('show', 'hide', 'stop', 'place')][string]$Action = 'show',
-    [switch]$Managed,
-    [switch]$Resident
+    [switch]$Managed
 )
 
 Set-StrictMode -Version 2.0
@@ -130,7 +180,6 @@ namespace Sayit
 
         public void ShowNoActivate()
         {
-            this.Show();
             ShowWindow(this.Handle, SW_SHOWNOACTIVATE);
             KeepOnTop();
         }
@@ -293,22 +342,19 @@ $form.Add_Paint({
 
     $ink = New-RgbColor -Rgb $script:InkRgb
 
-    # The recording-only pill has a plain black background, without an outline.
-    # Keep the legacy white outline only for the explicit resident layout.
-    $inset = if ($Resident) { $script:PillBorder / 2.0 } else { 0.0 }
+    # The pill: black fill, white border. The border is drawn inset by half its
+    # width, because the form Region clips anything outside the rounded shape.
+    $inset = $script:PillBorder / 2.0
     $pill = New-SayitPillPath -Width $script:PillWidth -Height $script:PillHeight `
                               -Radius $script:PillRadius -Inset $inset
     $fill = New-Object System.Drawing.SolidBrush((New-RgbColor -Rgb $script:PillRgb))
     $g.FillPath($fill, $pill)
     $fill.Dispose()
-    if ($Resident) {
-        $pen = New-Object System.Drawing.Pen($ink, [float]$script:PillBorder)
-        $g.DrawPath($pen, $pill)
-        $pen.Dispose()
-    }
+    $pen = New-Object System.Drawing.Pen($ink, [float]$script:PillBorder)
+    $g.DrawPath($pen, $pill)
+    $pen.Dispose()
     $pill.Dispose()
 
-    if ($Resident) {
     # The lamp. Always drawn, always the same size and place: only the colour
     # carries the state, so an unlit pill still reads as a lamp that is off
     # rather than as a pill with a hole in it.
@@ -319,15 +365,11 @@ $form.Add_Paint({
                    [float]$lamp.Diameter, [float]$lamp.Diameter)
     $lampBrush.Dispose()
 
-    }
-
     # The meter. Rounded capsules grown symmetrically about the pill's centre
     # line, not up from a baseline: at rest the row is a line of dots level with
     # the lamp, and speaking opens it out in both directions.
     $barBrush = New-Object System.Drawing.SolidBrush($ink)
-    $bars = if ($Resident) { Get-SayitBarRects -Level $script:level }
-            else { Get-SayitTransientBarRects -Level $script:level }
-    foreach ($b in $bars) {
+    foreach ($b in (Get-SayitBarRects -Level $script:level)) {
         $bar = New-SayitPillPath -Width $b.Width -Height $b.Height -Radius $b.Radius
         $state = $g.Save()
         $g.TranslateTransform([float]$b.X, [float]$b.Y)
@@ -337,7 +379,6 @@ $form.Add_Paint({
     }
     $barBrush.Dispose()
 
-    if ($Resident) {
     # The wordmark, from stored outlines. No font is loaded at runtime.
     $wm = Get-SayitWordmarkOrigin
     $wmPath = New-SayitWordmarkPath -X $wm.X -Y $wm.Y -Height $wm.Height
@@ -345,7 +386,6 @@ $form.Add_Paint({
     $g.FillPath($wmBrush, $wmPath)
     $wmBrush.Dispose()
     $wmPath.Dispose()
-    }
 })
 
 if (-not $locked) {
@@ -408,7 +448,7 @@ if (-not $locked) {
         $form.Region = New-Object System.Drawing.Region($shape)
         $shape.Dispose()
         if ($null -ne $gammal) { $gammal.Dispose() }
-        if ($form.Visible) { $form.Invalidate() }
+        $form.Invalidate()
     }
 
     $form.Add_MouseDown({
@@ -492,19 +532,20 @@ if (-not $locked) {
     })
 }
 
-# Create the handle without showing a window. Application.Run(form) would
-# reveal it at idle, so the event loop below uses an ApplicationContext instead.
-$context = New-Object System.Windows.Forms.ApplicationContext
-$form.Add_FormClosed({ $context.ExitThread() })
-$null = $form.Handle
 if ($placing) {
+    # 'place' still exists, and now differs only in showing the meter open, so
+    # the pill can be sized against its real extent rather than its resting one.
+    # It records nothing, so the lamp stays unlit.
     $script:level = 5.0
     $form.Show()
+    $form.Activate()
 } else {
-    # Never recreate a recording marker after its caller has already stopped.
-    if ($Managed -and -not (Test-Path -LiteralPath $stateFile)) { $form.Dispose(); exit 0 }
+    if ($Managed -and -not (Test-Path -LiteralPath $stateFile)) {
+        Write-Utf8Text -Path $stateFile -Text '1'
+        $script:micOpen = $true
+    }
     Remove-Item -LiteralPath $quitFile -Force -ErrorAction SilentlyContinue
-    if ($Resident -or $script:micOpen) { $form.ShowNoActivate() }
+    $form.ShowNoActivate()
 }
 
 # Keep the pill out of screen shares and recordings. Applied after the handle
@@ -516,7 +557,7 @@ if ((Get-Setting -Env $cfg -Name 'INDICATOR_EXCLUDE_FROM_CAPTURE' -Default '1') 
 }
 
 $timer = New-Object System.Windows.Forms.Timer
-$timer.Interval = 33
+$timer.Interval = 80
 $timer.Add_Tick({
     if (-not $placing) {
         if (Test-Path -LiteralPath $quitFile) { $form.Close(); return }
@@ -527,29 +568,29 @@ $timer.Add_Tick({
         if ($Managed -and -not $open) { $form.Close(); return }
         $script:micOpen = $open
 
-        $targetLevel = 0.0
         if ($open) {
-            try { $targetLevel = [double][int]([System.IO.File]::ReadAllText($levelFile)) } catch { }
+            try {
+                $script:level = [double][int]([System.IO.File]::ReadAllText($levelFile))
+            } catch {
+                # A missing or half-written level file means "no update yet".
+            }
+        } else {
+            $script:level = 0.0
         }
-        $script:level += ($targetLevel - $script:level) * 0.35
-        $visible = $Resident -or $open
-        if ($visible) {
-            if (-not $form.Visible) { $form.ShowNoActivate() }
-            $form.KeepOnTop()
-        } elseif ($form.Visible) { $form.Hide() }
 
+        # Re-asserted every tick, never in response to a state change: the pill
+        # holds one layer whatever the microphone is doing.
+        $form.KeepOnTop()
     }
-    if ($form.Visible) { $form.Invalidate() }
+    $form.Invalidate()
 })
 $timer.Start()
 
 try {
-    [System.Windows.Forms.Application]::Run($context)
+    [System.Windows.Forms.Application]::Run($form)
 } finally {
     $timer.Stop()
     $timer.Dispose()
-    $form.Dispose()
-    $context.Dispose()
     Remove-Item -LiteralPath $quitFile -Force -ErrorAction SilentlyContinue
     if ($Managed) { Remove-Item -LiteralPath $stateFile -Force -ErrorAction SilentlyContinue }
     if ($null -ne $mutex) { try { $mutex.ReleaseMutex() } catch { }; $mutex.Dispose() }

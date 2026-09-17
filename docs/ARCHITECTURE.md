@@ -19,7 +19,7 @@ Both platforms use the same four stages; Linux can select a different transcript
 
 ```mermaid
 flowchart LR
-    A["capture<br>16 kHz mono WAV"] -->|release| B["local transcription<br>whisper.cpp / Vulkan<br>or OpenVINO / Turbo"]
+    A["capture<br>16 kHz mono WAV"] -->|release| B["local transcription<br>whisper.cpp / Vulkan<br>or Linux OpenVINO / Turbo"]
     B --> C["wordlist<br>replacement"]
     C --> D["inject into<br>focused window"]
 ```
@@ -30,7 +30,7 @@ flowchart LR
 
 | Shared | Contract |
 |---|---|
-| **Model handling** | The base engine uses pinned whisper.cpp, GGML Whisper and Silero VAD. Both platforms can substitute the OpenVINO server. Both use the local daemon first and `whisper-cli` on HTTP/transport failure; an empty successful response is final |
+| **Model handling** | The base engine uses pinned whisper.cpp, GGML Whisper and Silero VAD. Linux can substitute the OpenVINO server. Both use the local daemon first and `whisper-cli` on HTTP/transport failure; an empty successful response is final |
 | **Wordlist format** | `original<TAB>replacement`; rules sorted by original length descending, applied sequentially and globally, case-insensitive on Unicode word boundaries, originals treated as literal strings rather than regexes |
 | **History format** | `history.jsonl`, one JSON object per line: `time` (local ISO-8601 to seconds), `seconds`, `words`, `text`. Same field names, order and types, so a history file is portable between the platforms |
 | **Settings** | One `.env` from one `.env.example`. A setting that exists on both platforms has the same name and the same meaning; the file carries a clearly marked Windows-only section at the end |
@@ -151,14 +151,6 @@ the process's command line must name the session's own (unique) WAV path,
 so a recycled PID — even another recorder — is never signalled.
 
 ## The Windows pipeline
-
-The optional `engines/openvino/server.py` serves the same local HTTP protocol
-as whisper-server. `win/lib/engine.ps1` owns launch, health checking, engine
-selection and rollback. `%APPDATA%\sayit\engine-mode` persists only a successful
-selection, and `%LOCALAPPDATA%\sayit\run\engine-process.json` records process
-identity for safe shutdown. A shared file lease allows overlapping dictations
-but excludes an engine switch until they finish. The existing scheduled task
-starts the selected engine; HTTP failure still uses the native CLI fallback.
 
 ```mermaid
 sequenceDiagram

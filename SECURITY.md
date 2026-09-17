@@ -110,7 +110,7 @@ details in the issue.
   as the logged-in user. An elevated trigger could not type into the
   non-elevated windows you actually work in.
 
-## Optional OpenVINO engine
+## Optional OpenVINO engine (Linux)
 
 The adapter binds only to `127.0.0.1`. Audio is decoded in memory and neither
 transcripts nor prompts are logged by the adapter. Error responses contain
@@ -119,8 +119,7 @@ behavior above still apply, including native daemon/CLI logging on fallback.
 The launcher disables the OpenVINO package's telemetry through `CI=true` and
 uses an isolated Python environment. No model download occurs during dictation.
 
-`install-openvino.sh` and `win/install-openvino.ps1` download Python packages
-from PyPI and model files from
+`install-openvino.sh` downloads Python packages from PyPI and model files from
 Hugging Face. Versions are pinned in `engines/openvino/requirements.txt`; the
 model manifest pins a repository revision, size and SHA-256 for every file.
 Existing or locally copied model files are checked too. Python packages are

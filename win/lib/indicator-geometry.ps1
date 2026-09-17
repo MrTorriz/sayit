@@ -36,29 +36,6 @@ $script:GapU      = 3.0
 # progress bar. The row opens low, peaks in the middle and settles again.
 $script:BarMaxU = @(32.32, 38.08, 58.24, 45.76, 64, 42.4, 53.44, 36.16, 59.68, 40)
 
-# Recording-only layout from bin/sayit-overlay, filling the width with 26 bars.
-$script:TransientWaveInset = 13.0
-$script:TransientBarMaxU = @(26, 31, 37, 45, 54, 61, 50, 42,
-    33, 29, 39, 53, 64, 58, 45, 35, 28, 40, 54, 47, 36, 60, 52, 43, 34, 28)
-$script:TransientWaveScale = ($script:PillWidth - 2 * $script:TransientWaveInset) /
-    ($script:TransientBarMaxU.Count * $script:BarU + ($script:TransientBarMaxU.Count - 1) * $script:GapU)
-
-function Get-SayitTransientBarRects {
-    param([double]$Level)
-    $Level = [math]::Max(0, [math]::Min(7, $Level))
-    $bw = $script:BarU * $script:TransientWaveScale
-    for ($i = 0; $i -lt $script:TransientBarMaxU.Count; $i++) {
-        $height = ($script:BarU + ($script:TransientBarMaxU[$i] - $script:BarU) * $Level / 7) * $script:TransientWaveScale
-        [pscustomobject]@{
-            X = $script:TransientWaveInset + $i * ($script:BarU + $script:GapU) * $script:TransientWaveScale
-            Y = ($script:PillHeight - $height) / 2
-            Width = $bw
-            Height = $height
-            Radius = $bw / 2
-        }
-    }
-}
-
 $script:DotD = 42.0     # the lamp, larger than the bars alone would ask for
 
 # Gaps in pill pixels, not mark units.

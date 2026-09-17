@@ -17,7 +17,6 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 import io
 import json
 import math
-from pathlib import Path
 import sys
 import wave
 
@@ -67,10 +66,6 @@ class SpeechGate:
     Detect speech without cutting the recording, preserving quiet word endings.
     """
     def __init__(self, library, model):
-        # Python 3.8+ does not search PATH for a DLL's dependencies on Windows.
-        # Keep the directory handle alive for the lifetime of the native library.
-        self.dll_directory = (os.add_dll_directory(str(Path(library).resolve().parent))
-                              if os.name == "nt" else None)
         self.lib = ct.CDLL(library)
         self.lib.whisper_version.argtypes = []
         self.lib.whisper_version.restype = ct.c_char_p
@@ -192,8 +187,6 @@ class LocalHTTPServer(HTTPServer):
     # The installed whisper-server uses SO_REUSEPORT, not SO_REUSEADDR.
     # Match it so switching back does not wait for old connections to expire.
     allow_reuse_port = True
-    # cpp-httplib selects SO_REUSEADDR on Windows, which has no SO_REUSEPORT.
-    allow_reuse_address = os.name == "nt"
 
 
 def main():
