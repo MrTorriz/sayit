@@ -43,13 +43,9 @@ be configured instead. No account, no subscription, no telemetry.
 
 ## How it works
 
-```mermaid
-flowchart LR
-    A["hold the trigger<br>microphone opens"] --> B["record<br>16 kHz mono WAV<br>live waveform"]
-    B -->|release| C["local transcription<br>whisper.cpp / Vulkan or Metal<br>or OpenVINO / Turbo"]
-    C --> D["wordlist<br>replacement"]
-    D --> E["paste into the<br>focused window"]
-```
+<p align="center">
+  <img src="docs/pipeline.svg" alt="Hold the trigger and the microphone opens; speak while a live waveform shows; release and the recording is transcribed locally by whisper.cpp or OpenVINO; the wordlist applies your corrections; the text is pasted into the focused window" width="880">
+</p>
 
 Every stage is a small program that can be run and tested on its own: bash
 scripts on Linux and macOS, PowerShell with compiled C# helpers on Windows,
