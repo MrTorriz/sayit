@@ -1,11 +1,14 @@
 # CI: syntax + lint on every script (bash and Python alike), and the bats
 # test suite. Runs on push and pull requests.
 #
-# Two platforms, two jobs. The Linux jobs glob bin/, install.sh, tests/*.sh and
-# docs/*.py, and the windows job covers win/. The one place a Linux job reads
-# win/ is the geometry check below, which compares the Windows pill's constants
-# against the overlay's as text: it needs no PowerShell, and it is the only
-# thing that notices when the two drawings of one pill drift apart.
+# Three platforms. The Linux jobs glob bin/, install.sh, mac/'s shell scripts,
+# tests/*.sh and docs/*.py and run the whole bats suite (tests/mac.bats forces
+# the macOS branches through OSTYPE, so it runs there too); the windows job
+# covers win/, and the macos job builds the Swift targets and runs the suite on
+# a real Mac. The one place a Linux job reads win/ or mac/Sources is the
+# geometry check below, which compares the Windows and macOS pills' constants
+# against the overlay's as text: it needs neither PowerShell nor Swift, and it
+# is the only thing that notices when the drawings of one pill drift apart.
 name: ci
 
 on:
@@ -20,7 +23,8 @@ jobs:
       - uses: actions/checkout@v4
       - name: Syntax check
         run: |
-          for f in bin/* install*.sh tests/*.sh docs/*.py engines/openvino/*.py; do
+          for f in bin/* install*.sh mac/*.sh mac/sayit-doctor mac/tests/*.sh \
+                   tests/*.sh docs/*.py engines/openvino/*.py; do
             [ -f "$f" ] || continue
             case "$(head -1 "$f")" in
               *python*) python3 -m py_compile "$f" ;;
@@ -31,7 +35,8 @@ jobs:
       - name: shellcheck
         run: |
           scripts=()
-          for f in bin/* install*.sh tests/*.sh docs/*.py engines/openvino/*.py; do
+          for f in bin/* install*.sh mac/*.sh mac/sayit-doctor mac/tests/*.sh \
+                   tests/*.sh docs/*.py engines/openvino/*.py; do
             [ -f "$f" ] || continue
             case "$(head -1 "$f")" in
               *bash*|*/sh) scripts+=("$f") ;;
@@ -39,10 +44,10 @@ jobs:
           done
           shellcheck "${scripts[@]}"
 
-      # The Windows indicator keeps a hand-made copy of the pill's geometry,
-      # because PowerShell cannot read the overlay's Python constants. Nothing
-      # else would notice if the two disagreed.
-      - name: Windows pill matches the overlay
+      # The Windows indicator and Sayit.app keep hand-made copies of the pill's
+      # geometry, because neither PowerShell nor Swift can read the overlay's
+      # Python constants. Nothing else would notice if they disagreed.
+      - name: Windows and macOS pills match the overlay
         run: python3 docs/check-geometry.py
 
   test:
@@ -64,6 +69,45 @@ jobs:
       - run: python -m pip install numpy==2.5.3
       - name: Protocol, model integrity and service rollback
         run: python -m unittest discover -s engines/openvino -v
+
+  macos:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      # bash 5 too: the scripts need it, and the system's /bin/bash is 3.2.
+      - name: Install bash, bats and shellcheck
+        run: brew install bash bats-core shellcheck
+
+      - name: Syntax check and shellcheck
+        run: |
+          for f in mac/install.sh mac/sayit-doctor mac/tests/*.sh; do
+            bash -n "$f"
+          done
+          shellcheck mac/install.sh mac/sayit-doctor mac/tests/*.sh
+
+      # The compiler invocations of mac/install.sh, into a scratch directory:
+      # no bundle, no signing, no install and no launchctl.
+      - name: Compile the Swift targets
+        run: |
+          out=$(mktemp -d)
+          swiftc=(swiftc -O -swift-version 5 -target "$(uname -m)-apple-macos14.0")
+          "${swiftc[@]}" mac/Sources/Common/*.swift mac/Sources/Rec/main.swift -o "$out/sayit-rec"
+          "${swiftc[@]}" mac/Sources/Paste/main.swift -o "$out/sayit-paste"
+          "${swiftc[@]}" mac/Sources/Common/*.swift mac/Sources/Agent/*.swift -o "$out/Sayit"
+
+      - name: Swift unit tests
+        run: mac/tests/run.sh
+
+      - name: macOS test suite
+        run: bats tests/mac.bats
+
+      # The Linux-path tests pin OSTYPE=linux-gnu and skip what needs /proc or
+      # GNU stat, so they run on a Mac too.
+      - name: Rest of the test suite
+        run: bats $(ls tests/*.bats | grep -v '/mac\.bats$')
+
+      - name: Windows and macOS pills match the overlay
+        run: python3 docs/check-geometry.py
 
   windows:
     runs-on: windows-latest

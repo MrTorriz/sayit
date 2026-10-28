@@ -1,4 +1,4 @@
-[← README](../README.md) · [Install: Linux](INSTALL-LINUX.md) · [Windows](INSTALL-WINDOWS.md) · [Configuration](CONFIGURATION.md) · [Troubleshooting](TROUBLESHOOTING.md) · **Performance** · [Architecture](ARCHITECTURE.md)
+[← README](../README.md) · [Install: Linux](INSTALL-LINUX.md) · [Windows](INSTALL-WINDOWS.md) · [macOS](INSTALL-MACOS.md) · [Configuration](CONFIGURATION.md) · [Troubleshooting](TROUBLESHOOTING.md) · **Performance** · [Architecture](ARCHITECTURE.md)
 
 # Performance
 
@@ -9,6 +9,7 @@ measurements, which are estimates, and which are arithmetic. Each is labelled.
 - [Linux reference machine](#linux-reference-machine)
 - [Reproducing the Linux numbers](#reproducing-the-linux-numbers)
 - [Windows reference machine](#windows-reference-machine)
+- [macOS reference machine](#macos-reference-machine)
 - [What is not measured](#what-is-not-measured)
 - [Profiling your own dictations](#profiling-your-own-dictations)
 
@@ -195,6 +196,57 @@ wordlist cost about 0.8 s, a fifth of the total, so the wordlist engine lives
 in `lib\common.ps1` and `sayit-transcribe.ps1` calls it directly. The separate
 `sayit-inject.ps1` and `sayit-wordlist.ps1` front ends remain for manual use.
 
+## macOS reference machine
+
+A Mac mini (Mac18,5) with an Apple M6 (12 cores: 2 super, 4 performance, 6
+efficiency) and 16 GB of unified memory, macOS 27.2, whisper.cpp v1.9.2 built
+by `install.sh` with Metal and Accelerate, on 2026-10-27.
+
+### Three models on human Swedish speech
+
+Thirty Swedish sentences from the FLEURS sv_se test split: the first thirty
+distinct sentences in `test.tsv` order, one recording each, 409.8 s of audio
+and 718 reference words. Each model ran in its own warm `whisper-server` with
+`bin/sayit-daemon`'s flags (beam 5, flash attention, Silero VAD) and received
+exactly the form fields `bin/sayit-transcribe` sends, sayit's VAD tuning
+included. One warm-up request, then one request per clip. Timings are the HTTP
+round trip; errors are strict word-level edit distance against FLEURS'
+normalised transcription, so number formatting and split words count.
+
+| Model | Mean | Median | p95 | Word errors / reference words |
+| --- | ---: | ---: | ---: | ---: |
+| KB-Whisper medium q5_0 | 0.638 s | 0.611 s | 0.976 s | 46 / 718 (6.4%) |
+| KB-Whisper large q5_0 | 1.054 s | 1.023 s | 1.597 s | 37 / 718 (5.2%) |
+| Whisper large-v3-turbo q5_0 | 0.520 s | 0.512 s | 0.665 s | 60 / 718 (8.4%) |
+
+The clips run 7.0-30.1 s (median 12.9 s), longer than most dictations. On the
+eight clips under ten seconds the means were 0.50 s, 0.84 s and 0.47 s. From
+spawn to accepting connections the servers took 0.22 s, 0.51 s and 0.32 s.
+[Individual measurements](macos-benchmark-20261027.json) carry clip ids,
+durations, timings and error counts, and no text.
+
+What it decided:
+
+- **Large is the default on Apple Silicon.** It made 20% fewer errors than
+  medium and 38% fewer than turbo on this set, and still answers a dictation of
+  ordinary length in under a second. `install.sh` downloads it on an Apple
+  Silicon Mac, and the scripts prefer it whenever the file is present;
+  `MODEL_PATH` overrides both.
+- **No second engine on macOS.** Turbo was the fastest of the three and the
+  least accurate on Swedish. The OpenVINO engine exists on Linux because the
+  large models were slow on the Intel GPU; on Metal they are not.
+- **Not paired with the Linux numbers.** The Linux OpenVINO comparison used
+  eight other FLEURS clips whose selection was not recorded, on other
+  hardware. Thirty sentences narrow the accuracy ranking down; they do not
+  settle it.
+
+### First run
+
+The first transcription after building took 8 s: Metal compiles its pipelines
+once. Afterwards a cold `whisper-cli` run, model load included, took 0.6 s with
+medium and 1.1 s with large for a 4.6-second synthetic sentence (macOS `say`,
+voice Alva). Measured by hand, a few runs each.
+
 ## What is not measured
 
 - **Microphone capture and the Bluetooth profile switch** are outside the
@@ -206,17 +258,23 @@ in `lib\common.ps1` and `sayit-transcribe.ps1` calls it directly. The separate
   profile restore and clipboard injection on top of the warm figures —
   typically a few hundred milliseconds, of which clipboard injection is on the
   order of 0.1 s. Estimate.
-- **`large` versus `medium` latency.** Not measured on either platform. See
+- **`large` versus `medium` latency on Linux and Windows.** Measured on macOS
+  only, above. For the other two platforms see
   [Choosing a model size](CONFIGURATION.md#choosing-a-model-size) for the
   arithmetic, which is arithmetic and says so.
+- **Release to text on macOS.** The table above is the transcription alone;
+  stopping the recorder, the wordlist and the paste come on top. A Bluetooth
+  headset that macOS switches to its call profile when capture opens costs
+  time before recording starts as well; a USB microphone does not switch.
 
 ## Profiling your own dictations
 
-Per-stage latency profiling of real dictations is built in on both platforms.
+Per-stage latency profiling of real dictations is built in on all three platforms.
 Set `SAYIT_PROFILE=1` and read the CSV:
 
 - Linux: `$XDG_RUNTIME_DIR/sayit-profile.csv`
 - Windows: `%LOCALAPPDATA%\sayit\run\sayit-profile.csv`
+- macOS: `$(getconf DARWIN_USER_TEMP_DIR)sayit-profile.csv`
 
 The columns are run id, wall clock, monotonic uptime, stage name and a numeric
 extra. Never dictated text.

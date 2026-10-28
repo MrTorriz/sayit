@@ -4,6 +4,9 @@
 # model a generic headset, never one specific device.
 
 setup() {
+    # The Linux code path on any host: the scripts branch on OSTYPE, which
+    # bash takes from the environment. tests/mac.bats covers macOS.
+    export OSTYPE=linux-gnu
     BT="$BATS_TEST_DIRNAME/../bin/sayit-bt"
     export XDG_RUNTIME_DIR="$BATS_TEST_TMPDIR/run"
     mkdir -p "$XDG_RUNTIME_DIR"

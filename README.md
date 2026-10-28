@@ -1,21 +1,23 @@
 # sayit
 
-Push-to-talk dictation for Linux and Windows 11. Hold a button, speak, then
-release to insert your words into the focused text field.
+Push-to-talk dictation for Linux, Windows 11 and macOS. Hold a button, speak,
+then release to insert your words into the focused text field.
 
 [![ci](https://github.com/MrTorriz/sayit/actions/workflows/ci.yml/badge.svg)](https://github.com/MrTorriz/sayit/actions/workflows/ci.yml)
 [![license: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![platform: Linux and Windows 11](https://img.shields.io/badge/platform-Linux%20%7C%20Windows%2011-informational)](#installation)
+[![platform: Linux, Windows 11 and macOS](https://img.shields.io/badge/platform-Linux%20%7C%20Windows%2011%20%7C%20macOS-informational)](#installation)
 
 <p align="center">
   <img src="docs/demo.gif" alt="Linux demo: a waveform appears during recording, then the transcribed sentence is pasted into the focused window" width="760">
 </p>
 
 Speech recognition runs locally through [whisper.cpp](https://github.com/ggml-org/whisper.cpp),
-with Vulkan acceleration and [KB-Whisper](https://huggingface.co/KBLab/kb-whisper-medium)
-as the default Swedish model. Both platforms also support an optional
-**Whisper large-v3-turbo / OpenVINO** engine for compatible Intel graphics.
-No account or subscription is required.
+with Vulkan acceleration on Linux and Windows, Metal on macOS, and
+[KB-Whisper](https://huggingface.co/KBLab/kb-whisper-medium) as the default
+Swedish model. Linux and Windows also support an optional
+**Whisper large-v3-turbo / OpenVINO** engine for compatible Intel graphics; on
+Apple Silicon, Metal runs the large KB-Whisper model fast enough to be the
+default. No account or subscription is required.
 
 - Hold-to-talk with a waveform indicator; toggle mode is also available.
 - Text entry in terminals, editors and browsers, subject to platform permissions.
@@ -67,9 +69,29 @@ selected model loads automatically at login, including after a reboot.
 links, microphone selection, autostart and platform limits. GitHub CLI is not
 required.
 
+### macOS
+
+```bash
+git clone https://github.com/MrTorriz/sayit.git
+cd sayit
+./install.sh
+./bin/test-pipeline
+```
+
+The installer uses Homebrew, builds whisper.cpp with Metal, downloads the
+models (the large model on Apple Silicon), builds `Sayit.app` and loads its
+LaunchAgents. Allow Sayit the Microphone and Accessibility permissions when
+macOS asks. F18 is the default trigger: hold it to talk, or tap it to start and
+tap again to stop. A Logitech thumb button needs a keystroke mapping in
+Logi Options+ first; **Probe Trigger** in Sayit's menu shows what a button
+sends. Requires macOS 14 or later; Apple Silicon is recommended.
+
+[macOS installation guide](docs/INSTALL-MACOS.md) — requirements, permissions,
+triggers, the indicator, the LaunchAgents and platform limits.
+
 ### Optional Turbo engine
 
-Complete the base installation first, then follow the
+Linux and Windows only. Complete the base installation first, then follow the
 [OpenVINO setup guide](docs/OPENVINO.md). It covers the isolated Python runtime,
 compatible hardware, model verification and switching back to the native engine.
 
@@ -84,14 +106,14 @@ guarantee which one will recognize a particular sentence best.
 
 ## Everyday commands
 
-| Task | Linux | Windows |
-| --- | --- | --- |
-| Toggle recording | `./bin/sayit` | `.\win\sayit.ps1` |
-| Discard recording | `./bin/sayit cancel` | `.\win\sayit.ps1 cancel` |
-| Check installation | `./bin/sayit doctor` | `.\win\sayit-doctor.ps1` |
-| Show history | `./bin/sayit-history` | `.\win\sayit-history.ps1` |
-| Show statistics | `./bin/sayit-history --stat` | `.\win\sayit-history.ps1 -Stat` |
-| Teach a replacement | `./bin/sayit-learn "get hub" "GitHub"` | `.\win\sayit-learn.ps1 "get hub" "GitHub"` |
+| Task | Linux | Windows | macOS |
+| --- | --- | --- | --- |
+| Toggle recording | `./bin/sayit` | `.\win\sayit.ps1` | `./bin/sayit` |
+| Discard recording | `./bin/sayit cancel` | `.\win\sayit.ps1 cancel` | Escape, or `./bin/sayit cancel` |
+| Check installation | `./bin/sayit doctor` | `.\win\sayit-doctor.ps1` | `./bin/sayit doctor` |
+| Show history | `./bin/sayit-history` | `.\win\sayit-history.ps1` | `./bin/sayit-history` |
+| Show statistics | `./bin/sayit-history --stat` | `.\win\sayit-history.ps1 -Stat` | `./bin/sayit-history --stat` |
+| Teach a replacement | `./bin/sayit-learn "get hub" "GitHub"` | `.\win\sayit-learn.ps1 "get hub" "GitHub"` | `./bin/sayit-learn "get hub" "GitHub"` |
 
 See the installation guides for manual start/stop commands and indicator
 placement, and [Configuration](docs/CONFIGURATION.md#custom-wordlist) for
@@ -102,14 +124,17 @@ wordlist rules.
 Text injection depends on the desktop and application. Windows cannot inject
 into an elevated window from the normal user process; its indicator cannot
 appear over exclusive fullscreen or the UAC secure desktop. Linux Wayland
-requires the injection tools described in its installation guide.
+requires the injection tools described in its installation guide. On macOS,
+Sayit needs the Accessibility permission to hear its trigger and paste; while
+Secure Input is on (a password field, for example) keyboard triggers are not
+seen, and a blocked paste leaves the text on the clipboard.
 
 The model and supporting processes remain running between dictations, using
 memory and some background resources. Recognition speed depends on the model,
 hardware and recording length; transcription still takes time after release.
 
-[Performance measurements](docs/PERFORMANCE.md) document the Linux and Windows
-tests, hardware and methods. Engine timings are distinguished from the full
+[Performance measurements](docs/PERFORMANCE.md) document the Linux, Windows
+and macOS tests, hardware and methods. Engine timings are distinguished from the full
 button-to-text delay, and small samples are not general accuracy rankings.
 
 ## Privacy
@@ -123,7 +148,7 @@ removed after processing. Text delivery can use the clipboard. The
 [security guide](SECURITY.md) explains storage paths, retention, clipboard
 handling and what diagnostics may reveal.
 
-An optional Linux text-cleanup step (`LLM_CLEANUP=1`, off by default) sends
+An optional Linux and macOS text-cleanup step (`LLM_CLEANUP=1`, off by default) sends
 transcribed text to `LLM_URL`. Its default is local Ollama; configuring a remote
 HTTP address sends text to that host without transport encryption.
 
@@ -133,7 +158,8 @@ HTTP address sends text to that host without transport encryption.
 | --- | --- |
 | [Linux installation](docs/INSTALL-LINUX.md) | Setup and everyday use on Linux |
 | [Windows installation](docs/INSTALL-WINDOWS.md) | Setup and everyday use on Windows 11 |
-| [Optional Turbo engine](docs/OPENVINO.md) | OpenVINO installation, switching and recovery |
+| [macOS installation](docs/INSTALL-MACOS.md) | Setup, permissions and everyday use on macOS |
+| [Optional Turbo engine](docs/OPENVINO.md) | OpenVINO installation, switching and recovery (Linux, Windows) |
 | [Configuration](docs/CONFIGURATION.md) | Settings, models and wordlists |
 | [Troubleshooting](docs/TROUBLESHOOTING.md) | Symptoms, checks and fixes |
 | [Performance](docs/PERFORMANCE.md) | Measurements and their limits |
@@ -142,10 +168,12 @@ HTTP address sends text to that host without transport encryption.
 
 ## Development
 
-Linux commands live in `bin/`, Windows scripts and C# helpers in `win/`, and
-the shared optional server in `engines/openvino/`. Tests live in `tests/`,
-`win/tests/` and alongside that server. Shared code and settings can affect
-both platforms.
+Linux and macOS share the commands in `bin/`; macOS adds `Sayit.app`, a
+recorder and a paste helper in Swift under `mac/`. Windows scripts and C#
+helpers live in `win/`, and the optional server shared by Linux and Windows in
+`engines/openvino/`. Tests live in `tests/`, `mac/tests/`, `win/tests/` and
+alongside that server. Shared code and settings can affect more than one
+platform.
 
 CI checks syntax, shell scripts, Windows helpers and the automated test suites.
 Hardware-dependent capture, inference and desktop interaction also need manual

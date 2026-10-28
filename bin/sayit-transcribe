@@ -36,9 +36,21 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # shellcheck source=/dev/null
 [[ -f "$REPO_ROOT/.env" ]] && source "$REPO_ROOT/.env"
 
+# macOS has no XDG_RUNTIME_DIR. Its per-user temporary directory (mode 0700,
+# private to the user, though on disk) plays the same role; exported, so every
+# child and Sayit.app agree on it.
+if [[ -z "${XDG_RUNTIME_DIR:-}" && "$OSTYPE" == darwin* ]]; then
+    XDG_RUNTIME_DIR=$(getconf DARWIN_USER_TEMP_DIR 2>/dev/null) || XDG_RUNTIME_DIR=""
+    XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR%/}"
+    export XDG_RUNTIME_DIR
+fi
+
 # Direct invocations need the same protection as the main recording command.
-exec 8>"${XDG_RUNTIME_DIR:-/tmp}/sayit-engine.lock"
-flock -sn 8 || { echo 'Engine switch in progress; try again when ready.' >&2; exit 1; }
+# (flock(1) is util-linux; macOS has no engine switcher to guard against.)
+if command -v flock >/dev/null; then
+    exec 8>"${XDG_RUNTIME_DIR:-/tmp}/sayit-engine.lock"
+    flock -sn 8 || { echo 'Engine switch in progress; try again when ready.' >&2; exit 1; }
+fi
 
 WAV="${1:?Usage: sayit-transcribe <file.wav>}"
 [[ -f "$WAV" ]] || { echo "File not found: $WAV" >&2; exit 1; }
@@ -46,7 +58,15 @@ WAV="${1:?Usage: sayit-transcribe <file.wav>}"
 WHISPER_CLI="${WHISPER_CLI:-$HOME/.local/bin/whisper-cli}"
 # SAYIT_MODEL (environment variable) wins over .env:MODEL_PATH — same
 # precedence as sayit-daemon, so A/B model switching stays consistent.
-MODEL="${SAYIT_MODEL:-${MODEL_PATH:-$REPO_ROOT/models/ggml-kb-whisper-medium-q5_0.bin}}"
+# The default model. On Apple Silicon the large model answers faster than
+# medium does on the Linux reference machine (docs/PERFORMANCE.md), so macOS
+# prefers it whenever it is installed.
+DEFAULT_MODEL="$REPO_ROOT/models/ggml-kb-whisper-medium-q5_0.bin"
+if [[ "$OSTYPE" == darwin* && "$HOSTTYPE" == a*64 \
+      && -f "$REPO_ROOT/models/ggml-kb-whisper-large-q5_0.bin" ]]; then
+    DEFAULT_MODEL="$REPO_ROOT/models/ggml-kb-whisper-large-q5_0.bin"
+fi
+MODEL="${SAYIT_MODEL:-${MODEL_PATH:-$DEFAULT_MODEL}}"
 
 SPEECH_LANGUAGE="${SPEECH_LANGUAGE:-sv}"
 THREADS="${THREADS:-8}"
@@ -73,10 +93,26 @@ LLM_URL="${LLM_URL:-http://127.0.0.1:11434/api/generate}"
 
 mark() {
     [[ -n "${SAYIT_PROFILE:-}" ]] || return 0
-    local up
-    read -r up _ < /proc/uptime
+    local up boot now
+    if [[ -r /proc/uptime ]]; then
+        read -r up _ < /proc/uptime
+    else
+        # macOS: seconds since boot from kern.boottime ("{ sec = N, usec = M } ...").
+        boot=$(sysctl -n kern.boottime 2>/dev/null) || boot=""
+        boot="${boot#*sec = }"; boot="${boot%%,*}"
+        [[ "$boot" =~ ^[0-9]+$ ]] || boot=0
+        now="${EPOCHREALTIME/,/.}"
+        up="$(( ${now%.*} - boot )).${now#*.}"
+    fi
     printf '%s,%s,%s,%s,%s\n' "${SAYIT_PROFILE_RUN:-0}" "${EPOCHREALTIME/,/.}" "$up" \
         "$1" "${2:-}" >> "${XDG_RUNTIME_DIR:-/tmp}/sayit-profile.csv"
+}
+
+# Size in bytes. stat -c is GNU-only; wc -c works on Linux and macOS alike.
+file_size() {
+    local n
+    n=$(wc -c < "$1" 2>/dev/null) || n=0
+    echo $(( n ))
 }
 
 # Warm daemon (whisper-server): the model is already in RAM/GPU, so the model
@@ -89,7 +125,7 @@ transcribe_daemon() {
     # Deadline scales with the audio length (16 kHz mono s16 = 32000 bytes/s)
     # so a hung or busy server cannot stall a short dictation for long.
     local bytes deadline
-    bytes=$(stat -c %s "$WAV" 2>/dev/null || echo 0)
+    bytes=$(file_size "$WAV")
     deadline=$(( bytes / 32000 + 10 ))
     # The prompt field is sent even when empty: older whisper-server builds
     # only reset request params after a successful request, so an explicit
@@ -166,7 +202,7 @@ PYEOF
 # run and be told the same thing at 20 times the cost. There is no speech in a
 # file with no audio, so answer that here. 44 bytes is a WAV header and nothing
 # else.
-if (( $(stat -c %s "$WAV" 2>/dev/null || echo 0) <= 44 )); then
+if (( $(file_size "$WAV") <= 44 )); then
     mark t.empty
     printf ''
     exit 0
@@ -190,12 +226,14 @@ if (( daemon_rc != 0 )); then
     fi
 fi
 
-# Normalize: strip special tokens (<|nospeech|> etc.), trim, join lines
+# Normalize: strip special tokens (<|nospeech|> etc.), trim, join lines. The
+# CLI starts its output with an empty line, which the join would otherwise
+# turn into a leading space in the pasted text - hence the final trim.
 RAW=$(printf '%s' "$RAW" \
     | sed -e 's/<|[^>]*|>//g' \
     | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' \
     | tr '\n' ' ' \
-    | sed 's/  */ /g')
+    | sed -e 's/  */ /g' -e 's/^ //' -e 's/ $//')
 
 # Optional LLM cleanup (contextual). Runs before the wordlist so that exact
 # replacements always get the final say on domain terms.

@@ -1,0 +1,192 @@
+#!/usr/bin/env bash
+# mac/sayit-doctor — read-only diagnostics for sayit on macOS
+#
+# Usage:
+#   ./bin/sayit doctor [--quiet]     (bin/sayit-doctor hands over to this on macOS)
+#
+# Behavior:
+#   - Never changes anything: no recording, no keystroke, no clipboard access,
+#     no launchctl load or unload. Every command it runs only reads state.
+#   - Reports the shell, the whisper.cpp build and its backend, the model the
+#     daemon and the fallback will load, both LaunchAgents and the daemon's
+#     health, Sayit.app's helpers, the permissions Sayit.app itself reported
+#     (they belong to the app, not to the terminal this runs in), the input
+#     devices and what AUDIO_SOURCE resolves to, and leftover state.
+#   - Never prints .env, the wordlist or dictated text. INITIAL_PROMPT and
+#     SUPPRESS_REGEX are reported only as set or empty.
+#
+# Exit codes:
+#   0  No failures (warnings may still be present)
+#   1  At least one failure, or an unknown argument
+
+set -euo pipefail
+
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck source=/dev/null
+[[ -f "$REPO_ROOT/.env" ]] && source "$REPO_ROOT/.env"
+
+QUIET=0
+case "${1:-}" in
+    --quiet|-q) QUIET=1 ;;
+    --help|-h)  sed -n '2,20p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    "")         ;;
+    *)          echo "Usage: sayit doctor [--quiet]" >&2; exit 1 ;;
+esac
+
+FAILURES=0
+WARNINGS=0
+section() { (( QUIET )) || printf '\n%s\n' "$1"; }
+ok()      { (( QUIET )) || printf '  ok    %s\n' "$1"; }
+info()    { (( QUIET )) || printf '  --    %s\n' "$1"; }
+warn()    { printf '  warn  %s\n' "$1"; WARNINGS=$((WARNINGS + 1)); }
+fail()    { printf '  FAIL  %s\n' "$1"; FAILURES=$((FAILURES + 1)); }
+more()    { printf '        %s\n' "$1"; }
+
+RUN_DIR="${XDG_RUNTIME_DIR:-}"
+[[ -n "$RUN_DIR" ]] || RUN_DIR=$(getconf DARWIN_USER_TEMP_DIR 2>/dev/null || echo /tmp)
+RUN_DIR="${RUN_DIR%/}"
+GUI="gui/$(id -u)"
+LABEL="io.github.mrtorriz.sayit"
+
+# --- System -----------------------------------------------------------------
+
+section "System"
+info "macOS $(sw_vers -productVersion 2>/dev/null || echo '?') on $(uname -m)"
+if (( BASH_VERSINFO[0] >= 4 )); then
+    ok "bash $BASH_VERSION"
+else
+    fail "bash $BASH_VERSION is too old — run: brew install bash"
+fi
+if [[ -x /opt/homebrew/bin/bash || -x /usr/local/bin/bash ]]; then
+    ok "Homebrew bash present (what the LaunchAgents and Sayit.app run)"
+else
+    fail "Homebrew bash missing — the services would get /bin/bash 3.2; run: brew install bash"
+fi
+
+# --- whisper.cpp and models -------------------------------------------------
+
+section "Transcription"
+WHISPER_CLI="${WHISPER_CLI:-$HOME/.local/bin/whisper-cli}"
+WHISPER_SERVER="${WHISPER_SERVER:-$HOME/.local/src/whisper.cpp/build/bin/whisper-server}"
+if [[ -x "$WHISPER_SERVER" ]]; then ok "whisper-server: $WHISPER_SERVER"; else fail "whisper-server missing — run ./install.sh"; fi
+if [[ -x "$WHISPER_CLI" ]]; then ok "whisper-cli (fallback): $WHISPER_CLI"; else warn "whisper-cli missing — no fallback when the daemon is down"; fi
+INFO="$(dirname "$(dirname "$(dirname "$WHISPER_SERVER")")")/.sayit-build-info"
+if [[ -f "$INFO" ]]; then
+    backend=$(sed -n 's/^backend=//p' "$INFO"); ref=$(sed -n 's/^ref=//p' "$INFO")
+    if [[ "$backend" == metal ]]; then ok "built from $ref with Metal"; else warn "built from $ref with backend '${backend:-unknown}' — rebuild: ./install.sh --rebuild"; fi
+fi
+
+DEFAULT_MODEL="$REPO_ROOT/models/ggml-kb-whisper-medium-q5_0.bin"
+if [[ "$HOSTTYPE" == a*64 && -f "$REPO_ROOT/models/ggml-kb-whisper-large-q5_0.bin" ]]; then
+    DEFAULT_MODEL="$REPO_ROOT/models/ggml-kb-whisper-large-q5_0.bin"
+fi
+MODEL="${SAYIT_MODEL:-${MODEL_PATH:-$DEFAULT_MODEL}}"
+if [[ -f "$MODEL" ]]; then ok "model: $MODEL"; else fail "model missing: $MODEL — run ./install.sh"; fi
+VAD_MODEL="${VAD_MODEL:-$REPO_ROOT/models/ggml-silero-v5.1.2.bin}"
+if [[ -f "$VAD_MODEL" ]]; then ok "VAD: $VAD_MODEL"; else warn "VAD model missing — more ghost text on silence; run ./install.sh"; fi
+info "language ${SPEECH_LANGUAGE:-sv}, beam ${BEAM:-5}, prompt $([[ -n "${INITIAL_PROMPT:-}" ]] && echo set || echo empty), suppress-regex $([[ -n "${SUPPRESS_REGEX:-}" ]] && echo set || echo empty)"
+
+# --- Services ---------------------------------------------------------------
+
+section "Services"
+for job in daemon agent; do
+    if out=$(launchctl print "$GUI/$LABEL.$job" 2>/dev/null); then
+        state=$(printf '%s\n' "$out" | awk -F' = ' '/^\tstate = /{print $2; exit}')
+        if [[ "$state" == running ]]; then
+            ok "$LABEL.$job running"
+        else
+            warn "$LABEL.$job loaded but ${state:-not running}"
+            more "log: ~/Library/Logs/sayit/$job.log"
+        fi
+    else
+        fail "$LABEL.$job not loaded — run ./install.sh (or mac/install.sh)"
+    fi
+done
+PORT="${DAEMON_PORT:-9876}"
+if curl -s -o /dev/null --max-time 2 "http://127.0.0.1:$PORT/"; then
+    ok "daemon answers on 127.0.0.1:$PORT"
+else
+    warn "daemon does not answer on 127.0.0.1:$PORT — dictation falls back to the slower cold CLI"
+    more "a large model takes a few seconds to load after login"
+fi
+
+# --- Sayit.app ----------------------------------------------------------------
+
+section "Sayit.app"
+HELPERS=""
+for dir in ${SAYIT_APP_DIR:+"$SAYIT_APP_DIR/Sayit.app/Contents/MacOS"} \
+           "$HOME/Applications/Sayit.app/Contents/MacOS" "/Applications/Sayit.app/Contents/MacOS"; do
+    [[ -x "$dir/sayit-rec" && -x "$dir/sayit-paste" ]] && { HELPERS="$dir"; break; }
+done
+if [[ -n "$HELPERS" ]]; then ok "helpers: $HELPERS"; else fail "Sayit.app missing — run ./install.sh"; fi
+
+STATUS="$RUN_DIR/sayit.agent"
+agent_pid=$(sed -n 's/^pid=//p' "$STATUS" 2>/dev/null || true)
+if [[ "$agent_pid" =~ ^[0-9]+$ ]] && ps -o command= -p "$agent_pid" 2>/dev/null | grep -q 'Sayit.app'; then
+    field() { sed -n "s/^$1=//p" "$STATUS"; }
+    if [[ "$(field accessibility)" == yes && "$(field event_tap)" == yes ]]; then
+        ok "Accessibility allowed; the trigger is listening"
+    else
+        fail "Sayit has no Accessibility permission — no trigger and no paste"
+        more "System Settings > Privacy & Security > Accessibility: turn on Sayit"
+    fi
+    case "$(field microphone)" in
+        authorized) ok "Microphone allowed" ;;
+        "not determined") warn "Microphone not yet asked — the first recording will ask" ;;
+        *) fail "Microphone $(field microphone) — System Settings > Privacy & Security > Microphone: turn on Sayit" ;;
+    esac
+    trig=$(field trigger)
+    if [[ "$trig" == *"(invalid)"* ]]; then
+        fail "TRIGGER_BUTTON=${trig% (invalid)} is not understood — see docs/CONFIGURATION.md"
+    else
+        ok "trigger $trig, mode $(field mode), indicator $(field indicator)"
+    fi
+else
+    warn "Sayit is not running, so its permissions cannot be read"
+    more "start it: launchctl kickstart $GUI/$LABEL.agent"
+fi
+
+# --- Microphone ---------------------------------------------------------------
+
+section "Microphone"
+if [[ -n "$HELPERS" ]]; then
+    while IFS=$'\t' read -r mark _uid name; do
+        info "$([[ "$mark" == "*" ]] && echo "default  " || echo "         ")$name"
+    done < <("$HELPERS/sayit-rec" --list 2>/dev/null)
+    if [[ -n "${AUDIO_SOURCE:-}" ]]; then
+        if hit=$("$HELPERS/sayit-rec" --resolve "$AUDIO_SOURCE" 2>/dev/null); then
+            ok "AUDIO_SOURCE resolves to ${hit#*$'\t'}"
+        else
+            fail "AUDIO_SOURCE=\"$AUDIO_SOURCE\" matches no input device"
+            more "set it to a name from the list above, or empty for the default"
+        fi
+    else
+        info "AUDIO_SOURCE empty — recording uses the default input"
+    fi
+fi
+if [[ -n "$HELPERS" ]] && [[ "$("$HELPERS/sayit-paste" --check 2>/dev/null)" == *"secure_input=on"* ]]; then
+    warn "Secure Input is on: keyboard triggers are not seen and a paste may be blocked"
+    more "a password field or Terminal > Secure Keyboard Entry; a mouse-button trigger still works"
+fi
+
+# --- Leftover state -----------------------------------------------------------
+
+section "State"
+if [[ -f "$RUN_DIR/sayit.session" ]]; then
+    IFS=$'\t' read -r spid swav _ < "$RUN_DIR/sayit.session" || true
+    if [[ "${spid:-}" =~ ^[0-9]+$ ]] && ps -o command= -p "$spid" 2>/dev/null | grep -qF -- "${swav:-/nonexistent}"; then
+        info "a recording is in progress (pid $spid)"
+    else
+        warn "stale session file from an aborted recording: $RUN_DIR/sayit.session"
+        more "the next recording cleans it up, or run: ./bin/sayit cancel"
+    fi
+else
+    ok "no leftover recording session"
+fi
+if [[ -f "$RUN_DIR/sayit-last-error.log" ]]; then
+    info "last errors (classes only): $RUN_DIR/sayit-last-error.log"
+fi
+
+section "Result"
+printf '  %d failure(s), %d warning(s)\n' "$FAILURES" "$WARNINGS"
+(( FAILURES == 0 ))

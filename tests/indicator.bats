@@ -5,6 +5,9 @@
 # notification, OSD or microphone is touched.
 
 setup() {
+    # The Linux code path on any host: the scripts branch on OSTYPE, which
+    # bash takes from the environment. tests/mac.bats covers macOS.
+    export OSTYPE=linux-gnu
     SANDBOX="$BATS_TEST_TMPDIR/sandbox"
     mkdir -p "$SANDBOX"
     cp -r "$BATS_TEST_DIRNAME/../bin" "$SANDBOX/bin"
@@ -149,6 +152,7 @@ teardown() {
 }
 
 @test "hide stops the meter and removes its pid file" {
+    [[ -d /proc ]] || skip "hide identifies the meter through /proc, which this host lacks"
     "$INDICATOR" show
     mpid=$(cat "$METER_PID_FILE")
     run "$INDICATOR" hide

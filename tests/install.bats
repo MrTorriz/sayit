@@ -5,6 +5,9 @@
 # real configuration is ever touched.
 
 setup() {
+    # The Linux code path on any host: the scripts branch on OSTYPE, which
+    # bash takes from the environment. tests/mac.bats covers macOS.
+    export OSTYPE=linux-gnu
     SANDBOX="$BATS_TEST_TMPDIR/repo"
     mkdir -p "$SANDBOX/config" "$SANDBOX/icons"
     cp "$BATS_TEST_DIRNAME/../install.sh" "$SANDBOX/"
@@ -76,6 +79,16 @@ setup() {
     [ -f "$XDG_DATA_HOME/icons/hicolor/scalable/apps/sayit-light.svg" ]
     [ -f "$XDG_DATA_HOME/icons/hicolor/scalable/status/sayit-level-7.svg" ]
     [ -f "$XDG_DATA_HOME/icons/hicolor/scalable/status/sayit-idle-light.svg" ]
+}
+
+@test "--skip-agent is accepted and changes nothing on Linux" {
+    run "$INSTALL" "${SKIP[@]}" --skip-agent
+    [ "$status" -eq 0 ]
+    [ -f "$SANDBOX/.env" ]
+    [ -f "$XDG_DATA_HOME/icons/hicolor/scalable/apps/sayit.svg" ]
+    [[ "$output" != *"Sayit.app"* ]]
+    # Only macOS rewrites the template's trigger.
+    [ "$(grep '^TRIGGER_BUTTON=' "$SANDBOX/.env")" = "$(grep '^TRIGGER_BUTTON=' "$SANDBOX/.env.example")" ]
 }
 
 @test "a repo without icons/ warns but still succeeds" {

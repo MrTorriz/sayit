@@ -3,17 +3,21 @@
 Thanks for your interest in improving sayit. Bug reports, fixes and focused
 features are all welcome.
 
-sayit is one repository with two platform implementations. `bin/` is Linux
-(bash plus the Python overlay); `win/` is Windows (PowerShell 5.1 and small
-C# helpers). Both platforms use the optional server in `engines/openvino/`.
-Check both platforms when changing that shared server or its protocol.
+sayit is one repository for three platforms. `bin/` is Linux and macOS (bash,
+plus the Python overlay on Linux); `mac/` holds the macOS additions (Swift,
+plus its installer and doctor); `win/` is Windows (PowerShell 5.1, plus small
+C# helpers). Linux and Windows both use the optional server in
+`engines/openvino/`: check both when changing that shared server or its
+protocol. A change in `bin/` can affect both Linux and macOS. Knowing which
+platform a change touches decides what you have to run.
 
 ## Which platform does your change belong to?
 
 | You touched | Platform | CI jobs that judge it |
 | --- | --- | --- |
-| `bin/`, `install*.sh`, `tests/`, `docs/*.py` | Linux | `lint` and `test` |
-| `engines/openvino/` | Both | `lint`, `openvino-protocol` and `windows`; inference also needs hardware checks |
+| `bin/`, `install*.sh`, `tests/`, `docs/*.py` | Linux, and macOS for `bin/`, `install.sh` and `tests/mac.bats` | `lint` and `test`, plus the macOS job |
+| `mac/` (Swift sources, `install.sh`, `sayit-doctor`, tests) | macOS | the macOS job |
+| `engines/openvino/` | Linux and Windows | `lint`, `openvino-protocol` and `windows`; inference also needs hardware checks |
 | `win/` (`.ps1`, `lib/*.cs`, `tests/`) | Windows | `windows` |
 | `README.md`, `docs/*.md` | Documentation | Review content and links |
 | `.github/workflows/` | Both | Check every affected job |
@@ -22,7 +26,9 @@ Check both platforms when changing that shared server or its protocol.
 The lint job covers shell scripts and Python sources, including the optional
 engine. The Bats job checks Linux commands; `openvino-protocol` checks the
 adapter without a GPU or model download. The Windows job covers PowerShell and
-C# plus the shared HTTP protocol on Windows. A separate geometry check reads the Windows indicator from Linux to catch
+C# plus the shared HTTP protocol on Windows. The macOS job builds the Swift
+targets and runs the Swift checks and `tests/mac.bats`. A separate geometry
+check reads the Windows and macOS copies of the indicator from Linux to catch
 drift in shared drawing constants. New scripts need a recognized shebang and
 must be included in the relevant workflow glob.
 
@@ -49,8 +55,10 @@ cd sayit
 .\win\sayit-doctor.ps1  # reports what resolved and what did not
 ```
 
-Full walkthroughs: [docs/INSTALL-LINUX.md](docs/INSTALL-LINUX.md) and
-[docs/INSTALL-WINDOWS.md](docs/INSTALL-WINDOWS.md).
+Full walkthroughs: [docs/INSTALL-LINUX.md](docs/INSTALL-LINUX.md),
+[docs/INSTALL-WINDOWS.md](docs/INSTALL-WINDOWS.md) and
+[docs/INSTALL-MACOS.md](docs/INSTALL-MACOS.md). On macOS, `./install.sh` and
+`./bin/test-pipeline` are the same two commands as on Linux.
 
 You do **not** need a working install to work on most of the code. The Linux
 test suite and the Windows test suite both run without a microphone, a model
@@ -104,6 +112,37 @@ test. Every system tool that touches hardware (`pw-record`, `pactl`,
 `notify-send`, `ydotool`) is replaced by a stub on a cut-down `PATH`, and the
 overlay tests clear `WAYLAND_DISPLAY` so no window is ever created.
 
+## Checks for a macOS change
+
+These need a Mac with the Xcode Command Line Tools, plus `brew install bash
+shellcheck bats-core`. None needs a microphone, a permission grant or a model.
+
+```bash
+# 1. Syntax and shellcheck over the macOS shell scripts (and bin/, as for Linux)
+bash -n mac/install.sh mac/sayit-doctor
+shellcheck mac/install.sh mac/sayit-doctor
+
+# 2. Compile the three Swift targets exactly as mac/install.sh does
+out=$(mktemp -d); t="$(uname -m)-apple-macos14.0"
+swiftc -O -swift-version 5 -target "$t" mac/Sources/Common/*.swift mac/Sources/Rec/main.swift -o "$out/sayit-rec"
+swiftc -O -swift-version 5 -target "$t" mac/Sources/Paste/main.swift -o "$out/sayit-paste"
+swiftc -O -swift-version 5 -target "$t" mac/Sources/Common/*.swift mac/Sources/Agent/*.swift -o "$out/Sayit"
+
+# 3. The Swift unit tests
+mac/tests/run.sh
+
+# 4. The macOS bats tests (bats tests/ as well for a change in bin/)
+bats tests/mac.bats
+
+# 5. The pill's geometry against the overlay
+python3 docs/check-geometry.py
+```
+
+Swift in `mac/` is compiled by `swiftc` alone — no Xcode project, no package
+manager — and each program keeps a header comment covering usage and exit
+codes. Darwin branches in `bin/` test `$OSTYPE == darwin*` and must leave the
+Linux path untouched. `Sayit.app` reads `.env` as data; keep it that way.
+
 ## Checks for a Windows change
 
 These need a real Windows machine. There is no cross-platform substitute:
@@ -154,8 +193,8 @@ Neither of these runs in CI, and neither is required for a change CI can
 judge. They check your machine, not your diff.
 
 ```bash
-./bin/test-pipeline           # Linux: synthetic voice through the whole pipeline
-./bin/sayit doctor            # Linux: read-only check of the recording path
+./bin/test-pipeline           # Linux and macOS: synthetic voice through the whole pipeline
+./bin/sayit doctor            # Linux and macOS: read-only check of the recording path
 ```
 
 ```powershell
@@ -181,8 +220,9 @@ something to read before sharing, not as pre-sanitised.
 ## What nothing can check
 
 Recording, Bluetooth profile switching, `ydotool`/uinput injection, the
-layer-shell overlay, the Windows input hook and scheduled-task registration
-are all hardware- or session-bound, and both suites deliberately exclude
+layer-shell overlay, the Windows input hook, scheduled-task registration, and
+on macOS the event tap, the permission prompts, capture, the paste and the
+LaunchAgents are all hardware- or session-bound, and both suites deliberately exclude
 them: opening the microphone from a test run is not acceptable in a dictation
 tool. A change in that territory needs a note in the pull request saying
 which machine and desktop you exercised it on.

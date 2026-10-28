@@ -92,6 +92,7 @@ PY
 }
 
 @test "the resident FIFO is created as a FIFO and read-write to nobody else" {
+    stat -c '%a' / >/dev/null 2>&1 || skip "needs GNU stat (stat -c), which this host lacks"
     run load_overlay 'ov.open_fifo() is not None'
     [ "$output" = "True" ]
     [ -p "$XDG_RUNTIME_DIR/sayit.overlay" ]
@@ -132,6 +133,7 @@ PY
     # python3 running the overlay file has it on its command line, which is
     # exactly the shape a real resident has, so writing the PID file and
     # reading it back must come out as this very process.
+    [[ -d /proc ]] || skip "resident_pid() reads /proc, which this host lacks"
     run load_overlay '[ov.write_pid(), ov.resident_pid() == os.getpid()][1]'
     [ "$output" = "True" ]
 }

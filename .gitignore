@@ -10,8 +10,10 @@ models/*.gguf
 # Configuration with user-specific paths
 .env
 
-# Build artifacts
+# Build artifacts (build/ also covers mac/build/, Sayit.app's staging;
+# named here so the intent is explicit: built binaries are never committed)
 build/
+mac/build/
 
 # Editor temp files
 *~
