@@ -45,10 +45,10 @@ be configured instead. No account, no subscription, no telemetry.
 
 ```mermaid
 flowchart LR
-    A["Hold the trigger<br>microphone opens"] --> B["Record<br>16 kHz mono, live waveform"]
-    B -->|release| C["Transcribe locally<br>whisper.cpp: Vulkan or Metal<br>or OpenVINO Turbo"]
-    C --> D["Apply your wordlist"]
-    D --> E["Paste into the<br>focused window"]
+    A["hold the trigger<br>microphone opens"] --> B["record<br>16 kHz mono WAV<br>live waveform"]
+    B -->|release| C["local transcription<br>whisper.cpp / Vulkan or Metal<br>or OpenVINO / Turbo"]
+    C --> D["wordlist<br>replacement"]
+    D --> E["paste into the<br>focused window"]
 ```
 
 Every stage is a small program that can be run and tested on its own: bash
@@ -126,10 +126,10 @@ Linux and Windows only. Complete the base installation first, then follow the
 [OpenVINO guide](docs/OPENVINO.md): an isolated Python runtime, compatible
 hardware, model verification and the way back.
 
-| Switch to Turbo | Back to whisper.cpp |
-| --- | --- |
-| `./bin/sayit-engine fast` | `./bin/sayit-engine accurate` |
-| `.\win\sayit-engine.ps1 fast` | `.\win\sayit-engine.ps1 accurate` |
+| Platform | Switch to Turbo | Back to whisper.cpp |
+| --- | --- | --- |
+| Linux | `./bin/sayit-engine fast` | `./bin/sayit-engine accurate` |
+| Windows | `.\win\sayit-engine.ps1 fast` | `.\win\sayit-engine.ps1 accurate` |
 
 The choice persists across logins. The names select engines; they do not
 promise which one recognises a given sentence best.
