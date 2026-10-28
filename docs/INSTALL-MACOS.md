@@ -283,8 +283,8 @@ value is matched against the input devices in this order:
    the longest such name wins.
 
 The last step means a PipeWire node name copied from a Linux `.env`, such as
-`alsa_input.usb-SteelSeries_SteelSeries_Alias-00.mono-fallback`, still finds
-"SteelSeries Alias". A value that matches nothing makes the recording fail to
+`alsa_input.usb-Acme_USB_Microphone-00.mono-fallback`, still finds
+"Acme USB Microphone". A value that matches nothing makes the recording fail to
 start, and the error log lists the devices that were available.
 
 **Bluetooth headsets switch themselves.** When capture opens a headset's

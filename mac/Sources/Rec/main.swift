@@ -12,8 +12,8 @@
 //                the input devices in this order: UID, exact name, name
 //                substring, and finally a device whose name is embedded in the
 //                value - so a PipeWire node name copied from a Linux .env
-//                (alsa_input.usb-SteelSeries_SteelSeries_Alias-00.mono-fallback)
-//                still finds "SteelSeries Alias".
+//                (alsa_input.usb-Acme_USB_Microphone-00.mono-fallback)
+//                still finds "Acme USB Microphone".
 //
 // Environment:
 //   MAX_RECORD_SECONDS  hard cap on one recording (default 120). It bounds how
@@ -111,8 +111,8 @@ func squashed(_ s: String) -> String {
 }
 
 /// UID, then exact name, then name substring, then a device whose (squashed)
-/// name is embedded in the value - longest name first, so "SteelSeries Alias
-/// Pro" beats "SteelSeries Alias" when both are present and both fit.
+/// name is embedded in the value - longest name first, so "Acme USB Microphone
+/// Pro" beats "Acme USB Microphone" when both are present and both fit.
 func resolve(_ want: String, among devices: [InputDevice]) -> InputDevice? {
     if let d = devices.first(where: { $0.uid == want }) { return d }
     if let d = devices.first(where: { $0.name.caseInsensitiveCompare(want) == .orderedSame }) { return d }

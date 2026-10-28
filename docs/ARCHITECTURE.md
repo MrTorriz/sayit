@@ -912,8 +912,8 @@ capture whose loudest sample is zero is reported for the same reason.
 `AUDIO_SOURCE` resolves by UID, exact name, part of a name, and finally a
 device whose name, reduced to letters and digits, is embedded in the value.
 That last step exists for a `.env` that also serves a Linux machine: a PipeWire
-node name such as `alsa_input.usb-SteelSeries_SteelSeries_Alias-00.mono-fallback`
-still finds "SteelSeries Alias".
+node name such as `alsa_input.usb-Acme_USB_Microphone-00.mono-fallback`
+still finds "Acme USB Microphone".
 
 #### One capture stream feeds the pill
 
