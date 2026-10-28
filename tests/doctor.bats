@@ -6,6 +6,9 @@
 # never one specific device.
 
 setup() {
+    # The Linux code path on any host: the scripts branch on OSTYPE, which
+    # bash takes from the environment. tests/mac.bats covers macOS.
+    export OSTYPE=linux-gnu
     ORIG_PATH="$PATH"
     SANDBOX="$BATS_TEST_TMPDIR/sandbox"
     mkdir -p "$SANDBOX"

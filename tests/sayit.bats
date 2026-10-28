@@ -6,6 +6,9 @@
 # microphone, Bluetooth, clipboard, daemon or user data is ever touched.
 
 setup() {
+    # The Linux code path on any host: the scripts branch on OSTYPE, which
+    # bash takes from the environment. tests/mac.bats covers macOS.
+    export OSTYPE=linux-gnu
     SANDBOX="$BATS_TEST_TMPDIR/sandbox"
     mkdir -p "$SANDBOX"
     cp -r "$BATS_TEST_DIRNAME/../bin" "$SANDBOX/bin"

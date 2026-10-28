@@ -4,6 +4,11 @@
 # is touched. Clipboard state is simulated with files in the control dir.
 
 setup() {
+    # The Linux code path on any host: the scripts branch on OSTYPE, which
+    # bash takes from the environment. tests/mac.bats covers macOS. On a Mac
+    # this pin is also what keeps the real sayit-paste (clipboard plus Cmd+V)
+    # out of reach.
+    export OSTYPE=linux-gnu
     export XDG_RUNTIME_DIR="$BATS_TEST_TMPDIR/run"
     mkdir -p "$XDG_RUNTIME_DIR"
     export STUB_CTL="$BATS_TEST_TMPDIR/ctl"

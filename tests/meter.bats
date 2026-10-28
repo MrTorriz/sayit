@@ -251,6 +251,7 @@ start_resident() {
 }
 
 @test "a resident overlay is fed instead of a second pill being started" {
+    [[ -d /proc ]] || skip "the resident is identified through /proc, which this host lacks"
     start_resident
     touch "$STUB_CTL/pw-cat.loud"
     run "$METER"

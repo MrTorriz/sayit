@@ -4,6 +4,9 @@
 # no model and no .env is ever touched.
 
 setup() {
+    # The Linux code path on any host: the scripts branch on OSTYPE, which
+    # bash takes from the environment. tests/mac.bats covers macOS.
+    export OSTYPE=linux-gnu
     SANDBOX="$BATS_TEST_TMPDIR/sandbox"
     mkdir -p "$SANDBOX"
     cp -r "$BATS_TEST_DIRNAME/../bin" "$SANDBOX/bin"
@@ -151,6 +154,17 @@ EOF
     [ "$status" -eq 0 ]
     [[ "$output" != *"<|"* ]]
     [[ "$output" == *hej* ]]
+}
+
+@test "the CLI's leading empty line never becomes a leading space" {
+    cat > "$BATS_TEST_TMPDIR/whisper-cli" <<'EOF'
+#!/usr/bin/env bash
+printf '\n hej världen\nnästa rad \n'
+EOF
+    chmod +x "$BATS_TEST_TMPDIR/whisper-cli"
+    CURL_MODE=fail run "$TRANSCRIBE" "$WAV"
+    [ "$status" -eq 0 ]
+    [ "$output" = "hej världen nästa rad" ]
 }
 
 @test "wordlist is applied to daemon output" {
