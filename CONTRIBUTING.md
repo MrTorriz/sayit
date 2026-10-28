@@ -102,6 +102,12 @@ the wordmark outlines and the check fails; rerun the script without `--check`
 and commit what it writes. The two were maintained separately once, and the
 README ended up showing a mark the product had stopped drawing.
 
+The README's artwork follows the same rule. `docs/make-demo.py` draws the
+three animations (`docs/demo.gif`, `docs/demo-macos.gif`,
+`docs/demo-windows.gif`) with the overlay's own pill functions, and
+`docs/make-social-preview.py` renders the social card from the lockup. Rerun
+them after changing the pill or the logo, look at the result, and commit it.
+
 The shebang filter in steps 1 and 2 is not decoration. `bin/sayit-overlay` is
 Python, and a plain `shellcheck bin/*` fails on it with `SC1071` before it has
 checked anything else.

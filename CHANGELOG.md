@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+- Rework the README: the logo, highlights, a pipeline diagram, a platform
+  overview and measured macOS performance come first, the installation steps
+  stay short and link to the full guides.
+- Replace the terminal-only demo with animated illustrations of one dictation
+  on Linux, Windows 11 and macOS. `docs/make-demo.py` draws them with the
+  overlay's own pill functions, so they show the indicator each platform draws.
+- Add `docs/social-preview.png`, the repository's link card, and
+  `docs/make-social-preview.py`, which renders it from the lockup.
+
+## 2026-10-28 (v1.0.0)
+
 - Add macOS support. The bash scripts in `bin/` now run on macOS too, with
   Darwin branches for the run directory, process identity, profiling and
   status reporting. `install.sh` installs `cmake` and `bash` from Homebrew,
