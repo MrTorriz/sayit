@@ -1,5 +1,30 @@
 # Changelog
 
+## Unreleased
+
+- Add macOS support. The bash scripts in `bin/` now run on macOS too, with
+  Darwin branches for the run directory, process identity, profiling and
+  status reporting. `install.sh` installs `cmake` and `bash` from Homebrew,
+  builds whisper.cpp with Metal and downloads the large model on Apple Silicon,
+  where the scripts prefer it.
+- Add `Sayit.app`, a menu bar agent built with `swiftc`: a push-to-talk event
+  tap with `auto`, `hold` and `toggle` modes, Escape to cancel and a trigger
+  probe; the recording pill in its transient and resident forms; the last
+  status in the menu instead of notifications. It runs `bin/sayit` like any
+  other trigger.
+- Add `sayit-rec` (AVCaptureSession capture with level publishing, a recording
+  cap and a silent-capture report) and `sayit-paste` (clipboard and `Cmd+V`
+  with the whole previous clipboard restored and nspasteboard.org markers, or
+  Unicode typing).
+- Add `mac/install.sh`, which builds, signs and installs the app and loads
+  LaunchAgents for it and the warm daemon, and `mac/sayit-doctor`, the
+  read-only macOS diagnostics behind `./bin/sayit doctor`.
+- New settings: `TRIGGER_MODE`, `INDICATOR_RESIDENT` and
+  `PASTE_RESTORE_DELAY`. `TRIGGER_BUTTON`, `TRIGGER_SUPPRESS`, `INJECT_METHOD`,
+  `MAX_RECORD_SECONDS` and the `INDICATOR_*` settings now also apply on macOS.
+- Document installation, configuration, troubleshooting, architecture and the
+  security model for macOS.
+
 ## 2026-09-15
 
 - Add an optional Linux Whisper large-v3-turbo engine using OpenVINO on Intel

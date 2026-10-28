@@ -1,61 +1,69 @@
-[← README](../README.md) · [Install: Linux](INSTALL-LINUX.md) · [Windows](INSTALL-WINDOWS.md) · [Configuration](CONFIGURATION.md) · [Troubleshooting](TROUBLESHOOTING.md) · [Performance](PERFORMANCE.md) · **Architecture**
+[← README](../README.md) · [Install: Linux](INSTALL-LINUX.md) · [Windows](INSTALL-WINDOWS.md) · [macOS](INSTALL-MACOS.md) · [Configuration](CONFIGURATION.md) · [Troubleshooting](TROUBLESHOOTING.md) · [Performance](PERFORMANCE.md) · **Architecture**
 
 # Architecture
 
-- [One repository, two implementations](#one-repository-two-implementations)
+- [One repository, three platforms](#one-repository-three-platforms)
 - [The Linux pipeline](#the-linux-pipeline)
 - [The Windows pipeline](#the-windows-pipeline)
+- [The macOS pipeline](#the-macos-pipeline)
 - [Performance and latency](#performance-and-latency)
 - [Design decisions](#design-decisions)
 - [Deliberate non-goals](#deliberate-non-goals)
 
-sayit is one pipeline with two implementations: a set of small bash scripts in
-`bin/` for Linux, and a set of PowerShell scripts with runtime-compiled C#
-helpers in `win\` for Windows 11. Each stage can be run and tested on its own;
-`bin/sayit` and `win\sayit.ps1` are the orchestrators that wire the stages
-together and manage per-session recording state.
+sayit is one pipeline with two implementations on three platforms: a set of
+small bash scripts in `bin/` for Linux and macOS, and a set of PowerShell
+scripts with runtime-compiled C# helpers in `win\` for Windows 11. On macOS the
+bash scripts are joined by three small Swift programs in `mac/`, for the parts
+where the platform demands its own API: the trigger and the pill, capture, and
+text delivery. Each stage can be run and tested on its own; `bin/sayit` and
+`win\sayit.ps1` are the orchestrators that wire the stages together and manage
+per-session recording state.
 
-Both platforms use the same four stages; Linux can select a different transcription engine:
+All three platforms use the same four stages; Linux can select a different transcription engine:
 
 ```mermaid
 flowchart LR
-    A["capture<br>16 kHz mono WAV"] -->|release| B["local transcription<br>whisper.cpp / Vulkan<br>or Linux OpenVINO / Turbo"]
+    A["capture<br>16 kHz mono WAV"] -->|release| B["local transcription<br>whisper.cpp / Vulkan or Metal<br>or Linux OpenVINO / Turbo"]
     B --> C["wordlist<br>replacement"]
     C --> D["inject into<br>focused window"]
 ```
 
-## One repository, two implementations
+## One repository, three platforms
 
 ### What is shared
 
 | Shared | Contract |
 |---|---|
-| **Model handling** | The base engine uses pinned whisper.cpp, GGML Whisper and Silero VAD. Linux can substitute the OpenVINO server. Both use the local daemon first and `whisper-cli` on HTTP/transport failure; an empty successful response is final |
+| **Model handling** | The base engine uses pinned whisper.cpp, GGML Whisper and Silero VAD. Linux can substitute the OpenVINO server. Every platform uses the local daemon first and `whisper-cli` on HTTP/transport failure; an empty successful response is final |
 | **Wordlist format** | `original<TAB>replacement`; rules sorted by original length descending, applied sequentially and globally, case-insensitive on Unicode word boundaries, originals treated as literal strings rather than regexes |
 | **History format** | `history.jsonl`, one JSON object per line: `time` (local ISO-8601 to seconds), `seconds`, `words`, `text`. Same field names, order and types, so a history file is portable between the platforms |
-| **Settings** | One `.env` from one `.env.example`. A setting that exists on both platforms has the same name and the same meaning; the file carries a clearly marked Windows-only section at the end |
+| **Settings** | One `.env` from one `.env.example`. A setting that exists on more than one platform has the same name and the same meaning; the file carries a clearly marked Windows section and a macOS section at the end. `Sayit.app` deliberately reads the Windows names for the trigger and the indicator |
 | **Diagnostics discipline** | A separate read-only `doctor` command on each platform; error logs record error *classes*, never dictated text; profiling records timings, never text |
-| **Documentation and identity** | Shared documentation and logo. Linux transient recording feedback is a 26-bar waveform without a lamp or wordmark. Its optional resident/placement view and the Windows indicator retain the 160×40 lamp, ten-bar meter and wordmark. `docs/check-geometry.py` checks their shared geometry; `docs/build-logo.py` generates the logo from the resident design |
+| **Documentation and identity** | Shared documentation and logo. Transient recording feedback on Linux and macOS is a 26-bar meter without a lamp or wordmark. The resident and placement views on Linux and macOS, and the Windows indicator, keep the 160×40 lamp, ten-bar meter and wordmark. `docs/check-geometry.py` checks the Windows and macOS copies of that geometry against the Linux overlay; `docs/build-logo.py` generates the logo from the resident design |
 
 ### Where they diverge, and why
 
-None of the code is shared, because there is nothing to share: bash, PipeWire,
-ydotool, systemd and layer-shell on one side; PowerShell 5.1, `waveIn`,
-`SendInput`, Task Scheduler and WinForms on the other. Every divergence below is
-forced by the platform, not chosen for taste.
+Linux and macOS share their code: both are POSIX systems on which the same bash
+scripts run, and `bin/` branches on `$OSTYPE` only where Darwin differs. macOS
+adds Swift exactly where no shell tool can do the job — an event tap,
+AVFoundation capture and the pasteboard. Windows shares no code with either,
+because there is nothing to share: bash, PipeWire, ydotool, systemd and
+layer-shell on one side; PowerShell 5.1, `waveIn`, `SendInput`, Task Scheduler
+and WinForms on the other. Every divergence below is forced by the platform,
+not chosen for taste.
 
-| Stage | Linux | Windows | Why they cannot be the same |
-|---|---|---|---|
-| Capture | `pw-record` | `waveIn` via `lib\Recorder.cs` | There is no PipeWire on Windows. `waveIn` is a shim over the shared-mode audio engine, so 16 kHz mono 16-bit comes back resampled by the engine with no COM interop |
-| Stopping the recorder | `SIGINT`, then poll until the process has exited so the WAV header is finalized | signal a named event; the recorder writes its own final RIFF header before exiting | Windows has no SIGINT equivalent for another process. An event is cleaner anyway: a truncated WAV stops being a failure mode |
-| Trigger | Solaar rules (mouse) or a desktop global shortcut invoking `bin/sayit` | `WH_KEYBOARD_LL` and `WH_MOUSE_LL` in-process | Windows has no Solaar-equivalent rule engine. Of the Windows input APIs, only low-level hooks give both press and release for mouse side buttons *and* can suppress the event |
-| Injection | clipboard + `Shift+Insert` via `ydotool`, with `wtype`/`xdotool` fallbacks | `SendInput` with `KEYEVENTF_UNICODE`, clipboard + `Ctrl+V` above a threshold | `ydotool` sends US scan codes, so non-ASCII breaks; `KEYEVENTF_UNICODE` sends the character itself and is layout independent by construction |
-| Feedback | a persistent notification, plus a meter that opens its own capture stream | one layered click-through window, fed by the level the recorder already computed | Windows has no notification server to hold a persistent notification against, and no second capture stream is needed when the recorder can publish the level |
-| Warm model | a systemd user service | `sayit-autostart.ps1`, started by a scheduled task at logon, or `sayit-daemon.ps1 start` by hand | No systemd |
-| Keeping the trigger alive | systemd `Restart=` | `sayit-autostart.ps1` supervises it; the task's repeating trigger supervises the supervisor | The task scheduler's own `RestartOnFailure` was measured not to fire for this process, and a task cannot see inside its own instance |
-| Bluetooth | `bin/sayit-bt` switches A2DP to HFP and restores it | nothing | Windows selects the HFP profile itself when an application opens a capture endpoint. The whole stage, its state file and the intent marker that covered the switch window are absent |
-| Transient state | `$XDG_RUNTIME_DIR`, RAM-backed and wiped at logout | `%LOCALAPPDATA%\sayit\run`, on disk | Windows has no tmpfs equivalent, so cleanup is explicit: the WAV is deleted after transcription, stale WAVs older than an hour are swept at the next start, and `sayit-doctor.ps1` reports whatever is left |
-| Config parsing | `.env` is sourced as bash | `.env` is parsed as `KEY=VALUE` data | Running arbitrary code from a config file is a worse trade on either platform, and nothing in `.env.example` needs it. The Windows reader expands `%VAR%` and nothing else |
+| Stage | Linux | Windows | macOS | Why they cannot be the same |
+|---|---|---|---|---|
+| Capture | `pw-record` | `waveIn` via `lib\Recorder.cs` | `sayit-rec`: `AVCaptureSession`, converting to 16 kHz mono 16-bit itself | There is no PipeWire on Windows or macOS. `waveIn` is a shim over the shared-mode audio engine, so 16 kHz mono 16-bit comes back resampled by the engine with no COM interop. On macOS no shell tool records from a chosen Core Audio device in that format, and the capture must belong to `Sayit.app` to run under its microphone grant |
+| Stopping the recorder | `SIGINT`, then poll until the process has exited so the WAV header is finalized | signal a named event; the recorder writes its own final RIFF header before exiting | as on Linux — `bin/sayit` is the same script. `sayit-rec` also rewrites its header about once a second and finalizes it on `SIGINT`, `SIGTERM` or `SIGHUP` | Windows has no SIGINT equivalent for another process. An event is cleaner anyway: a truncated WAV stops being a failure mode. macOS has signals, so the shared path stands |
+| Trigger | Solaar rules (mouse) or a desktop global shortcut invoking `bin/sayit` | `WH_KEYBOARD_LL` and `WH_MOUSE_LL` in-process | one session `CGEventTap` in `Sayit.app`, which runs `bin/sayit start`/`stop`/`cancel` | Windows has no Solaar-equivalent rule engine. Of the Windows input APIs, only low-level hooks give both press and release for mouse side buttons *and* can suppress the event. On macOS an active event tap is the equivalent, and Solaar does not exist there |
+| Injection | clipboard + `Shift+Insert` via `ydotool`, with `wtype`/`xdotool` fallbacks | `SendInput` with `KEYEVENTF_UNICODE`, clipboard + `Ctrl+V` above a threshold | `sayit-paste`: clipboard + `Cmd+V`, the whole previous clipboard restored; Unicode typing on request | `ydotool` sends US scan codes, so non-ASCII breaks; `KEYEVENTF_UNICODE` sends the character itself and is layout independent by construction. On macOS `Cmd+V` works in every application, while Unicode key events are not honoured by all |
+| Feedback | a persistent notification, plus a meter that opens its own capture stream | one layered click-through window, fed by the level the recorder already computed | `Sayit.app`'s pill, fed by the level `sayit-rec` publishes, and a menu bar item; no notifications | Windows has no notification server to hold a persistent notification against, and no second capture stream is needed when the recorder can publish the level. macOS's Notification Center keeps every notification, dictated snippets included |
+| Warm model | a systemd user service | `sayit-autostart.ps1`, started by a scheduled task at logon, or `sayit-daemon.ps1 start` by hand | a LaunchAgent, `io.github.mrtorriz.sayit.daemon` | No systemd |
+| Keeping the trigger alive | systemd `Restart=` | `sayit-autostart.ps1` supervises it; the task's repeating trigger supervises the supervisor | the agent's LaunchAgent restarts `Sayit.app` after a crash | The task scheduler's own `RestartOnFailure` was measured not to fire for this process, and a task cannot see inside its own instance. launchd's `KeepAlive` does the job systemd does |
+| Bluetooth | `bin/sayit-bt` switches A2DP to HFP and restores it | nothing | nothing — `bin/sayit-bt` exits at once | Windows and macOS select the headset's call profile themselves when an application opens its microphone. On Windows the whole stage, its state file and the intent marker that covered the switch window are absent; on macOS the shared script keeps the marker, which then covers only a start that is still spawning its recorder |
+| Transient state | `$XDG_RUNTIME_DIR`, RAM-backed and wiped at logout | `%LOCALAPPDATA%\sayit\run`, on disk | the per-user temporary directory (`getconf DARWIN_USER_TEMP_DIR`), mode 0700, on disk | Neither Windows nor macOS has a per-user tmpfs, so cleanup is explicit: the WAV is deleted after transcription and stale WAVs older than an hour are swept at the next start. On Windows `sayit-doctor.ps1` reports whatever is left |
+| Config parsing | `.env` is sourced as bash | `.env` is parsed as `KEY=VALUE` data | sourced as bash by the scripts; parsed as `KEY=VALUE` data by `Sayit.app` | Running arbitrary code from a config file is a worse trade on any platform, and nothing in `.env.example` needs it. The Windows reader expands `%VAR%` and nothing else; Sayit's expands `$HOME` and nothing else. On macOS the bash scripts are Linux's, so they source the file as Linux does |
 
 ## Optional Linux transcription engine
 
@@ -248,11 +256,102 @@ four seconds, to force it down. `sayit-doctor.ps1` identifies recorders by
 command line instead, which is how it distinguishes an orphan from the live
 session's own recorder.
 
+## The macOS pipeline
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant U as User (button/key)
+    participant A as Sayit.app
+    participant S as sayit
+    participant R as sayit-record / sayit-rec
+    participant T as sayit-transcribe
+    participant D as whisper-server (daemon)
+    participant I as sayit-inject / sayit-paste
+
+    U->>A: press (CGEventTap, event suppressed)
+    A->>S: bin/sayit start
+    S->>R: sayit-rec, 16 kHz mono WAV (AVCaptureSession)
+    Note over S: session file: pid + wav + start time
+    Note over S: sayit-indicator show creates sayit.indicator.on
+    R-->>A: level 0..7 in sayit.level every 125 ms, drawn by the pill
+    U->>A: release (or the next press, when latched)
+    A->>S: bin/sayit stop, once start has exited
+    Note over S: claim the session (atomic — one stop wins)
+    Note over S: sayit-indicator hide removes the marker
+    S->>R: SIGINT, poll until the recorder has exited
+    S->>T: WAV file
+    T->>D: POST /inference (warm model, Metal)
+    alt transport failure (daemon down/unreachable)
+        T->>T: whisper-cli fallback (cold start)
+    end
+    Note over T: strip special tokens, collapse whitespace, then the wordlist
+    T-->>S: final text on stdout
+    S->>I: final text
+    I->>I: snapshot the clipboard (every type), write the text, Cmd+V, guarded restore
+    S->>S: status to sayit.status, append {time, seconds, words, text} to history.jsonl
+```
+
+### Components
+
+| Component | Single responsibility |
+|---|---|
+| `Sayit.app` | The menu bar agent: the push-to-talk event tap, the pill, the menu and the permission prompts. Runs `bin/sayit start`, `stop` and `cancel`; records and pastes nothing itself |
+| `sayit-rec` | Audio capture only — `AVCaptureSession` to 16 kHz mono WAV. Also publishes the level, enforces `MAX_RECORD_SECONDS` and reports a digitally silent capture. `--list` and `--resolve` serve diagnostics |
+| `sayit-paste` | Text delivery: clipboard plus `Cmd+V` with the whole previous clipboard restored, or Unicode typing. `--check` reports Accessibility and Secure Input |
+| `mac/install.sh` | Builds the three with `swiftc`, signs and installs the bundle, writes and loads the two LaunchAgents; `--uninstall` |
+| `mac/sayit-doctor` | Read-only diagnostics. `bin/sayit-doctor` hands over to it on macOS |
+| `bin/*` | The Linux scripts in the same roles. Their Darwin branches: `sayit` writes its status to a file instead of notifying and checks recorder identity with `ps`; `sayit-record` execs `sayit-rec`; `sayit-inject` hands the text to `sayit-paste`; `sayit-indicator` creates and removes a marker file; `sayit-bt` exits at once; `sayit-daemon` and `sayit-transcribe` prefer the large model on Apple Silicon; `sayit-history --copy` uses `pbcopy`; `test-pipeline` synthesises with `say` |
+
+| Source | Holds |
+|---|---|
+| `mac/Sources/Agent/main.swift` | Sayit's entry point, and `--probe` |
+| `mac/Sources/Agent/AppDelegate.swift` | The menu bar item, the status line, permission prompts, Reload Settings, the `sayit.agent` status file |
+| `mac/Sources/Agent/Config.swift` | Sayit's settings from `.env`, and the `TRIGGER_BUTTON` grammar |
+| `mac/Sources/Agent/Trigger.swift` | The event tap: the three modes, Escape, the modifier rule, the own-event signature |
+| `mac/Sources/Agent/Pill.swift` | The pill's two lifetimes, its position file and its animation |
+| `mac/Sources/Agent/Runner.swift` | Spawns `bin/sayit`; a stop waits for its start to have exited |
+| `mac/Sources/Rec/main.swift` | `sayit-rec` |
+| `mac/Sources/Paste/main.swift` | `sayit-paste` |
+| `mac/Sources/Common/Shared.swift` | The run directory, the `.env` reader and atomic writes, shared by all three programs |
+| `mac/Sources/Common/PillGeometry.swift` | The pill's geometry, colours and level thresholds, compiled into both `Sayit` (which draws) and `sayit-rec` (which computes the level) |
+
+### Runtime state
+
+macOS has no `$XDG_RUNTIME_DIR`. The run directory is the per-user temporary
+directory that `getconf DARWIN_USER_TEMP_DIR` names — normally the same
+directory as `$TMPDIR` — unless `XDG_RUNTIME_DIR` is set, in which case that
+wins everywhere. The bash scripts compute and export it; `Sayit.app` passes the
+same path to every command it starts, so both sides always agree.
+
+| Path | Purpose |
+|---|---|
+| `$RUN_DIR/sayit.session` | As on Linux: `pid<TAB>wav<TAB>start`, claimed atomically. Sayit also reads its presence to decide whether a press on a latched recording means stop or start |
+| `$RUN_DIR/sayit.starting` | Intent marker while `start` is still spawning the recorder |
+| `$RUN_DIR/sayit-<pid>.wav` | The recording in progress, mode 0600, unique per session. Deleted after transcription; stragglers older than an hour are swept when the next recording starts |
+| `$RUN_DIR/sayit.indicator.on` | Presence means the pill should show a recording. Created and removed by `bin/sayit-indicator show` and `hide` |
+| `$RUN_DIR/sayit.level` | One digit, `0`–`7`, rewritten in place by `sayit-rec` every 125 ms. Its modification time is the "audio is arriving" signal. Removed when the recording ends |
+| `$RUN_DIR/sayit.status` | The last status `bin/sayit` reported, shown as the first line of Sayit's menu. A `Done` status loses its text on the way |
+| `$RUN_DIR/sayit.agent` | Kept current by Sayit, rewritten whenever it changes: its pid, the repository, both permissions, the resolved trigger, the mode and the indicator lifetime. What the doctor reads; never text. Removed when Sayit quits |
+| `$RUN_DIR/trigger-probe.log` | Probe Trigger's transcript: button and modifier transitions, and the codes of keys that type no character or are pressed with `Cmd` or `Ctrl` — never text. Started afresh by each probe and never removed |
+| `$RUN_DIR/sayit-paste.lock` | Held by `sayit-paste` from its clipboard snapshot until its restore, so two quick pastes take turns |
+| `$RUN_DIR/sayit-last-error.log` | Error classes from failed stages and the recorder's stderr, including the silent-capture report (never dictated text) |
+| `$RUN_DIR/sayit-profile.csv` | Per-stage timestamps when `SAYIT_PROFILE=1` (timing data only). Uptime comes from `kern.boottime`, as there is no `/proc/uptime` |
+| `~/.local/share/sayit/history.jsonl` | One JSON object per dictation — `$XDG_DATA_HOME`, as on Linux |
+| `~/.config/sayit/wordlist.tsv` | User vocabulary, grown by `sayit-learn` — `$XDG_CONFIG_HOME`, as on Linux |
+| `~/.config/sayit/overlay-position` | Where the pill sits, in the Linux file format: points from the top-left corner of the main screen |
+| `~/Library/Logs/sayit/daemon.log`, `agent.log` | `whisper-server`'s output, and the stderr of Sayit and the commands it starts |
+
+The Linux-only state — `sayit.bt`, `sayit.indicator`, `sayit.meter` and the
+resident overlay's FIFO — never appears on macOS. The PID identity check is the
+Linux one: macOS has no `/proc`, but `ps -o command=` reports the same command
+line, and `sayit-rec`'s names the session's own WAV.
+
 ## Performance and latency
 
 All measured numbers live in one place: [PERFORMANCE.md](PERFORMANCE.md). It
-carries both reference machines, the methods, the dates and — explicitly — what
-is measurement, what is estimate and what is arithmetic.
+carries all three reference machines, the methods, the dates and — explicitly —
+what is measurement, what is estimate and what is arithmetic.
 
 Two facts from it shape the design and belong here:
 
@@ -264,10 +363,13 @@ Two facts from it shape the design and belong here:
   from stalling a short dictation: the request gives up and the CLI fallback
   finishes the job. `tests/transcribe.bats` asserts that the deadline scales.
 
-Not covered by any harness: microphone capture, and the Bluetooth profile
-switch on Linux. The switch happens synchronously at press time, which is why
+Not covered by any harness: microphone capture, the Bluetooth profile switch on
+Linux, and the switch macOS makes by itself when capture opens a headset's
+microphone. The Linux switch happens synchronously at press time, which is why
 the recording indicator is the signal that the microphone is live — not the
-button press.
+button press. On macOS the equivalent signal is the pill's meter starting to
+move, or the resident pill's lamp lighting, both of which follow audio actually
+arriving.
 
 Per-stage timings of real dictations: run with `SAYIT_PROFILE=1` and read the
 CSV in the run directory. Run id, wall clock, monotonic uptime, stage and a
@@ -281,16 +383,18 @@ numeric extra — never text.
 
 whisper.cpp spends noticeable time per invocation just loading the model. A
 `whisper-server` kept running removes that cost entirely (see the measured tables
-above) — as a systemd user service on Linux, and on Windows as the first thing
-`sayit-autostart.ps1` does, itself started by a scheduled task at logon. It is
-started without waiting for it, so the push-to-talk trigger is armed while the
-model is still loading rather than after it. Both transcribers try the server
-first and fall back to `whisper-cli`
+above) — as a systemd user service on Linux, as a LaunchAgent on macOS, and on
+Windows as the first thing `sayit-autostart.ps1` does, itself started by a
+scheduled task at logon. It is started without waiting for it, so the
+push-to-talk trigger is armed while the model is still loading rather than
+after it. Both transcribers — `bin/sayit-transcribe` on
+Linux and macOS, `win\sayit-transcribe.ps1` on Windows — try the server first
+and fall back to `whisper-cli`
 **only on transport failures**: an empty answer from a healthy daemon means "no
 speech" and is final, and re-running it on the CLI would spend a second to get
-the same answer. The daemon is optional; note the inverse dependency too, on both
-platforms: `whisper-cli` and the local model file are only required when the
-fallback actually runs.
+the same answer. The daemon is optional; note the inverse dependency too, on
+every platform: `whisper-cli` and the local model file are only required when
+the fallback actually runs.
 
 #### VAD plus token suppression
 
@@ -299,7 +403,7 @@ markers. Two layers remove that: Silero VAD filters non-speech audio before the
 model sees it, and `-sns` (suppress non-speech tokens) removes bracketed noise
 tokens at decode time.
 
-Where VAD *cuts* is tuned identically on both platforms, and not at whisper.cpp's
+Where VAD *cuts* is tuned identically on every platform, and not at whisper.cpp's
 own defaults. A segment ends at the first 32 ms frame whose speech probability
 falls below `VAD_THRESHOLD` − 0.15, after which only `VAD_SPEECH_PAD_MS` is added
 back; the default 30 ms therefore cuts inside the 80–150 ms a Swedish unvoiced
@@ -308,8 +412,8 @@ however high it is set — it delays when a segment is closed, not where it ends
 `VAD_MIN_SPEECH_MS` is a correctness setting rather than a quality one: whisper
 discards shorter segments, and when every segment is discarded the transcription
 still succeeds, empty and without an error, so a one-word answer can vanish
-silently. sayit defaults it to `0`. All four travel with the request on both
-platforms, so a change applies to the next dictation without a daemon restart.
+silently. sayit defaults it to `0`. All four travel with the request on every
+platform, so a change applies to the next dictation without a daemon restart.
 
 #### Sequential wordlist, longest rule first
 
@@ -331,7 +435,7 @@ unique WAV and a single session file written atomically; stop and cancel *claim*
 the session with an atomic rename, so exactly one consumer wins. A start that
 cannot spawn its recorder cleans up and reports — it never leaves state behind.
 
-The two platforms differ in what follows the claim. On Linux a release can arrive
+Linux and Windows differ in what follows the claim. On Linux a release can arrive
 while start is still switching the Bluetooth profile, so an intent marker covers
 that window and a quick release waits for it instead of giving up; stopping then
 sends `SIGINT` and polls until the recorder has exited, so the WAV header is
@@ -341,10 +445,16 @@ marker, and stopping sets a named event that the recorder itself waits on — th
 recorder writes its own final RIFF header, so a half-written file is not a
 failure mode there.
 
+macOS runs the Linux script, claim, intent marker, identity check and all. The
+identity check reads the command line from `ps` instead of `/proc`, and one
+race is closed before it reaches the script: Sayit's runner never spawns a
+`stop` or `cancel` until the `start` before it has exited, so a release faster
+than the start cannot leave a recording behind with nothing left to stop it.
+
 #### Read-only diagnostics as a separate command
 
-The recording path fails in ways the recorder itself cannot explain. Both
-platforms therefore ship a `doctor` that answers "why" without changing anything,
+The recording path fails in ways the recorder itself cannot explain. Every
+platform therefore ships a `doctor` that answers "why" without changing anything,
 as a separate command rather than a flag on the recorder, so that diagnosing a
 broken microphone never risks starting a recording and every check stays trivially
 auditable as read-only.
@@ -373,6 +483,19 @@ the binaries (the thing that decides whether the build can use the GPU), what
 orphaned recorder processes and leftover WAV files. It prints resolved settings
 but never `.env` itself, and for `INITIAL_PROMPT` and `SUPPRESS_REGEX` only
 whether they are set — both hold text the user wrote.
+
+On macOS the question the doctor most needs to answer is one it cannot ask
+directly: the permissions belong to `Sayit.app`, not to the terminal the doctor
+runs in, so querying them from there would describe the wrong process. Sayit
+therefore writes what it sees — both permissions, whether its event tap is
+installed, the resolved trigger — to `sayit.agent` whenever it changes, and
+`mac/sayit-doctor` reads that file, after checking that the pid in it really is
+Sayit. The rest it can see for itself: the bash version the services will get,
+the whisper.cpp backend, the model the daemon will load, both LaunchAgents and
+whether the daemon answers, the input devices (`sayit-rec --list`, which
+enumerates without opening anything) and what `AUDIO_SOURCE` resolves to, and
+whether Secure Input is on. It records nothing, posts no keystroke, touches no
+clipboard and loads or unloads nothing.
 
 ### Linux
 
@@ -520,7 +643,8 @@ requirements are missing, so the meter degrades instead of vanishing:
 #### The one optional step that leaves the machine
 
 `LLM_CLEANUP=1` runs the transcribed text through an LLM to fix spelling, split
-words and obvious recognition errors. It is Linux-only, off by default, and it
+words and obvious recognition errors. It lives in `bin/sayit-transcribe`, so it
+exists on Linux and on macOS but not on Windows; it is off by default, and it
 is the single code path in sayit that sends anything anywhere: it POSTs the
 **text** — never the audio — to `LLM_URL` over plain HTTP.
 
@@ -735,6 +859,206 @@ behaves, and each would be a silent data defect if handled by default:
   report nonsense instead of failing loudly. The runner requires 5.0 or newer
   explicitly and refuses to run otherwise.
 
+### macOS
+
+#### The bash core is shared; Swift only where the platform demands it
+
+The session state machine is the most heavily tested code in the repository:
+atomic claims, the intent marker, identity checks, the crash guards around a
+hot microphone. A Swift reimplementation would have been a third copy of that
+race handling, written fresh. Instead `Sayit.app` runs `bin/sayit start`,
+`stop` and `cancel` exactly as Solaar does on Linux, and the scripts branch on
+`$OSTYPE` only where Darwin really differs: no `/proc` (recorder identity from
+`ps`, uptime from `kern.boottime`), no `flock` (and no engine switcher to guard
+against), BSD tools (`wc -c` rather than GNU `stat -c`, a temporary file rather
+than `sed -i`), and no notification server.
+
+Swift appears where no shell tool can do the job: an event tap that can swallow
+a button, capture from a chosen Core Audio device under the app's own
+microphone grant, and a pasteboard round trip that keeps every type. The three
+programs are compiled by `swiftc` from the Command Line Tools — no Xcode
+project, no package manager, nothing to install beyond what Homebrew already
+requires.
+
+#### AVCaptureSession, not AVAudioEngine
+
+`sayit-rec` records with `AVCaptureSession`. It selects a device by its Core
+Audio UID directly, and its audio data output converts to the requested format
+— 16 kHz mono 16-bit — by itself. `AVAudioEngine` was the obvious alternative
+and does not survive a device switch: its input node keeps the default device's
+format, and the tap is then refused with a format mismatch.
+
+The WAV header is rewritten about once a second and finalized on `SIGINT`,
+`SIGTERM` or `SIGHUP`, with the last write made on the capture queue so no
+buffer can land after the header. A device that disappears mid-recording ends
+it with what was captured, finalized, instead of hanging. The microphone
+permission is checked before anything opens — exit code 2 when it is denied —
+because a denied microphone on macOS does not fail, it delivers silence; a
+capture whose loudest sample is zero is reported for the same reason.
+
+`AUDIO_SOURCE` resolves by UID, exact name, part of a name, and finally a
+device whose name, reduced to letters and digits, is embedded in the value.
+That last step exists for a `.env` that also serves a Linux machine: a PipeWire
+node name such as `alsa_input.usb-SteelSeries_SteelSeries_Alias-00.mono-fallback`
+still finds "SteelSeries Alias".
+
+#### One capture stream feeds the pill
+
+`sayit-rec` reduces each 125 ms of audio to a level from 0 to 7, using the
+overlay's RMS thresholds from the same `PillGeometry.swift` that Sayit draws
+from, and writes it as one byte rewritten in place. The file's modification
+time is the liveness signal: a level older than 0.4 s means the microphone is
+closed. That is the Windows model — the microphone is opened exactly once — and
+it means the resident pill's lamp is lit by audio actually arriving and by
+nothing else. Sayit reads the level without allocating, and redraws at about
+30 frames a second only while something moves, four times a second at rest.
+
+The two lifetimes are Linux's: a transient pill that exists only while
+recording and lets clicks through, and a resident one that stays for the
+session and can be dragged unless `INDICATOR_LOCKED=1`. One thing is easier
+here than on Linux. A layer-shell surface cannot take back an empty input
+region once it is mapped, so the Linux pill decides once, at creation, whether
+it can be grabbed. An AppKit panel can switch `ignoresMouseEvents` at any time,
+so **Place Indicator** makes even the transient pill draggable for as long as
+you are placing it. The panel never activates and never becomes key, so
+dragging it cannot take focus from the window you are dictating into.
+
+#### Clipboard plus Cmd+V, with a full restore
+
+`Cmd+V` works in every application, terminals included; Unicode key events,
+which carry the character itself the way Windows' `KEYEVENTF_UNICODE` does,
+are not honoured by all of them. So the default on macOS is the clipboard, as
+on Linux, and typing is available as `INJECT_METHOD=type`.
+
+The restore is fuller than Linux's. A macOS clipboard routinely holds rich
+text, images and file references, and restoring only its plain text would
+quietly destroy the rest, so `sayit-paste` saves every item with every type and
+puts them all back — after `PASTE_RESTORE_DELAY`, and only if the clipboard
+still holds the dictation. The nspasteboard.org conventions replace Linux's
+KDE password-manager hint: a clipboard marked `ConcealedType` or
+`TransientType` is never read or re-offered, and the dictation itself is marked
+`TransientType` and `AutoGeneratedType` so compliant clipboard managers keep it
+out of their history.
+
+Three conditions leave the dictation on the clipboard instead of restoring the
+old one away: no Accessibility permission (no keystroke can be sent; exit code
+2, so the status says the injection failed and `Cmd+V` recovers it), Secure
+Input (the keystroke may have been swallowed), and a clipboard larger than
+64 MiB (not worth a round trip). The paste key is whichever key types "v"
+with `Cmd` held in the current layout — Dvorak and its kin move it — with the
+ANSI position as the fallback, and the chord sets `Cmd` and nothing else, so a
+modifier still held from the trigger cannot turn it into a different shortcut.
+Pastes are serialized through `sayit-paste.lock`: without that, a second
+dictation inside the first one's restore window would snapshot the first
+dictation as "the user's clipboard" and the real one would be lost. Typing sends at most 20 UTF-16 units per event, the documented
+limit, and never splits a surrogate pair between two.
+
+#### TCC, the responsible process, and signing
+
+macOS grants Microphone and Accessibility per app and attributes a process to
+the app responsible for it. That decides the layout: `sayit-rec` and
+`sayit-paste` live inside `Sayit.app` and are started by it, through
+`bin/sayit`, so one pair of grants covers the trigger, the recorder and the
+paste. The scripts find the helpers through `SAYIT_MAC_HELPERS`, which Sayit
+sets, before looking in the usual application folders. The cost is that a
+command run from Terminal is Terminal's responsibility and uses Terminal's
+grants — the documentation says so wherever it matters. Sayit asks for the
+microphone when it launches, so the dialog does not interrupt the first
+dictation.
+
+The grants are tied to the code signature, and an ad-hoc signature changes
+with every build. `mac/install.sh` therefore rebuilds only when a hash over the
+Swift sources, the repository path, the signing identity and the build recipe
+itself changes, and warns when an ad-hoc rebuild has replaced an installed
+app. `SAYIT_SIGN_IDENTITY` signs with a keychain identity instead, which keeps
+the grants across upgrades.
+
+The flip side belongs in the security model: whatever `Sayit.app` starts runs
+under its grants, and what it starts is the repository's `bin/sayit`, which
+sources `.env`. The repository is part of what the grants cover.
+
+#### An event tap, Accessibility, Secure Input and the own-event signature
+
+The trigger is one session-level `CGEventTap` for key, modifier and extra
+mouse-button transitions. It is an active tap rather than a listen-only one,
+because only an active tap can swallow the trigger, and that is what needs the
+Accessibility permission. The callback only decides and returns; the spawning
+happens on another queue, so the tap never comes near the system's timeout,
+and if the system disables it anyway it is re-enabled on the spot.
+
+Keyboard events are invisible to every tap while Secure Input is on — a
+password field, or Terminal's Secure Keyboard Entry. Mouse buttons are not,
+which is why the documentation prefers a mouse button wherever a vendor utility
+offers one.
+
+`sayit-paste` stamps every event it posts with sayit's signature in
+`eventSourceUserData` (`0x5341594954`, "SAYIT"), and the trigger ignores
+anything carrying it. That is the role `dwExtraInfo` plays on Windows, for the
+same reason: filtering synthetic events in general would also drop a mouse
+utility's remapped button, which is exactly what the trigger exists to see.
+
+Three smaller rules come from real hardware. A key trigger's release is matched
+to the press it acted on, not to the modifiers, because a vendor utility may
+let go of those first. A modifier key used as the trigger is never swallowed —
+the system's idea of which modifiers are down must stay intact — and any other
+key pressed while it is held cancels the recording, because that is a
+shortcut, not a dictation. And Escape, with no modifier held, discards a
+recording the trigger started.
+
+#### auto: one button for hold and tap
+
+Whether a vendor utility turns a held button into a held key, or into a single
+tap, is up to the utility; for Logi Options+ keystroke assignments it has not
+been verified. `TRIGGER_MODE=auto` makes the question moot: held for 0.4 s or
+longer, the release stops the recording; shorter, the recording latches and the
+next press stops it. Once a second, and on that next press, Sayit checks for
+`bin/sayit`'s session and intent files: a recording that ended without it — a
+start whose files never appeared within 1.5 s, a stop from the terminal —
+drops the latch, so the icon is not left red, Escape is not swallowed, and the
+press starts a new recording rather than stopping nothing. The cost
+is that a deliberately short push-to-talk latches; `hold` is there for anyone
+who wants strict push-to-talk.
+
+#### No notifications
+
+Notification Center keeps what it is shown, and the Linux "Done" notification
+quotes the start of the dictation; on a Mac that would leave a snippet of every
+dictation in the notification history. So `bin/sayit` writes its status to
+`sayit.status` instead, cutting the text off a `Done` status on the way, and
+Sayit shows it as the first line of its menu, with an orange icon for eight
+seconds after anything that failed. Linux sends its notifications
+`--transient` for the same reason, but there the server is trusted to honour
+it.
+
+#### launchd: ProcessType Interactive, and bash 3.2
+
+Two LaunchAgents replace the systemd units, both limited to the graphical
+(Aqua) session — an event tap, a pill and a pasteboard mean nothing in an SSH
+login. Both are `ProcessType Interactive`: launchd's default lets macOS
+throttle a background job, and a dictation tool feels throttling as latency.
+The daemon is always kept alive, no more than once every ten seconds; Sayit is
+restarted only after a crash, so **Quit** means quit until the next login.
+
+launchd gives a service a minimal `PATH`, and under it `#!/usr/bin/env bash`
+finds `/bin/bash` — version 3.2, which the scripts do not support. Both plists
+and the environment Sayit gives its children therefore put Homebrew's
+directories first, and the doctor fails loudly when Homebrew's bash is
+missing. launchd rotates no logs either, so `bin/sayit-daemon` moves a
+`daemon.log` past 1 MiB aside each time it starts, and redirects before its own
+checks, so a missing model is in the log rather than lost.
+
+#### The Darwin temporary directory as the run directory
+
+macOS has no `$XDG_RUNTIME_DIR`. The per-user temporary directory —
+`getconf DARWIN_USER_TEMP_DIR`, mode 0700, private to the user — is the
+closest equivalent, and every component uses it: each bash script computes and
+exports it, and Sayit computes the same path with `confstr` and passes it to
+every command it starts, so the two sides cannot disagree. A set
+`XDG_RUNTIME_DIR` still wins on both sides. Unlike a tmpfs this directory is on
+disk, so cleanup is explicit, as on Windows: the WAV is created mode 0600 and
+deleted after transcription, and leftovers from a crash are swept once they
+are an hour old.
+
 ### Deliberate non-goals
 
 - **No cloud STT** — the value proposition is that audio never leaves the
@@ -744,8 +1068,10 @@ behaves, and each would be a silent data defect if handled by default:
 - **No wake word** — push-to-talk is more reliable, more private, and costs
   zero CPU when idle.
 - **No GUI** — everything is scriptable and composable; the recording indicator
-  is the only UI.
-- **No shared code across the platforms** — the parts worth keeping identical are
-  the model contract, the wordlist, the history format and the settings, and none
+  is the only UI, plus on macOS a menu bar item that reports state and holds a
+  few actions. Settings stay in `.env`.
+- **No shared code with Windows** — the parts worth keeping identical are the
+  model contract, the wordlist, the history format and the settings, and none
   of those are code. A compatibility layer over bash and PowerShell would add a
-  third thing to maintain and make both sides worse.
+  third thing to maintain and make both sides worse. Linux and macOS are the
+  exception that proves the rule: the same bash runs on both, so they share it.

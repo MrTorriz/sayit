@@ -1,4 +1,4 @@
-[← README](../README.md) · [Install: Linux](INSTALL-LINUX.md) · **Windows** · [Configuration](CONFIGURATION.md) · [Troubleshooting](TROUBLESHOOTING.md) · [Performance](PERFORMANCE.md) · [Architecture](ARCHITECTURE.md)
+[← README](../README.md) · [Install: Linux](INSTALL-LINUX.md) · **Windows** · [macOS](INSTALL-MACOS.md) · [Configuration](CONFIGURATION.md) · [Troubleshooting](TROUBLESHOOTING.md) · [Performance](PERFORMANCE.md) · [Architecture](ARCHITECTURE.md)
 
 # Installing sayit on Windows 11
 

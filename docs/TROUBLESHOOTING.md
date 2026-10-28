@@ -1,4 +1,4 @@
-[← README](../README.md) · [Install: Linux](INSTALL-LINUX.md) · [Windows](INSTALL-WINDOWS.md) · [Configuration](CONFIGURATION.md) · **Troubleshooting** · [Performance](PERFORMANCE.md) · [Architecture](ARCHITECTURE.md)
+[← README](../README.md) · [Install: Linux](INSTALL-LINUX.md) · [Windows](INSTALL-WINDOWS.md) · [macOS](INSTALL-MACOS.md) · [Configuration](CONFIGURATION.md) · **Troubleshooting** · [Performance](PERFORMANCE.md) · [Architecture](ARCHITECTURE.md)
 
 # Troubleshooting
 
@@ -7,7 +7,7 @@ actually record from, reports the daemon and any leftover state, and prints the
 command that fixes what it finds rather than running it.
 
 ```bash
-./bin/sayit doctor            # or: ./bin/sayit-doctor --quiet
+./bin/sayit doctor            # Linux and macOS; or: ./bin/sayit-doctor --quiet
 ```
 
 ```powershell
@@ -16,18 +16,22 @@ command that fixes what it finds rather than running it.
 
 The Linux doctor changes nothing at all: it starts no recording, opens no
 capture stream and writes no file. It does source `.env` as shell, which is how
-the config format works on Linux. The Windows doctor opens no capture stream and
-executes none of the fixes it suggests, but it does create its own state
+the config format works on Linux. The macOS doctor is read-only in the same
+way — no recording, no keystroke, no clipboard access, no `launchctl` load or
+unload — and also sources `.env`. The Windows doctor opens no capture stream
+and executes none of the fixes it suggests, but it does create its own state
 directories on first run.
 
-Neither dumps `.env`, the wordlist or dictated text, and neither prints the
-values of `INITIAL_PROMPT` or `SUPPRESS_REGEX`. Both do print resolved local
-paths — on Windows normally including your user name — plus device names,
-endpoint IDs and most setting values. Read the output before posting it.
+None of them dumps `.env`, the wordlist or dictated text, and none prints the
+values of `INITIAL_PROMPT` or `SUPPRESS_REGEX`. All of them print resolved
+local paths — on Windows and macOS normally including your user name — plus
+device names, endpoint IDs and most setting values. Read the output before
+posting it.
 
 - [Linux](#linux)
 - [Windows](#windows)
-- [Both platforms](#both-platforms)
+- [macOS](#macos)
+- [All platforms](#all-platforms)
 
 ## Linux
 
@@ -81,14 +85,46 @@ involved.
 | The scheduled task shows `LastTaskResult 0x800710E0` | Not a failure, but it means the task predates the `wscript` shim and runs the supervisor directly. Re-run `.\win\install.ps1` and let it replace the task |
 | Anything else in the recording path | `.\win\sayit-doctor.ps1` |
 
-## Both platforms
+## macOS
+
+The menu bar item is the first place to look: its first line is the last
+status `bin/sayit` reported, and its second says what Sayit is listening for —
+or what is stopping it. The error log is in the run directory:
+
+```bash
+cat "$(getconf DARWIN_USER_TEMP_DIR)/sayit-last-error.log"    # error classes, never text
+```
+
+| Problem | Fix |
+| --- | --- |
+| Pressing the trigger does nothing, and the menu bar icon is an outlined triangle | Sayit has no Accessibility permission, so its event tap is not installed; the menu's second line says `Waiting for the Accessibility permission`. Turn Sayit on under System Settings > Privacy & Security > Accessibility, or use **Allow Accessibility…** in the menu. The trigger arms within two seconds, without a restart |
+| The trigger does nothing, and the icon looks normal | Read the menu's second line: it names the button Sayit is listening for, or says `TRIGGER_BUTTON="…" is not understood`. A `.env` made from the template carries `XBUTTON2`, the forward mouse button. Choose **Probe Trigger** and press your button. No line at all means Logi Options+ or another utility still keeps the button to itself — assign it a mouse button or a keystroke there. After editing `.env`, choose **Reload Settings** |
+| A keyboard trigger works everywhere except in password fields, or in Terminal | Secure Input: while it is on — a password field, Terminal > Secure Keyboard Entry — keyboard events reach no event tap. `./bin/sayit doctor` warns when it is on. A mouse-button trigger is unaffected |
+| The probe shows `modifier KEY61`, but `TRIGGER_BUTTON="KEY61"` never fires | A modifier key is named, not numbered: `RIGHTOPTION`, `LEFTCOMMAND` and so on. See [the trigger table](INSTALL-MACOS.md#choosing-the-trigger) |
+| A short press starts a recording that does not stop on release | `TRIGGER_MODE=auto` latches a press shorter than 0.4 s; the next press stops it. Hold a little longer, or set `TRIGGER_MODE=hold` |
+| The button also does its usual job — the browser goes forward | `TRIGGER_SUPPRESS=0` is set; make it `1` and choose **Reload Settings**. A modifier key used on its own as the trigger is never swallowed, by design |
+| No text appears, and the status line says `Injection failed` | Sayit has no Accessibility permission, so no `Cmd+V` could be sent. The text is on the clipboard: press `Cmd+V`, then grant Accessibility as above. `./bin/sayit-history --inject N` re-sends any entry |
+| Dictation works from the trigger but not from Terminal, or the other way round | They hold different permissions: the trigger runs under `Sayit.app`'s grants, a command typed in Terminal under Terminal's. Grant the one that is missing |
+| Every result is empty, or the error log says `digitally silent capture (peak 0)` | The recording was digital silence. Most often the Microphone permission is denied — for Sayit, or for Terminal on a manual run; `./bin/sayit doctor` reports Sayit's. Otherwise the input is muted or turned down under System Settings > Sound > Input, or `AUDIO_SOURCE` selects the wrong device: `~/Applications/Sayit.app/Contents/MacOS/sayit-rec --list` |
+| `Recording failed to start — check the microphone` | `sayit-rec` exited at once, and the error log says why: `AUDIO_SOURCE` matches no input device (the available ones are listed), microphone access is denied, or `sayit-rec missing — run ./install.sh` |
+| A Bluetooth headset sounds like a phone call while you dictate | macOS moves the headset to its call profile when its microphone is opened, and back afterwards. Name a USB microphone in `AUDIO_SOURCE` and the headset is left alone |
+| Every dictation is slow, or the doctor says the daemon does not answer | `launchctl print gui/$(id -u)/io.github.mrtorriz.sayit.daemon` and `tail ~/Library/Logs/sayit/daemon.log`. Right after login the large model takes a few seconds to load, and the first transcription after a whisper.cpp build waits while Metal compiles its pipelines. A missing model or binary is reported in the same log. Restart it with `launchctl kickstart -k gui/$(id -u)/io.github.mrtorriz.sayit.daemon` |
+| Sayit asks for its permissions again after an upgrade, or the trigger and the paste stop working after one | The app was rebuilt with a new ad-hoc signature, and the grants belonged to the old one. Turn Sayit off and on again under Privacy & Security, or remove it there and let it ask afresh; `tccutil reset Accessibility io.github.mrtorriz.sayit` and `tccutil reset Microphone io.github.mrtorriz.sayit` clear the entries from a terminal. `SAYIT_SIGN_IDENTITY` prevents it — see [Upgrading](INSTALL-MACOS.md#upgrading) |
+| The pill never appears | Check `RECORDING_INDICATOR` in `.env`. The transient pill shows only while recording, from about 0.3 s after the press; `INDICATOR_RESIDENT=1` keeps it up. **Place Indicator** in the menu shows it wherever it is and lets you move it. After editing `.env`, choose **Reload Settings**. Missing from a screenshot or a screen share is `INDICATOR_EXCLUDE_FROM_CAPTURE=1` doing its job |
+| The pill stays up with flat bars after a long dictation, and the icon stays red | The recording reached `MAX_RECORD_SECONDS` (120 s by default) and `sayit-rec` stopped by itself. Press the trigger again to transcribe what was captured, or press Escape (or run `./bin/sayit cancel`) to discard it |
+| Sayit is missing from the menu bar | After **Quit Sayit** it stays stopped until the next login: `launchctl kickstart gui/$(id -u)/io.github.mrtorriz.sayit.agent`. Otherwise see `./bin/sayit doctor` and `~/Library/Logs/sayit/agent.log`; `cannot find the sayit repository` means the clone has moved — run `./install.sh` from its new place |
+| The doctor says bash is too old, or Homebrew bash is missing | `brew install bash`. The LaunchAgents and Sayit run the scripts under Homebrew's bash; `/bin/bash` is 3.2 and not supported |
+| `test-pipeline` says `No system voice for sv` | Add a voice for the language under System Settings > Accessibility > Spoken Content |
+| Anything else in the recording path | `./bin/sayit doctor` |
+
+## All platforms
 
 | Problem | Fix |
 | --- | --- |
 | A history entry looks cut off | The list view shortens long entries to an 80-character budget and marks the cut. `--copy N` / `-Copy N` gives you the full text |
 | A dictation is missing from the history entirely | An empty transcription is not recorded. If VAD discarded every segment the run still succeeds with no output — see `VAD_MIN_SPEECH_MS` in [Configuration](CONFIGURATION.md#accuracy-vad-beam-search-initial-prompt-suppression) |
 | The end of a sentence is clipped | Raise `VAD_SPEECH_PAD_MS`. It is the only one of the four VAD settings that lengthens the tail |
-| The `mark` or `wave` meter stops after two minutes | Those two OSD styles have a 120 s safety cap. The default `overlay` style has none and ends with its capture stream |
+| The `mark` or `wave` meter stops after two minutes (Linux) | Those two OSD styles have a 120 s safety cap. The default `overlay` style has none and ends with its capture stream |
 | A corrupt line in `history.jsonl` | Corrupt lines are skipped and counted; the rest of the history is unaffected. The count goes to stderr, never the content |
 
 Still stuck? Open an issue with the doctor output for your platform. Please do
