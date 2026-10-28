@@ -44,8 +44,10 @@ details in the issue.
   against pinned sha256 checksums; `win\install.ps1` prints the sha256 of the
   models you supplied so you can check them yourself.
 - Dictated text is stored in plain text in `history.jsonl` and kept until you
-  clear it. See the [README's privacy section](README.md#privacy) for the paths
-  and the cleanup commands.
+  clear it. See the history sections in the
+  [Linux guide](docs/INSTALL-LINUX.md#history-and-statistics) and
+  [Windows guide](docs/INSTALL-WINDOWS.md#history-and-statistics) for usage,
+  and [runtime state](docs/ARCHITECTURE.md#runtime-state) for storage paths.
 - Diagnostics record error *classes* only — never dictated text, never audio.
   Profiling records stage names and timings, never text.
 
@@ -171,7 +173,7 @@ details in the issue.
   `SAYIT_SIGN_IDENTITY` names an identity of yours; macOS ties both permissions
   to that signature.
 
-## Optional OpenVINO engine (Linux)
+## Optional OpenVINO engine
 
 The adapter binds only to `127.0.0.1`. Audio is decoded in memory and neither
 transcripts nor prompts are logged by the adapter. Error responses contain
@@ -180,7 +182,8 @@ behavior above still apply, including native daemon/CLI logging on fallback.
 The launcher disables the OpenVINO package's telemetry through `CI=true` and
 uses an isolated Python environment. No model download occurs during dictation.
 
-`install-openvino.sh` downloads Python packages from PyPI and model files from
+`install-openvino.sh` and `win/install-openvino.ps1` download Python packages
+from PyPI and model files from
 Hugging Face. Versions are pinned in `engines/openvino/requirements.txt`; the
 model manifest pins a repository revision, size and SHA-256 for every file.
 Existing or locally copied model files are checked too. Python packages are

@@ -57,9 +57,29 @@ if (-not $Probe) {
 
 Add-Type -AssemblyName System.Windows.Forms
 
-$cs = Read-Utf8Text -Path (Join-Path $PSScriptRoot 'lib\Trigger.cs')
+$cs = Merge-CSharpSources -Sources @(
+    (Read-Utf8Text (Join-Path $PSScriptRoot 'lib\Trigger.cs')),
+    (Read-Utf8Text (Join-Path $PSScriptRoot 'lib\Injector.cs')))
 if (-not $cs) { Write-Error 'lib\Trigger.cs not found'; exit 1 }
-Add-Type -TypeDefinition $cs -Language CSharp
+Add-Type -TypeDefinition $cs -Language CSharp -ReferencedAssemblies 'System.Windows.Forms','System.Drawing'
+
+$worker = $null
+if (-not $Probe) {
+    # Compile once before arming the button. The microphone is still closed;
+    # each press opens it on a native thread without a new PowerShell process.
+    $captureSource = Merge-CSharpSources -Sources @(
+        (Read-Utf8Text (Join-Path $PSScriptRoot 'lib\Recorder.cs')),
+        (Read-Utf8Text (Join-Path $PSScriptRoot 'lib\WarmCapture.cs')))
+    Add-Type -TypeDefinition $captureSource -Language CSharp
+    . "$PSScriptRoot\sayit.ps1" -Library
+    . "$PSScriptRoot\lib\transcription-worker.ps1"
+    $worker = New-SayitTranscriptionWorker
+}
+$script:WarmCapture = $null
+$script:WarmShown = $false
+$script:WarmFailureReported = $false
+$transcriptionQueue = New-Object System.Collections.Queue
+$activeTranscription = $null
 
 $cfg = Import-DotEnv
 if (-not $Button) {
@@ -123,12 +143,64 @@ try {
                 Write-Host $line
                 Add-Utf8Line -Path $probeLog -Line $line
             } else {
-                $verb = if ($e.Down) { 'start' } else { 'stop' }
-                Start-Process -FilePath 'powershell.exe' `
-                    -ArgumentList '-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass',
-                                  '-File',(Format-ProcessArgument $sayit),$verb `
-                    -WindowStyle Hidden
+                if ($e.Down) {
+                    $gate = $null
+                    try {
+                        $gate = Open-SayitEngineGate
+                        $cfg = Import-DotEnv
+                        $script:WarmShown = $false
+                        $script:WarmFailureReported = $false
+                        [void](Start-Recording -Warm)
+                    } catch { Write-SayitError ('start: ' + $_.Exception.Message) }
+                    finally { if ($null -ne $gate) { $gate.Dispose() } }
+                } else {
+                    # Stop capture and hide the pill on the input path, not after
+                    # the transcription process eventually finishes starting.
+                    if ($null -ne $script:WarmCapture) { $script:WarmCapture.RequestStop() }
+                    Show-Indicator 'hide'
+                    $lease = Open-SayitEngineGate
+                    $sessionLock = Enter-SessionLock
+                    try { $completedSession = Claim-Session }
+                    finally { Exit-SessionLock $sessionLock }
+                    if ($null -ne $completedSession) {
+                        $transcriptionQueue.Enqueue(@{
+                            Session=$completedSession; Capture=$script:WarmCapture; Lease=$lease
+                        })
+                    } else {
+                        $lease.Dispose()
+                        if ($null -ne $script:WarmCapture) { $script:WarmCapture.Dispose() }
+                    }
+                    $script:WarmCapture = $null
+                }
             }
+        }
+
+        if (-not $Probe -and $null -ne $script:WarmCapture) {
+            if ($script:WarmCapture.Done.WaitOne(0)) {
+                Show-Indicator 'hide'
+                if ($null -ne $script:WarmCapture.Failure -and -not $script:WarmFailureReported) {
+                    Write-SayitError ('capture: ' + $script:WarmCapture.Failure.Message)
+                    $script:WarmFailureReported = $true
+                }
+            } elseif (-not $script:WarmShown -and $script:WarmCapture.Ready.WaitOne(0)) {
+                Show-Indicator 'show'
+                $script:WarmShown = $true
+            }
+        }
+        if ($null -ne $activeTranscription -and $activeTranscription.Async.IsCompleted) {
+            try {
+                [void]$worker.Shell.EndInvoke($activeTranscription.Async)
+                if ($worker.Shell.HadErrors) { throw $worker.Shell.Streams.Error[0] }
+            } catch { Write-SayitError ('transcription: ' + $_.Exception.Message) }
+            finally {
+                if ($null -ne $activeTranscription.Capture) { $activeTranscription.Capture.Dispose() }
+                $activeTranscription.Lease.Dispose()
+                $activeTranscription = $null
+            }
+        }
+        if ($null -eq $activeTranscription -and $transcriptionQueue.Count -gt 0) {
+            $activeTranscription = $transcriptionQueue.Dequeue()
+            $activeTranscription.Async = Start-SayitTranscription $worker $activeTranscription.Session
         }
 
         if (-not $Probe -and ((Get-Date) - $lastBeat).TotalSeconds -ge 5) {
@@ -148,6 +220,21 @@ try {
     }
 } finally {
     [Sayit.Trigger]::Uninstall()
+    if ($null -ne $script:WarmCapture) { $script:WarmCapture.Dispose() }
+    if ($null -ne $worker) {
+        $worker.Shell.Stop()
+        if ($null -ne $activeTranscription) {
+            if ($null -ne $activeTranscription.Capture) { $activeTranscription.Capture.Dispose() }
+            $activeTranscription.Lease.Dispose()
+        }
+        foreach ($queued in $transcriptionQueue) {
+            if ($null -ne $queued.Capture) { $queued.Capture.Dispose() }
+            Remove-Item -LiteralPath $queued.Session.Wav -Force -ErrorAction SilentlyContinue
+            $queued.Lease.Dispose()
+        }
+        $worker.Shell.Dispose()
+        $worker.Runspace.Dispose()
+    }
     # Never leave a recording running when the trigger goes away: without this a
     # release that never arrives would hold the microphone open until the
     # recorder's own time cap expires.

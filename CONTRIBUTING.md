@@ -4,10 +4,11 @@ Thanks for your interest in improving sayit. Bug reports, fixes and focused
 features are all welcome.
 
 sayit is one repository for three platforms. `bin/` is Linux and macOS (bash,
-plus the Python overlay and optional OpenVINO adapter on Linux); `mac/` holds
-the macOS additions (Swift, plus its installer and doctor); `win/` is Windows
-(PowerShell 5.1, plus small C# helpers). Windows shares no code with the other
-two, but a change in `bin/` can affect both Linux and macOS. Knowing which
+plus the Python overlay on Linux); `mac/` holds the macOS additions (Swift,
+plus its installer and doctor); `win/` is Windows (PowerShell 5.1, plus small
+C# helpers). Linux and Windows both use the optional server in
+`engines/openvino/`: check both when changing that shared server or its
+protocol. A change in `bin/` can affect both Linux and macOS. Knowing which
 platform a change touches decides what you have to run.
 
 ## Which platform does your change belong to?
@@ -16,15 +17,18 @@ platform a change touches decides what you have to run.
 | --- | --- | --- |
 | `bin/`, `install*.sh`, `tests/`, `docs/*.py` | Linux, and macOS for `bin/`, `install.sh` and `tests/mac.bats` | `lint` and `test`, plus the macOS job |
 | `mac/` (Swift sources, `install.sh`, `sayit-doctor`, tests) | macOS | the macOS job |
-| `engines/openvino/` | Linux | `lint` and `openvino-protocol`; inference also needs hardware checks |
+| `engines/openvino/` | Linux and Windows | `lint`, `openvino-protocol` and `windows`; inference also needs hardware checks |
 | `win/` (`.ps1`, `lib/*.cs`, `tests/`) | Windows | `windows` |
-| `README.md`, `docs/*.md`, `.github/` | Neither | review only |
+| `README.md`, `docs/*.md` | Documentation | Review content and links |
+| `.github/workflows/` | Both | Check every affected job |
 | `.env.example` plus the code that reads the setting | Whichever side reads it | that side's jobs |
 
 The lint job covers shell scripts and Python sources, including the optional
 engine. The Bats job checks Linux commands; `openvino-protocol` checks the
 adapter without a GPU or model download. The Windows job covers PowerShell and
-C#. A separate geometry check reads the Windows indicator from Linux to catch
+C# plus the shared HTTP protocol on Windows. The macOS job builds the Swift
+targets and runs the Swift checks and `tests/mac.bats`. A separate geometry
+check reads the Windows and macOS copies of the indicator from Linux to catch
 drift in shared drawing constants. New scripts need a recognized shebang and
 must be included in the relevant workflow glob.
 
@@ -67,7 +71,7 @@ All three run on any Linux machine. None needs a microphone, a compositor,
 
 ```bash
 # 1. Syntax, dispatched by shebang — the same loop CI runs
-for f in bin/* install.sh tests/*.sh docs/*.py; do
+for f in bin/* install*.sh tests/*.sh docs/*.py engines/openvino/*.py; do
     [ -f "$f" ] || continue
     case "$(head -1 "$f")" in
         *python*)     python3 -m py_compile "$f" ;;
@@ -78,7 +82,7 @@ done
 
 # 2. shellcheck over the shell scripts only
 scripts=()
-for f in bin/* install.sh tests/*.sh docs/*.py; do
+for f in bin/* install*.sh tests/*.sh docs/*.py engines/openvino/*.py; do
     [ -f "$f" ] || continue
     case "$(head -1 "$f")" in *bash*|*/sh) scripts+=("$f") ;; esac
 done

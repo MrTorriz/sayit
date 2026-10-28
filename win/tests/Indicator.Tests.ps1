@@ -357,3 +357,22 @@ Describe 'residency' {
         $script:IndicatorSource | Should -Match 'Get-IndicatorMutex'
     }
 }
+
+Describe 'recording-only waveform' {
+    It 'fills the pill with 26 bars and equal 13-pixel shoulders' {
+        $bars = @(Get-SayitTransientBarRects -Level 7)
+        $bars.Count | Should -Be 26
+        $bars[0].X | Should -Be 13
+        [math]::Round($bars[-1].X + $bars[-1].Width, 5) | Should -Be 147
+        foreach ($bar in $bars) {
+            ($bar.Y + $bar.Height / 2) | Should -Be 20
+            $bar.Y | Should -BeGreaterThan 4
+        }
+    }
+    It 'uses a hidden event loop rather than showing the form at idle' {
+        $script:IndicatorSource | Should -Match 'Application\]::Run\(\$context\)'
+        $script:IndicatorSource | Should -Match '\$visible = \$Resident -or \$open'
+        $script:IndicatorSource | Should -Match '\$form\.Hide\(\)'
+        $script:IndicatorSource | Should -Not -Match 'Write-Utf8Text -Path \$stateFile'
+    }
+}

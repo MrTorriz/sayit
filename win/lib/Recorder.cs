@@ -230,6 +230,12 @@ namespace Sayit
         public static int CaptureToWav(string path, int deviceIndex, WaitHandle stopEvent,
                                        int maxSeconds, out int peakAmplitude)
         {
+            return CaptureToWav(path, deviceIndex, stopEvent, maxSeconds, out peakAmplitude, null);
+        }
+
+        public static int CaptureToWav(string path, int deviceIndex, WaitHandle stopEvent,
+                                       int maxSeconds, out int peakAmplitude, EventWaitHandle ready)
+        {
             peakAmplitude = 0;
 
             WAVEFORMATEX fmt = new WAVEFORMATEX();
@@ -281,7 +287,9 @@ namespace Sayit
                         waveInAddBuffer(hwi, headers[i], hdrSize);
                     }
 
-                    waveInStart(hwi);
+                    rc = waveInStart(hwi);
+                    if (rc != MMSYSERR_NOERROR) { throw new InvalidOperationException("waveInStart failed with MMSYSERR " + rc); }
+                    if (ready != null && !stopEvent.WaitOne(0)) { ready.Set(); }
 
                     byte[] scratch = new byte[bufferBytes];
                     DateTime deadline = DateTime.UtcNow.AddSeconds(maxSeconds);

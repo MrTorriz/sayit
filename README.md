@@ -1,290 +1,185 @@
 # sayit
 
-> Push-to-talk dictation for Linux, Windows 11 and macOS. Hold a key, speak, release — your words are typed into whatever window has focus. Speech recognition runs on your machine: no cloud service, no account, no API keys.
+Push-to-talk dictation for Linux, Windows 11 and macOS. Hold a button, speak,
+then release to insert your words into the focused text field.
 
 [![ci](https://github.com/MrTorriz/sayit/actions/workflows/ci.yml/badge.svg)](https://github.com/MrTorriz/sayit/actions/workflows/ci.yml)
 [![license: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![platform: Linux, Windows 11 and macOS](https://img.shields.io/badge/platform-Linux%20%7C%20Windows%2011%20%7C%20macOS-informational)](#documentation)
-[![local speech recognition](https://img.shields.io/badge/speech--to--text-runs_locally-success)](#privacy)
+[![platform: Linux, Windows 11 and macOS](https://img.shields.io/badge/platform-Linux%20%7C%20Windows%2011%20%7C%20macOS-informational)](#installation)
 
 <p align="center">
-  <img src="docs/demo.gif" alt="Linux hold-to-talk: a waveform appears while recording, disappears on release, and the transcribed sentence is pasted into the focused window" width="760">
+  <img src="docs/demo.gif" alt="Linux demo: a waveform appears during recording, then the transcribed sentence is pasted into the focused window" width="760">
 </p>
 
-sayit transcribes speech locally and injects the text into the focused window —
-terminal, editor or browser. The default engine is
-[whisper.cpp](https://github.com/ggml-org/whisper.cpp) with Vulkan acceleration
-on Linux and Windows and Metal on macOS, tuned for Swedish through [KB-Whisper](https://huggingface.co/KBLab/kb-whisper-medium).
-Linux also has an optional **Whisper large-v3-turbo / OpenVINO** engine for Intel
-graphics, with the original engine available at any time.
+Speech recognition runs locally through [whisper.cpp](https://github.com/ggml-org/whisper.cpp),
+with Vulkan acceleration on Linux and Windows, Metal on macOS, and
+[KB-Whisper](https://huggingface.co/KBLab/kb-whisper-medium) as the default
+Swedish model. Linux and Windows also support an optional
+**Whisper large-v3-turbo / OpenVINO** engine for compatible Intel graphics; on
+Apple Silicon, Metal runs the large KB-Whisper model fast enough to be the
+default. No account or subscription is required.
 
-The pipeline is capture → transcribe → apply your wordlist → paste. The optional
-engine changes transcription; your microphone, trigger, wordlist and text
-injection work as before. See [engine setup and limits](docs/OPENVINO.md).
+- Hold-to-talk with a waveform indicator; toggle mode is also available.
+- Text entry in terminals, editors and browsers, subject to platform permissions.
+- A custom wordlist for recurring recognition errors, plus dictation history.
+- A warm model for repeated use and automatic startup after login.
 
-## Documentation
+## Installation
 
-| Document | What it answers |
-| --- | --- |
-| [docs/INSTALL-LINUX.md](docs/INSTALL-LINUX.md) | Requirements, install, triggers, ydotool, the meter, Bluetooth, the daemon |
-| [docs/OPENVINO.md](docs/OPENVINO.md) | Optional Linux Turbo engine, installation, switching, rollback and limits |
-| [docs/INSTALL-WINDOWS.md](docs/INSTALL-WINDOWS.md) | Requirements, install, the trigger, autostart, the indicator, injection |
-| [docs/INSTALL-MACOS.md](docs/INSTALL-MACOS.md) | Requirements, install, permissions, the trigger, the pill and menu bar item, the LaunchAgents |
-| [docs/CONFIGURATION.md](docs/CONFIGURATION.md) | Every setting, its default, its platform, and when a change takes effect |
-| [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) | Symptom, cause, and the command that fixes it |
-| [docs/PERFORMANCE.md](docs/PERFORMANCE.md) | Measured latency, the machines, the dates, and what is not measured |
-| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | The three pipelines, the components, and why each decision was made |
-| [SECURITY.md](SECURITY.md) | The security model and how to report an issue privately |
-| [CONTRIBUTING.md](CONTRIBUTING.md) | Which checks to run for which platform, and the style rules |
+Setup requires a terminal, native build tools and model files. This is a
+source installation, not a packaged desktop installer. Read the requirements
+for your platform before running the commands.
 
-## Highlights
-
-| | |
-| --- | --- |
-| **Local** | Speech recognition runs on your machine. No cloud service, no API key, no telemetry, no account — audio never leaves the machine |
-| **Fast** | Warm local inference: whisper.cpp with Vulkan, or Metal on Apple Silicon, or optional OpenVINO/Turbo on Linux with Intel graphics ([measurements](docs/PERFORMANCE.md)) |
-| **Works anywhere** | Layout-independent text injection — terminals, editors, browsers; Wayland and X11 on Linux, any app that accepts `Cmd+V` on macOS |
-| **Push-to-talk** | Hold-to-talk on a mouse thumb button and toggle on a hotkey, with a live voice meter and a recording indicator. On macOS one button does both: hold to talk, or tap to latch |
-| **Learns your vocabulary** | Teach it your terms: `sayit-learn "get hub" "GitHub"` |
-| **Measurable** | Built-in statistics and per-stage latency profiling on every platform; a reproducible benchmark harness on Linux |
-| **Bluetooth-aware** | On Linux, auto-switches headsets such as AirPods to their mic profile and back. Windows and macOS do that switch themselves |
-
-## Why sayit
-
-- **Your audio stays here.** Unlike cloud dictation services there is no account, no audio upload, no word quota and no subscription — the model runs on your own GPU or CPU, and works offline. One optional Linux feature does send text off the machine, and it is off by default; see [Privacy](#privacy).
-- **Native to the platform, not a port of one to the other.** The Linux side speaks PipeWire, systemd and Wayland — including KWin/Plasma, where most injection tricks fail. The Windows side is Windows PowerShell 5.1 plus small C# helpers and nothing else: no runtime to install, no package manager, no Python. The macOS side runs the Linux bash scripts plus three small Swift programs for an event tap, Core Audio capture and the pasteboard, built with the Command Line Tools — no Xcode project.
-- **No wake word, no idle cost.** Push-to-talk with a real button: the microphone is only open while you hold it, and nothing runs between dictations except an idle warm model.
-- **Small enough to audit.** A handful of scripts, one `.env`, a test suite per platform. No Electron, no framework.
-
-## Three platforms, one repository
-
-All three share the wordlist and history formats and the base `.env`
-settings. Their default engine is whisper.cpp with a GGML model. Linux and macOS
-also share their code: the bash scripts in `bin/` run on both, and macOS adds
-`Sayit.app` (trigger, pill and menu bar item), a recorder and a paste helper in
-Swift where the platform demands its own API. Windows is a separate PowerShell
-implementation. The optional OpenVINO engine and `sayit-engine` command are
-**Linux only**.
-
-Which stage differs, and the reasoning behind every divergence, is in
-[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#where-they-diverge-and-why).
-
-## Quickstart: Linux
+### Linux
 
 ```bash
 git clone https://github.com/MrTorriz/sayit.git
 cd sayit
-./install.sh            # packages, pinned whisper.cpp build, checksummed models, .env
-./bin/test-pipeline     # end-to-end check with a synthetic voice, no microphone needed
+./install.sh
+./bin/test-pipeline
 ```
 
-Then bind a trigger — a Logitech thumb button through Solaar, or any global hotkey —
-and, on KWin/Plasma, set up `ydotoold` once. Text injection does not work there
-without it.
+The installer builds whisper.cpp, downloads the models and creates `.env`.
+Then configure a mouse button or keyboard shortcut. KWin/Plasma also requires
+`ydotoold` for text injection.
 
-For the optional Intel GPU engine, complete the base installation above, then:
+[Linux installation guide](docs/INSTALL-LINUX.md) — requirements, triggers,
+Wayland setup, Bluetooth and automatic startup.
 
-```bash
-./install-openvino.sh       # isolated Python runtime and checksummed Turbo model
-./bin/sayit-engine fast     # verify startup and enable the user service at login
-./bin/sayit-engine status
-./bin/sayit-engine accurate # return to the configured whisper.cpp model
-```
-
-See [OpenVINO requirements](docs/OPENVINO.md) before installing. Full Linux
-walkthrough: [docs/INSTALL-LINUX.md](docs/INSTALL-LINUX.md).
-
-## Quickstart: Windows 11
+### Windows 11
 
 ```powershell
 git clone https://github.com/MrTorriz/sayit.git
 cd sayit
-.\win\install.ps1       # prerequisites, pinned build, model check, .env, logon task
-.\win\sayit-doctor.ps1  # reports what resolved and what did not
+.\win\install.ps1
+.\win\sayit-doctor.ps1
 ```
 
-Two steps the installer deliberately leaves to you: **download the two model files**
-into `models\` yourself, and — if your mouse diverts its thumb button in firmware —
-map that button in the vendor utility before the trigger can see it.
+The installer checks build tools, builds whisper.cpp and offers to register
+an automatic logon task. **Download the two base model files separately** as
+explained in the guide. Some mice also need their thumb button mapped in the
+vendor's utility before Windows can see it.
 
-Full walkthrough: [docs/INSTALL-WINDOWS.md](docs/INSTALL-WINDOWS.md).
+After setup, Mouse 5 is the default hold-to-talk button. A black waveform with
+no border, lamp or label appears while recording. The trigger and text worker
+stay ready between recordings; the microphone is closed while idle. The
+selected model loads automatically at login, including after a reboot.
 
-## Quickstart: macOS
+[Windows installation guide](docs/INSTALL-WINDOWS.md) — prerequisites, model
+links, microphone selection, autostart and platform limits. GitHub CLI is not
+required.
+
+### macOS
 
 ```bash
 git clone https://github.com/MrTorriz/sayit.git
 cd sayit
-./install.sh            # Homebrew packages, Metal build, checksummed models, .env, Sayit.app
-./bin/test-pipeline     # end-to-end check with a synthetic voice, no microphone needed
+./install.sh
+./bin/test-pipeline
 ```
 
-Allow Sayit the Microphone and Accessibility permissions when macOS asks, then
-set `TRIGGER_BUTTON` in `.env` — **Probe Trigger** in Sayit's menu shows what a
-button sends. A Logitech thumb button needs a mapping in Logi Options+ first.
-Requires macOS 14 or later; Apple Silicon recommended.
+The installer uses Homebrew, builds whisper.cpp with Metal, downloads the
+models (the large model on Apple Silicon), builds `Sayit.app` and loads its
+LaunchAgents. Allow Sayit the Microphone and Accessibility permissions when
+macOS asks. F18 is the default trigger: hold it to talk, or tap it to start and
+tap again to stop. A Logitech thumb button needs a keystroke mapping in
+Logi Options+ first; **Probe Trigger** in Sayit's menu shows what a button
+sends. Requires macOS 14 or later; Apple Silicon is recommended.
 
-Full walkthrough: [docs/INSTALL-MACOS.md](docs/INSTALL-MACOS.md).
+[macOS installation guide](docs/INSTALL-MACOS.md) — requirements, permissions,
+triggers, the indicator, the LaunchAgents and platform limits.
 
-## Verifying an installation
+### Optional Turbo engine
 
-```bash
-./bin/test-pipeline           # Linux and macOS: synthetic voice through the whole pipeline
-./bin/sayit doctor            # Linux and macOS: read-only check of the recording path
-```
+Linux and Windows only. Complete the base installation first, then follow the
+[OpenVINO setup guide](docs/OPENVINO.md). It covers the isolated Python runtime,
+compatible hardware, model verification and switching back to the native engine.
 
-```powershell
-.\win\sayit-doctor.ps1        # Windows: the same job for the Windows path
-```
+| Select the installed Turbo engine | Command |
+| --- | --- |
+| Linux | `./bin/sayit-engine fast` |
+| Windows | `.\win\sayit-engine.ps1 fast` |
 
-Each doctor resolves the microphone sayit will actually record from, reports the
-daemon and any leftover state, and prints the command that fixes what it finds
-rather than running it. The Linux and macOS ones change nothing at all; the Windows one
-opens no capture stream and runs none of its own suggestions, but does create
-its state directories on first run.
+Use `accurate` instead of `fast` to return to the configured whisper.cpp model.
+The selection persists across logins. These names select engines; they do not
+guarantee which one will recognize a particular sentence best.
 
-None dumps `.env`, your wordlist or any dictated text. All do print
-resolved local paths, device names and most setting values, so read the output
-before pasting it anywhere public.
+## Everyday commands
 
-## Main commands
-
-| What | Linux | Windows | macOS |
+| Task | Linux | Windows | macOS |
 | --- | --- | --- | --- |
-| Toggle | `./bin/sayit` | `.\win\sayit.ps1` | `./bin/sayit` |
-| Hold-mode start / stop | `./bin/sayit start` / `stop` | `.\win\sayit.ps1 start` / `stop` | the trigger in `Sayit.app` runs `./bin/sayit start` / `stop` |
-| Discard a recording | `./bin/sayit cancel` | `.\win\sayit.ps1 cancel` | Escape, or `./bin/sayit cancel` |
-| Diagnose | `./bin/sayit doctor` | `.\win\sayit-doctor.ps1` | `./bin/sayit doctor` |
-| Transcribe a WAV | `./bin/sayit-transcribe rec.wav` | `.\win\sayit-transcribe.ps1 rec.wav` | `./bin/sayit-transcribe rec.wav` |
-| History | `./bin/sayit-history` | `.\win\sayit-history.ps1` | `./bin/sayit-history` |
-| Statistics | `./bin/sayit-history --stat` | `.\win\sayit-history.ps1 -Stat` | `./bin/sayit-history --stat` |
-| Teach a word | `./bin/sayit-learn "wrong" "right"` | `.\win\sayit-learn.ps1 "wrong" "right"` | `./bin/sayit-learn "wrong" "right"` |
-| Start the daemon | `systemctl --user start sayit-daemon` | `.\win\sayit-daemon.ps1 start` | starts at login; restart: `launchctl kickstart -k gui/$(id -u)/io.github.mrtorriz.sayit.daemon` |
-| Keep the pill on screen | `systemctl --user enable --now sayit-overlay` ([install the unit first](docs/INSTALL-LINUX.md#recording-indicator-and-live-meter)) | — | `INDICATOR_RESIDENT=1`, then **Reload Settings** in Sayit's menu |
-| Move the indicator | drag the resident pill, or `./bin/sayit-overlay --place` | `.\win\sayit-indicator.ps1 place` | drag the resident pill, or **Place Indicator** in Sayit's menu |
-| Smoke test | `./bin/test-pipeline` | — | `./bin/test-pipeline` |
+| Toggle recording | `./bin/sayit` | `.\win\sayit.ps1` | `./bin/sayit` |
+| Discard recording | `./bin/sayit cancel` | `.\win\sayit.ps1 cancel` | Escape, or `./bin/sayit cancel` |
+| Check installation | `./bin/sayit doctor` | `.\win\sayit-doctor.ps1` | `./bin/sayit doctor` |
+| Show history | `./bin/sayit-history` | `.\win\sayit-history.ps1` | `./bin/sayit-history` |
+| Show statistics | `./bin/sayit-history --stat` | `.\win\sayit-history.ps1 -Stat` | `./bin/sayit-history --stat` |
+| Teach a replacement | `./bin/sayit-learn "get hub" "GitHub"` | `.\win\sayit-learn.ps1 "get hub" "GitHub"` | `./bin/sayit-learn "get hub" "GitHub"` |
 
-## Custom wordlist
+See the installation guides for manual start/stop commands and indicator
+placement, and [Configuration](docs/CONFIGURATION.md#custom-wordlist) for
+wordlist rules.
 
-Fix recurring mistranscriptions with a TSV of replacements. Same file format and
-same matching rules on every platform; only the path differs.
+## Limits and performance
 
-```text
-get hub	GitHub
-docker komposse	docker-compose
-```
+Text injection depends on the desktop and application. Windows cannot inject
+into an elevated window from the normal user process; its indicator cannot
+appear over exclusive fullscreen or the UAC secure desktop. Linux Wayland
+requires the injection tools described in its installation guide. On macOS,
+Sayit needs the Accessibility permission to hear its trigger and paste; while
+Secure Input is on (a password field, for example) keyboard triggers are not
+seen, and a blocked paste leaves the text on the clipboard.
 
-Faster than editing it by hand — teach sayit directly from a mistake:
+The model and supporting processes remain running between dictations, using
+memory and some background resources. Recognition speed depends on the model,
+hardware and recording length; transcription still takes time after release.
 
-```bash
-./bin/sayit-learn "gitting nore" "gitignore"
-```
-
-The format, the matching rules and where the file lives are in
-[docs/CONFIGURATION.md](docs/CONFIGURATION.md#custom-wordlist).
-
-Linux daemon requests disable token timestamps, just like the CLI fallback.
-This keeps the server from wrapping output inside words before normalization.
+[Performance measurements](docs/PERFORMANCE.md) document the Linux, Windows
+and macOS tests, hardware and methods. Engine timings are distinguished from the full
+button-to-text delay, and small samples are not general accuracy rankings.
 
 ## Privacy
 
-**Speech recognition and all audio processing run on your machine.** Audio never
-leaves it: the only place a recording is ever sent is the warm local daemon (`whisper-server` or the OpenVINO adapter)
-on `127.0.0.1`, and the fallback path hands it to a local binary instead. There
-is no telemetry and no account.
+Audio processing runs locally, with the model server bound to `127.0.0.1`.
+There is no telemetry. Installation downloads dependencies and models;
+subsequent speech recognition works offline.
 
-**One optional feature is the exception.** `LLM_CLEANUP=1`, Linux and macOS only and off by
-default, POSTs the transcribed **text** to `LLM_URL` for a cleanup pass.
-`LLM_URL` defaults to a local Ollama on `127.0.0.1`, which keeps the text on the
-machine. Point it at another host and your dictated text goes to that host, in
-plain HTTP.
+Dictated text is saved in local history, and recordings are temporary files
+removed after processing. Text delivery can use the clipboard. The
+[security guide](SECURITY.md) explains storage paths, retention, clipboard
+handling and what diagnostics may reveal.
 
-What is written to disk either way — the history file, the transient audio, what
-transits the clipboard, what the daemon logs can contain, and which diagnostics
-are safe to paste into an issue — is in [SECURITY.md](SECURITY.md).
+An optional Linux and macOS text-cleanup step (`LLM_CLEANUP=1`, off by default) sends
+transcribed text to `LLM_URL`. Its default is local Ollama; configuring a remote
+HTTP address sends text to that host without transport encryption.
 
-## Performance
+## Documentation
 
-In the August 2026 whisper.cpp benchmark, a 2.2-second Swedish sentence transcribed in a median of
-**1.62 s** on the Linux reference machine, about a second faster than the cold
-`whisper-cli` fallback. On Windows, Vulkan is roughly **13.7x** faster than the CPU
-build on encode.
+| Guide | Contents |
+| --- | --- |
+| [Linux installation](docs/INSTALL-LINUX.md) | Setup and everyday use on Linux |
+| [Windows installation](docs/INSTALL-WINDOWS.md) | Setup and everyday use on Windows 11 |
+| [macOS installation](docs/INSTALL-MACOS.md) | Setup, permissions and everyday use on macOS |
+| [Optional Turbo engine](docs/OPENVINO.md) | OpenVINO installation, switching and recovery (Linux, Windows) |
+| [Configuration](docs/CONFIGURATION.md) | Settings, models and wordlists |
+| [Troubleshooting](docs/TROUBLESHOOTING.md) | Symptoms, checks and fixes |
+| [Performance](docs/PERFORMANCE.md) | Measurements and their limits |
+| [Architecture](docs/ARCHITECTURE.md) | Pipelines, components and design decisions |
+| [Security](SECURITY.md) | Data handling and private vulnerability reports |
 
-On the macOS reference machine (Apple M6, Metal), the warm large model answered
-30 Swedish sentences in a mean of 1.05 s with fewer errors than medium, which is
-why Apple Silicon defaults to it.
+## Development
 
-Each figure comes from one machine, with the method, the dates and the
-limitations stated: [docs/PERFORMANCE.md](docs/PERFORMANCE.md).
+Linux and macOS share the commands in `bin/`; macOS adds `Sayit.app`, a
+recorder and a paste helper in Swift under `mac/`. Windows scripts and C#
+helpers live in `win/`, and the optional server shared by Linux and Windows in
+`engines/openvino/`. Tests live in `tests/`, `mac/tests/`, `win/tests/` and
+alongside that server. Shared code and settings can affect more than one
+platform.
 
-A separate September 2026 comparison on eight Swedish FLEURS clips measured
-**2.16 s mean with OpenVINO/Turbo versus 3.89 s with KB-Whisper-medium/Vulkan**.
-That is 44% less transcription time on the tested Intel GPU. The small sample
-had 18 versus 17 word errors, so it does not establish a general accuracy win.
-These are warm HTTP timings, not button-release-to-paste timings; see the
-[method and individual results](docs/PERFORMANCE.md#linux-openvinoturbo-comparison-2026-09-14).
-
-## Project structure
-
-```text
-sayit/
-├── bin/            Linux commands and recording overlay
-├── win/            Windows implementation — PowerShell 5.1, plus runtime-compiled C# in win/lib/
-├── mac/            macOS additions — Swift sources for Sayit.app, sayit-rec and sayit-paste; install.sh, sayit-doctor
-├── config/         desktop entry, systemd unit, example wordlist, example Solaar rules
-├── docs/           the documents linked above, the mark, and demo.gif with the make-demo.py that generates it
-├── icons/          theme icons: notification mark and OSD meter levels, light and dark
-├── engines/        Optional OpenVINO server, model manifest and tests
-├── install-openvino.sh  Optional Linux runtime installer
-├── tests/          bats suite (Linux, plus mac.bats for macOS) and the benchmark harness (Linux)
-├── win/tests/      Pester suite (Windows)
-├── models/         GGML model and Silero VAD — gitignored, fetched by the installer
-├── install.sh      Linux and macOS setup
-├── win/install.ps1 Windows setup
-└── .env.example    configuration template, shared, with Windows and macOS sections
-```
-
-Each implementation has its own tests, and neither can break the other's CI job.
-
-## Design notes
-
-- **Why clipboard injection on Linux and macOS, and typing on Windows?** `ydotool type` sends
-  US-layout keycodes, so any non-ASCII character breaks; clipboard plus `Shift+Insert`
-  is exact for every language and toolkit. `SendInput` with `KEYEVENTF_UNICODE` sends
-  the character itself, so Windows needs no such workaround — until the text is long
-  enough to hit the OS cap, which is when it pastes instead. On macOS `Cmd+V` works in
-  every app, terminals included, while Unicode key events do not; the whole previous
-  clipboard is restored afterwards and the dictation is marked so clipboard managers skip it.
-- **Why per-session state?** Each recording gets its own WAV and an atomically claimed
-  session file, so overlapping press and release events, double taps and back-to-back
-  dictations can never kill the wrong process or read a half-written file.
-- **Why a wordlist instead of fine-tuning?** Recurring mistranscriptions are highly
-  personal — project names, brand names. A TSV file fixes most of them at zero
-  training cost, and `sayit-learn` makes adding a rule a two-second operation.
-- **Why push-to-talk instead of a wake word?** Deliberate scope: push-to-talk is more
-  reliable, more private, and has no idle CPU cost.
-- **Why one repository for three platforms?** The parts worth keeping identical —
-  the wordlist, history format and shared settings — are exactly the
-  parts that are not code. Where code can be shared it is: macOS runs the Linux bash.
-
-The full reasoning, all three pipelines and the runtime state of each is in
-[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
-
-## Contributing
-
-Bug reports, fixes and focused features are welcome. [CONTRIBUTING.md](CONTRIBUTING.md)
-has the setup, the style rules, and the exact checks to run for a Linux, a Windows and
-a macOS change — they are different lists.
-
-CI runs five jobs: syntax and `shellcheck`, the
-[Bats](https://github.com/bats-core/bats-core) suite, OpenVINO protocol and
-installation tests without a GPU, Windows checks, and macOS checks. The Windows job parses every
-`win\*.ps1`, compiles the C# helpers with `Add-Type`, runs PSScriptAnalyzer and
-executes the Pester suite. The macOS job, on `macos-15`, compiles the three Swift
-targets, runs the Swift unit tests, the Bats suite and the pill geometry check.
-
-The workflow triggers only on pushes to `main` and on pull requests, so a feature
-branch gets no run of its own — open the pull request to get one.
+CI checks syntax, shell scripts, Windows helpers and the automated test suites.
+Hardware-dependent capture, inference and desktop interaction also need manual
+testing. See [Contributing](CONTRIBUTING.md) for checks and contribution guidance,
+and the [changelog](CHANGELOG.md) for updates.
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+[MIT](LICENSE).

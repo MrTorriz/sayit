@@ -28,12 +28,13 @@ if (-not (Test-Path -LiteralPath $WavPath)) { Write-Error "File not found: $WavP
 
 $settings = New-TranscribeSettings -Env (Import-DotEnv)
 
+$engineGate = Open-SayitEngineGate
 try {
     $text = Convert-WavToText -Path $WavPath -Settings $settings
 } catch {
     Write-Error $_.Exception.Message
     exit 1
-}
+} finally { $engineGate.Dispose() }
 
 [Console]::Out.Write($text)
 exit 0

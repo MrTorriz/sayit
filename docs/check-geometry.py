@@ -59,6 +59,7 @@ SWIFT = ROOT / "mac" / "Sources" / "Common" / "PillGeometry.swift"
 # derived and not Windows-only appears here; a new constant on either side
 # should be added, or it is checked by nothing.
 SCALARS = [
+    ("TransientWaveInset", "TRANSIENT_WAVE_INSET"),
     ("PillWidth", "WIDTH"),
     ("PillHeight", "HEIGHT"),
     ("PillRadius", "RADIUS"),
@@ -75,6 +76,7 @@ SCALARS = [
 ]
 
 VECTORS = [
+    ("TransientBarMaxU", "TRANSIENT_BAR_MAX_U"),
     ("BarMaxU", "BAR_MAX_U"),
     ("LampLit", "LAMP_LIT"),
     ("LampUnlit", "LAMP_UNLIT"),

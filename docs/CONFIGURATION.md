@@ -15,7 +15,7 @@ a platform does not use is ignored there.
 - [How .env is read](#how-env-is-read)
 
 The base transcription tables below describe whisper.cpp. For the optional
-Linux engine, see [OpenVINO settings](OPENVINO.md#configuration): `OPENVINO_HOME`,
+engine on Linux or Windows, see [OpenVINO settings](OPENVINO.md#configuration): `OPENVINO_HOME`,
 `OPENVINO_DEVICE` and `WHISPER_LIB`. It shares `DAEMON_PORT`, `SPEECH_LANGUAGE`,
 `INITIAL_PROMPT`, `VAD_MODEL`, `VAD_THRESHOLD` and the client wordlist. GGML model
 selection, `BEAM`, `THREADS` and `SUPPRESS_REGEX` affect the native engine and
@@ -177,7 +177,7 @@ sit behind the same guard.
 
 **Flash attention** — always on; it speeds up inference on GPU.
 
-**LLM cleanup (`LLM_CLEANUP=1`, Linux only)** — fixes spelling, split words and
+**LLM cleanup (`LLM_CLEANUP=1`, Linux and macOS)** — fixes spelling, split words and
 obvious errors with context. It POSTs the transcribed text to `LLM_URL`, which
 defaults to a local Ollama; that is the only configuration in which the text
 stays on your machine. Worth the latency only with a GPU-accelerated Ollama:
