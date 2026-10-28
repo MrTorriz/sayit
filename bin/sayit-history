@@ -6,7 +6,7 @@
 #   sayit-history <N>          # show the latest N entries (integer)
 #   sayit-history --stat       # total words, speaking WPM and time saved
 #   sayit-history --stat 7d    # same, limited to a period: Nd (days), Nh, Nm
-#   sayit-history --copy N     # copy entry N to the clipboard (wl-copy)
+#   sayit-history --copy N     # copy entry N to the clipboard (wl-copy/pbcopy)
 #   sayit-history --inject N   # re-inject entry N into the focused window
 #   sayit-history --clear      # empty the history file
 #
@@ -134,6 +134,9 @@ EOF
         TEXT=$(entry_text "${2:?--copy requires a line number}")
         if command -v wl-copy >/dev/null; then
             printf '%s' "$TEXT" | wl-copy
+            echo "Copied to clipboard"
+        elif command -v pbcopy >/dev/null; then
+            printf '%s' "$TEXT" | pbcopy
             echo "Copied to clipboard"
         else
             echo "$TEXT"

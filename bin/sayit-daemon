@@ -10,7 +10,13 @@
 #   - Starts whisper-server, keeping the model warm in RAM/GPU
 #   - Enables VAD when VAD_MODEL points to an existing file (less
 #     hallucination on trailing silence), flash attention and beam search
-#   - Run by the systemd service sayit-daemon.service (exec, no fork)
+#   - Run by the systemd service sayit-daemon.service (exec, no fork), or on
+#     macOS by the LaunchAgent io.github.mrtorriz.sayit.daemon
+#   - SAYIT_DAEMON_LOG (set by the macOS LaunchAgent): append this script's
+#     own errors and the server's output there. At each start a file past
+#     1 MiB is moved to .1 first - launchd rotates nothing, and the server
+#     writes timings for every request (never the transcribed text). A server
+#     that runs for weeks is rotated at its next start, not before.
 #
 # Exit codes:
 #   1  Model or whisper-server missing
@@ -25,13 +31,30 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # shellcheck source=/dev/null
 [[ -f "$REPO_ROOT/.env" ]] && source "$REPO_ROOT/.env"
 
+# Before any check, so a missing model or binary is in the log, not lost.
+if [[ -n "${SAYIT_DAEMON_LOG:-}" ]]; then
+    mkdir -p "$(dirname "$SAYIT_DAEMON_LOG")"
+    if [[ -f "$SAYIT_DAEMON_LOG" ]] && (( $(wc -c < "$SAYIT_DAEMON_LOG") > 1048576 )); then
+        mv -f "$SAYIT_DAEMON_LOG" "$SAYIT_DAEMON_LOG.1"
+    fi
+    exec >>"$SAYIT_DAEMON_LOG" 2>&1
+fi
+
 WHISPER_SERVER="${WHISPER_SERVER:-$HOME/.local/src/whisper.cpp/build/bin/whisper-server}"
 [[ -x "$WHISPER_SERVER" ]] || { echo "whisper-server missing — run install.sh" >&2; exit 1; }
 
 # SAYIT_MODEL (environment variable) wins over .env:MODEL_PATH — for
 # temporary A/B switching between models without editing .env (e.g. via
 # `systemctl --user set-environment SAYIT_MODEL=...`).
-MODEL="${SAYIT_MODEL:-${MODEL_PATH:-$REPO_ROOT/models/ggml-kb-whisper-medium-q5_0.bin}}"
+# The default model. On Apple Silicon the large model answers faster than
+# medium does on the Linux reference machine (docs/PERFORMANCE.md), so macOS
+# prefers it whenever it is installed.
+DEFAULT_MODEL="$REPO_ROOT/models/ggml-kb-whisper-medium-q5_0.bin"
+if [[ "$OSTYPE" == darwin* && "$HOSTTYPE" == a*64 \
+      && -f "$REPO_ROOT/models/ggml-kb-whisper-large-q5_0.bin" ]]; then
+    DEFAULT_MODEL="$REPO_ROOT/models/ggml-kb-whisper-large-q5_0.bin"
+fi
+MODEL="${SAYIT_MODEL:-${MODEL_PATH:-$DEFAULT_MODEL}}"
 [[ -f "$MODEL" ]] || { echo "Model missing: $MODEL — run install.sh" >&2; exit 1; }
 
 SPEECH_LANGUAGE="${SPEECH_LANGUAGE:-sv}"

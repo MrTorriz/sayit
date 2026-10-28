@@ -6,17 +6,18 @@
 #   test-pipeline "<text>"   # transcribe an arbitrary sentence
 #
 # Behavior:
-#   1. Generates a WAV with espeak-ng (voice follows SPEECH_LANGUAGE) in /tmp
+#   1. Generates a WAV with espeak-ng (macOS: the system's say and afconvert;
+#      voice follows SPEECH_LANGUAGE) in $TMPDIR or /tmp
 #   2. Sends it through sayit-transcribe (whisper.cpp)
 #   3. Prints the original and the result on stdout
-#   4. Cleans up the /tmp file on exit
+#   4. Cleans up the temporary files on exit
 #
 # Requirements:
-#   espeak-ng installed
+#   espeak-ng installed (Linux); a system voice for the language (macOS)
 #
 # Exit codes:
 #   0  The pipeline returned non-empty text
-#   1  espeak-ng missing, or transcription produced an empty result
+#   1  No speech synthesizer or voice, or transcription produced an empty result
 
 set -euo pipefail
 
@@ -30,17 +31,35 @@ case "$SPEECH_LANGUAGE" in
     *)  DEFAULT_TEXT="Hello, can you open the readme file and show its contents?" ;;
 esac
 TEST_TEXT="${1:-$DEFAULT_TEXT}"
-WAV="/tmp/sayit-test-$$.wav"
-trap 'rm -f "$WAV"' EXIT
+WAV="${TMPDIR:-/tmp}/sayit-test-$$.wav"
+AIFF="${WAV%.wav}.aiff"
+trap 'rm -f "$WAV" "$AIFF"' EXIT
 
-if ! command -v espeak-ng >/dev/null; then
-    echo "espeak-ng missing — install it with your package manager" >&2
-    exit 1
+if [[ "$OSTYPE" == darwin* ]]; then
+    # macOS ships speech synthesis: the first voice for the language, then
+    # afconvert to the 16 kHz mono PCM the recorder produces.
+    # A voice line is "Name [(Variant)]  ll_CC  # sample": the name may hold
+    # spaces, so it is everything before the locale field.
+    VOICE=$(say -v '?' | awk -v l="${SPEECH_LANGUAGE}_" '{
+        for (i = 2; i <= NF; i++) if ($i ~ /^[a-z][a-z][a-z]?_[A-Za-z0-9]+$/) {
+            if (index($i, l) == 1) { n = $1; for (j = 2; j < i; j++) n = n " " $j; print n; exit }
+            break
+        }
+    }')
+    [[ -n "$VOICE" ]] || { echo "No system voice for $SPEECH_LANGUAGE — add one under System Settings > Accessibility > Spoken Content" >&2; exit 1; }
+    echo "[test] Generating WAV with say (voice: $VOICE)"
+    echo "[test] Original: $TEST_TEXT"
+    say -v "$VOICE" -o "$AIFF" "$TEST_TEXT"
+    afconvert -f WAVE -d LEI16@16000 -c 1 "$AIFF" "$WAV"
+else
+    if ! command -v espeak-ng >/dev/null; then
+        echo "espeak-ng missing — install it with your package manager" >&2
+        exit 1
+    fi
+    echo "[test] Generating WAV with espeak-ng (voice: $SPEECH_LANGUAGE)"
+    echo "[test] Original: $TEST_TEXT"
+    espeak-ng -v "$SPEECH_LANGUAGE" "$TEST_TEXT" -w "$WAV"
 fi
-
-echo "[test] Generating WAV with espeak-ng (voice: $SPEECH_LANGUAGE)"
-echo "[test] Original: $TEST_TEXT"
-espeak-ng -v "$SPEECH_LANGUAGE" "$TEST_TEXT" -w "$WAV"
 
 echo "[test] Transcribing..."
 RESULT=$("$REPO_ROOT/bin/sayit-transcribe" "$WAV")

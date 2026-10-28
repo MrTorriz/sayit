@@ -21,6 +21,9 @@
 #     a short transient notification and hide becomes a no-op; a missing
 #     notify-send, gdbus or Plasma OSD is silently tolerated. The indicator
 #     must never break the recording pipeline.
+#   - macOS: Sayit.app draws the pill. show/hide only create and remove
+#     $XDG_RUNTIME_DIR/sayit.indicator.on, which the app watches; the level
+#     comes from the recorder itself.
 #   - Called by bin/sayit. The toggles are independent and live here:
 #     RECORDING_INDICATOR=0 disables the notification, RECORDING_METER=0 the
 #     meter. hide always stops both regardless of the toggles.
@@ -35,6 +38,14 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # shellcheck source=/dev/null
 [[ -f "$REPO_ROOT/.env" ]] && source "$REPO_ROOT/.env"
 
+# macOS has no XDG_RUNTIME_DIR. Its per-user temporary directory (mode 0700,
+# private to the user, though on disk) plays the same role; exported, so every
+# child and Sayit.app agree on it.
+if [[ -z "${XDG_RUNTIME_DIR:-}" && "$OSTYPE" == darwin* ]]; then
+    XDG_RUNTIME_DIR=$(getconf DARWIN_USER_TEMP_DIR 2>/dev/null) || XDG_RUNTIME_DIR=""
+    XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR%/}"
+    export XDG_RUNTIME_DIR
+fi
 RUN_DIR="${XDG_RUNTIME_DIR:-/tmp}"
 ID_FILE="$RUN_DIR/sayit.indicator"
 METER_PID_FILE="$RUN_DIR/sayit.meter"
@@ -121,6 +132,15 @@ hide() {
         --method org.freedesktop.Notifications.CloseNotification \
         "$id" >/dev/null 2>&1 || true
 }
+
+if [[ "$OSTYPE" == darwin* ]]; then
+    case "${1:-}" in
+        show) [[ "${RECORDING_INDICATOR:-1}" == "0" ]] || : > "$RUN_DIR/sayit.indicator.on" ;;
+        hide) rm -f "$RUN_DIR/sayit.indicator.on" ;;
+        *)    echo "Usage: sayit-indicator [show|hide]" >&2; exit 1 ;;
+    esac
+    exit 0
+fi
 
 case "${1:-}" in
     show) show "${2:-}" ;;

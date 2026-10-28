@@ -33,6 +33,11 @@
 #   XWayland windows and reports false success elsewhere).
 #   ydotool talks to ydotoold via YDOTOOL_SOCKET (default /run/.ydotool_socket).
 #
+#   macOS: hands the text on stdin to Sayit.app's sayit-paste - clipboard plus
+#   Cmd+V with the previous clipboard restored, or Unicode typing with
+#   INJECT_METHOD=type. Without the Accessibility permission the text is left
+#   on the clipboard for a manual Cmd+V, and the exit code is 1.
+#
 # Exit codes:
 #   0  Text injected
 #   1  No injector succeeded. The text is echoed to stdout only on an
@@ -43,12 +48,42 @@ set -euo pipefail
 
 TEXT="${1:?Usage: sayit-inject <text>}"
 
+if [[ "$OSTYPE" == darwin* ]]; then
+    REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+    # shellcheck source=/dev/null
+    [[ -f "$REPO_ROOT/.env" ]] && source "$REPO_ROOT/.env"
+    # macOS: sayit-rec and sayit-paste live in Sayit.app, whose Microphone and
+    # Accessibility permissions they run under. SAYIT_MAC_HELPERS is set by the app.
+    mac_helper() {
+        local dir
+        for dir in "${SAYIT_MAC_HELPERS:-}" "$HOME/Applications/Sayit.app/Contents/MacOS" \
+                   "/Applications/Sayit.app/Contents/MacOS" \
+                   "$REPO_ROOT/mac/build/Sayit.app/Contents/MacOS"; do
+            [[ -n "$dir" && -x "$dir/$1" ]] && { printf '%s\n' "$dir/$1"; return 0; }
+        done
+        return 1
+    }
+    PASTE=$(mac_helper sayit-paste) || { echo "sayit-paste missing — run ./install.sh" >&2; exit 1; }
+    printf '%s' "$TEXT" | INJECT_METHOD="${INJECT_METHOD:-auto}" \
+        PASTE_RESTORE_DELAY="${PASTE_RESTORE_DELAY:-1.0}" "$PASTE" || exit 1
+    exit 0
+fi
+
 export YDOTOOL_SOCKET="${YDOTOOL_SOCKET:-/run/.ydotool_socket}"
 
 mark() {
     [[ -n "${SAYIT_PROFILE:-}" ]] || return 0
-    local up
-    read -r up _ < /proc/uptime
+    local up boot now
+    if [[ -r /proc/uptime ]]; then
+        read -r up _ < /proc/uptime
+    else
+        # macOS: seconds since boot from kern.boottime ("{ sec = N, usec = M } ...").
+        boot=$(sysctl -n kern.boottime 2>/dev/null) || boot=""
+        boot="${boot#*sec = }"; boot="${boot%%,*}"
+        [[ "$boot" =~ ^[0-9]+$ ]] || boot=0
+        now="${EPOCHREALTIME/,/.}"
+        up="$(( ${now%.*} - boot )).${now#*.}"
+    fi
     printf '%s,%s,%s,%s,%s\n' "${SAYIT_PROFILE_RUN:-0}" "${EPOCHREALTIME/,/.}" "$up" \
         "$1" "${2:-}" >> "${XDG_RUNTIME_DIR:-/tmp}/sayit-profile.csv"
 }

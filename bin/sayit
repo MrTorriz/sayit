@@ -10,7 +10,8 @@
 #
 # Behavior:
 #   - Each recording session has its own WAV file and one session state file
-#     in $XDG_RUNTIME_DIR (or /tmp): sayit.session holds pid<TAB>wav<TAB>start.
+#     in $XDG_RUNTIME_DIR (macOS: the per-user temporary directory; else /tmp):
+#     sayit.session holds pid<TAB>wav<TAB>start.
 #     stop/cancel claim the session atomically, so overlapping invocations can
 #     never signal the wrong process or read another session's WAV.
 #   - A short-lived intent marker (sayit.starting) covers the window while
@@ -20,9 +21,10 @@
 #   - Transcribed text is injected into the focused window via sayit-inject
 #   - Every successful transcription is logged to
 #     $XDG_DATA_HOME/sayit/history.jsonl
-#   - Status notifications via notify-send (when available); a persistent
-#     recording indicator (sayit-indicator) is shown once the microphone is
-#     actually live. Disable it with RECORDING_INDICATOR=0 in .env.
+#   - Status notifications via notify-send (when available); on macOS the
+#     last status goes to $XDG_RUNTIME_DIR/sayit.status for Sayit.app's menu
+#     instead. A persistent recording indicator (sayit-indicator) is shown once
+#     the microphone is actually live. Disable it with RECORDING_INDICATOR=0.
 #   - Transcription errors are summarized in a notification and appended to
 #     $XDG_RUNTIME_DIR/sayit-last-error.log (error class only — never text).
 #
@@ -36,11 +38,23 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # shellcheck source=/dev/null
 [[ -f "$REPO_ROOT/.env" ]] && source "$REPO_ROOT/.env"
 
+# macOS has no XDG_RUNTIME_DIR. Its per-user temporary directory (mode 0700,
+# private to the user, though on disk) plays the same role; exported, so every
+# child and Sayit.app agree on it.
+if [[ -z "${XDG_RUNTIME_DIR:-}" && "$OSTYPE" == darwin* ]]; then
+    XDG_RUNTIME_DIR=$(getconf DARWIN_USER_TEMP_DIR 2>/dev/null) || XDG_RUNTIME_DIR=""
+    XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR%/}"
+    export XDG_RUNTIME_DIR
+fi
+
 RUN_DIR="${XDG_RUNTIME_DIR:-/tmp}"
 # Shared with the engine switcher. Children retain this lock while recording;
 # stop/transcribe can run together, but a service restart cannot cut them off.
-exec 8>"$RUN_DIR/sayit-engine.lock"
-flock -sn 8 || { echo 'Engine switch in progress; try again when ready.' >&2; exit 1; }
+# flock(1) is util-linux: macOS has neither it nor the engine switcher.
+if command -v flock >/dev/null; then
+    exec 8>"$RUN_DIR/sayit-engine.lock"
+    flock -sn 8 || { echo 'Engine switch in progress; try again when ready.' >&2; exit 1; }
+fi
 SESSION_FILE="$RUN_DIR/sayit.session"
 INTENT_FILE="$RUN_DIR/sayit.starting"
 ERROR_LOG="$RUN_DIR/sayit-last-error.log"
@@ -52,8 +66,17 @@ MODE="${1:-toggle}"
 # monotonic uptime, stage and a numeric extra as CSV. Never any dictated text.
 mark() {
     [[ -n "${SAYIT_PROFILE:-}" ]] || return 0
-    local up
-    read -r up _ < /proc/uptime
+    local up boot now
+    if [[ -r /proc/uptime ]]; then
+        read -r up _ < /proc/uptime
+    else
+        # macOS: seconds since boot from kern.boottime ("{ sec = N, usec = M } ...").
+        boot=$(sysctl -n kern.boottime 2>/dev/null) || boot=""
+        boot="${boot#*sec = }"; boot="${boot%%,*}"
+        [[ "$boot" =~ ^[0-9]+$ ]] || boot=0
+        now="${EPOCHREALTIME/,/.}"
+        up="$(( ${now%.*} - boot )).${now#*.}"
+    fi
     printf '%s,%s,%s,%s,%s\n' "${SAYIT_PROFILE_RUN:-0}" "${EPOCHREALTIME/,/.}" "$up" \
         "$1" "${2:-}" >> "$RUN_DIR/sayit-profile.csv"
 }
@@ -82,6 +105,15 @@ resolve_notify_icon() {
 }
 
 notify() {
+    # macOS: no notifications - Notification Center would keep every one,
+    # dictated snippets included. Sayit.app shows the last status in its menu
+    # bar item; a "Done" status loses its text on the way.
+    if [[ "$OSTYPE" == darwin* ]]; then
+        local status="$1"
+        [[ "$status" == "Done ("*"): "* ]] && status="${status%%): *})"
+        printf '%s\n' "$status" > "$RUN_DIR/sayit.status" 2>/dev/null || true
+        return 0
+    fi
     command -v notify-send >/dev/null || return 0
     # The notification body is parsed as markup by the server: escape it so
     # dictated text containing & or < renders literally instead of vanishing.
@@ -108,12 +140,18 @@ indicator() {
 
 # A PID from a state file is only trusted while its command line names the
 # session's own (unique) WAV path — true both before exec (the sayit-record
-# wrapper) and after (pw-record's outfile argument). Guards against PID
-# recycling: a reused PID, even another recorder, is never signalled.
+# wrapper) and after (pw-record's or sayit-rec's outfile argument). Guards
+# against PID recycling: a reused PID, even another recorder, is never
+# signalled. macOS has no /proc; ps reports the same command line there.
 is_recorder() {
     local pid="${1:-0}" wav="${2:-}" cmdline
     [[ -n "$wav" ]] || return 1
-    cmdline=$(tr '\0' ' ' < "/proc/$pid/cmdline" 2>/dev/null) || return 1
+    if [[ -d /proc ]]; then
+        cmdline=$(tr '\0' ' ' < "/proc/$pid/cmdline" 2>/dev/null) || return 1
+    else
+        [[ "$pid" =~ ^[0-9]+$ ]] || return 1
+        cmdline=$(ps -o command= -p "$pid" 2>/dev/null) || return 1
+    fi
     [[ "$cmdline" == *"$wav"* ]]
 }
 
@@ -223,7 +261,8 @@ start_recording() {
     [[ "$(cat "$INTENT_FILE" 2>/dev/null)" == "$$" ]] || return 0
 
     local wav="$RUN_DIR/sayit-$$.wav" start pid
-    start=$(date +%s.%N)
+    # EPOCHREALTIME rather than date +%s.%N: older BSD date prints a literal N.
+    start="${EPOCHREALTIME/,/.}"
     # Detach the recorder's stdio from the caller (Solaar/hotkey handler):
     # its stderr goes to the error log, never to the caller's pipes.
     # Job control (set -m) gives the child a default SIGINT disposition —
@@ -314,7 +353,7 @@ stop_and_inject() {
 
     stop_recorder
     mark record.killed
-    END=$(date +%s.%N)
+    END="${EPOCHREALTIME/,/.}"
 
     # Restore the headset's previous profile (A2DP) once recording is done.
     "$REPO_ROOT/bin/sayit-bt" down 2>/dev/null || true
@@ -331,7 +370,8 @@ stop_and_inject() {
     rm -f "$REC_WAV"
 
     if [[ -n "${TEXT// }" ]]; then
-        WORDS=$(printf '%s\n' "$TEXT" | wc -w)
+        # Arithmetic drops the padding BSD wc puts before the count.
+        WORDS=$(( $(printf '%s\n' "$TEXT" | wc -w) ))
         if "$REPO_ROOT/bin/sayit-inject" "$TEXT"; then
             notify "Done ($WORDS words): ${TEXT:0:60}"
         else
@@ -341,7 +381,8 @@ stop_and_inject() {
 
         # Append to history. The text goes via stdin (not argv) and the
         # duration is computed in python: float() always parses the period
-        # decimal that date +%s.%N produces, regardless of locale.
+        # decimal both timestamps carry (EPOCHREALTIME with any locale comma
+        # replaced), regardless of locale.
         mkdir -p "$(dirname "$HIST")"
         if ! printf '%s' "$TEXT" | python3 -c "
 import json, sys, datetime

@@ -31,6 +31,10 @@
 
 set -euo pipefail
 
+# macOS switches a headset to its microphone profile by itself when capture
+# opens it, as Windows does: nothing to switch, and nothing to restore.
+[[ "$OSTYPE" == darwin* ]] && exit 0
+
 # pactl warns on stderr about non-ASCII in its own JSON output (device names
 # may contain dashes or other characters); the pactl calls below are silenced
 # with 2>/dev/null. A UTF-8 locale keeps jq's parsing of those bytes correct.

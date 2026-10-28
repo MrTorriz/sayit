@@ -1,21 +1,24 @@
 #!/usr/bin/env bash
 # install.sh — one-time setup for sayit
 #
-# Verifies system packages (Fedora/Debian/Ubuntu/Arch), builds whisper.cpp at
-# a pinned release (with Vulkan when available), downloads a Whisper model +
-# the Silero VAD model with sha256 verification, creates .env, seeds the
-# user wordlist and installs the sayit theme icons. Re-running is safe:
-# existing artifacts are left untouched (the theme icons are re-copied —
-# they carry no user content).
+# Verifies system packages (Fedora/Debian/Ubuntu/Arch, or Homebrew on macOS),
+# builds whisper.cpp at a pinned release (Vulkan when available on Linux,
+# Metal on macOS), downloads a Whisper model + the Silero VAD model with
+# sha256 verification, creates .env, seeds the user wordlist and installs the
+# sayit theme icons (Linux) or builds Sayit.app and its LaunchAgents (macOS,
+# via mac/install.sh). Re-running is safe: existing artifacts are left
+# untouched (the theme icons are re-copied — they carry no user content).
 #
 # Flags:
 #   -y, --yes           answer yes to all prompts
-#   --model SIZE        model size to download: small | medium | large (default: medium)
+#   --model SIZE        model size to download: small | medium | large
+#                       (default: medium; large on Apple Silicon)
 #   --rebuild           re-fetch and rebuild whisper.cpp at the pinned release
 #                       (upgrade path; also repairs a broken build)
 #   --skip-packages     skip the system package check
 #   --skip-build        skip building whisper.cpp
 #   --skip-model        skip the model downloads
+#   --skip-agent        macOS only: skip building Sayit.app and its LaunchAgents
 #   -h, --help          show help and exit
 #
 # Upgrade/rollback:
@@ -39,11 +42,13 @@ Usage:
 
 Flags:
   -y, --yes           answer yes to all prompts
-  --model SIZE        model size to download: small | medium | large (default: medium)
+  --model SIZE        model size to download: small | medium | large
+                      (default: medium; large on Apple Silicon)
   --rebuild           re-fetch and rebuild whisper.cpp at the pinned release
   --skip-packages     skip the system package check
   --skip-build        skip building whisper.cpp
   --skip-model        skip the model downloads
+  --skip-agent        macOS only: skip building Sayit.app and its LaunchAgents
   -h, --help          show this help
 
 Examples:
@@ -62,8 +67,17 @@ YES=0
 SKIP_PACKAGES=0
 SKIP_BUILD=0
 SKIP_MODEL=0
+SKIP_AGENT=0
 REBUILD=0
 MODEL_SIZE="medium"
+# Apple Silicon runs the large model faster than the Linux reference machine
+# runs medium (docs/PERFORMANCE.md), so that is what a Mac downloads by default.
+APPLE_SILICON=0
+[[ "$OSTYPE" == darwin* && "$HOSTTYPE" == a*64 ]] && APPLE_SILICON=1
+[[ $APPLE_SILICON -eq 1 ]] && MODEL_SIZE="large"
+# The size the scripts load when MODEL_PATH is empty. Any other choice has to
+# be written to .env, or the scripts keep loading this one.
+DEFAULT_SIZE="$MODEL_SIZE"
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -77,6 +91,7 @@ while [[ $# -gt 0 ]]; do
         --skip-packages) SKIP_PACKAGES=1; shift ;;
         --skip-build) SKIP_BUILD=1; shift ;;
         --skip-model) SKIP_MODEL=1; shift ;;
+        --skip-agent) SKIP_AGENT=1; shift ;;
         -h|--help) show_help; exit 0 ;;
         *) echo "Unknown flag: $1" >&2; echo "Run './install.sh --help' to see available flags." >&2; exit 1 ;;
     esac
@@ -112,6 +127,9 @@ log()  { printf '\033[1;34m[sayit]\033[0m %s\n' "$*"; }
 warn() { printf '\033[1;33m[warning]\033[0m %s\n' "$*"; }
 die()  { printf '\033[1;31m[error]\033[0m %s\n' "$*" >&2; exit 1; }
 
+IS_MACOS=0
+[[ "$OSTYPE" == darwin* ]] && IS_MACOS=1
+
 # 1. Verify system packages (per-distro package names)
 if [[ $SKIP_PACKAGES -eq 0 ]]; then
     # ydotool + wl-clipboard: primary injection (clipboard + Shift+Insert)
@@ -120,7 +138,22 @@ if [[ $SKIP_PACKAGES -eq 0 ]]; then
     # python3-gobject + GTK 3 + gtk-layer-shell: the overlay meter style
     # (without them the meter falls back to the Plasma OSD styles)
     PM=""
-    if command -v dnf >/dev/null 2>&1; then
+    VULKAN=()
+    if [[ $IS_MACOS -eq 1 ]]; then
+        # cmake builds whisper.cpp (Metal needs nothing extra); bash 5 because
+        # launchd and the agent resolve `env bash` to /bin/bash 3.2 otherwise,
+        # which the scripts do not support. The compilers come from the Xcode
+        # Command Line Tools, which Homebrew itself requires.
+        command -v brew >/dev/null 2>&1 \
+            || die "Homebrew is required on macOS — see https://brew.sh, then re-run"
+        xcode-select -p >/dev/null 2>&1 \
+            || die "Xcode Command Line Tools missing — run: xcode-select --install"
+        PM="brew"
+        REQUIRED=(cmake bash)
+        OPTIONAL=()
+        pkg_installed() { brew list --formula "$1" >/dev/null 2>&1; }
+        pkg_install() { brew install "$@"; }
+    elif command -v dnf >/dev/null 2>&1; then
         PM="dnf"
         REQUIRED=(cmake gcc-c++ git curl pipewire-utils ydotool wl-clipboard jq libnotify)
         VULKAN=(mesa-vulkan-drivers vulkan-tools vulkan-headers vulkan-loader-devel glslc spirv-headers-devel)
@@ -156,10 +189,13 @@ if [[ $SKIP_PACKAGES -eq 0 ]]; then
 
     log "Checking system packages ($PM)"
     MISSING=()
-    for pkg in "${REQUIRED[@]}" "${VULKAN[@]}"; do
+    # ${a[@]+"${a[@]}"}: VULKAN and OPTIONAL are empty on macOS, where a
+    # fresh Mac runs this under /bin/bash 3.2 - and bash before 4.4 calls an
+    # empty "${a[@]}" unbound under set -u.
+    for pkg in "${REQUIRED[@]}" ${VULKAN[@]+"${VULKAN[@]}"}; do
         pkg_installed "$pkg" || MISSING+=("$pkg")
     done
-    for pkg in "${OPTIONAL[@]}"; do
+    for pkg in ${OPTIONAL[@]+"${OPTIONAL[@]}"}; do
         pkg_installed "$pkg" || warn "Optional package missing: $pkg (wtype = wlroots fallback, espeak-ng = test-pipeline, the GTK/layer-shell trio = overlay meter)"
     done
 
@@ -198,17 +234,23 @@ elif [[ ! -x "$WHISPER_BIN" || $REBUILD -eq 1 ]]; then
         git -C "$WHISPER_SRC" checkout --detach "$WHISPER_REF"
     fi
 
-    # Auto-detect Vulkan development support (shader compiler + headers)
+    # Auto-detect Vulkan development support (shader compiler + headers).
+    # On macOS ggml builds its Metal backend by default, so no flag is needed.
     VULKAN_FLAG="-DGGML_VULKAN=1"
-    if ! command -v glslc >/dev/null || [[ ! -f /usr/include/vulkan/vulkan.h ]]; then
+    BACKEND="vulkan"
+    if [[ $IS_MACOS -eq 1 ]]; then
+        VULKAN_FLAG=""
+        BACKEND="metal"
+    elif ! command -v glslc >/dev/null || [[ ! -f /usr/include/vulkan/vulkan.h ]]; then
         warn "Vulkan development packages missing — building CPU-only (still fast on modern CPUs)"
         warn "For GPU acceleration, install the Vulkan headers, loader and glslc, then re-run"
         VULKAN_FLAG=""
+        BACKEND="cpu"
     fi
 
-    log "Building whisper.cpp ${VULKAN_FLAG:+with Vulkan support}"
+    log "Building whisper.cpp with the $BACKEND backend"
     cmake -S "$WHISPER_SRC" -B "$WHISPER_SRC/build" $VULKAN_FLAG -DCMAKE_BUILD_TYPE=Release
-    cmake --build "$WHISPER_SRC/build" -j"$(nproc)" --config Release
+    cmake --build "$WHISPER_SRC/build" -j"$(nproc 2>/dev/null || getconf _NPROCESSORS_ONLN)" --config Release
 
     mkdir -p "$HOME/.local/bin"
     ln -sf "$WHISPER_SRC/build/bin/whisper-cli" "$WHISPER_BIN"
@@ -217,6 +259,7 @@ elif [[ ! -x "$WHISPER_BIN" || $REBUILD -eq 1 ]]; then
         printf 'ref=%s\n' "$WHISPER_REF"
         printf 'commit=%s\n' "$(git -C "$WHISPER_SRC" rev-parse HEAD)"
         printf 'vulkan=%s\n' "$([[ -n "$VULKAN_FLAG" ]] && echo yes || echo no)"
+        printf 'backend=%s\n' "$BACKEND"
         printf 'date=%s\n' "$(date -Iseconds)"
     } > "$WHISPER_SRC/.sayit-build-info" || true
     log "whisper-cli linked to $WHISPER_BIN"
@@ -226,7 +269,12 @@ fi
 
 # Verify a downloaded artifact against its pinned sha256 before activating it.
 verify_sha256() {  # verify_sha256 <file> <sha256>
-    printf '%s  %s\n' "$2" "$1" | sha256sum -c --status
+    # Older macOS releases ship shasum but no sha256sum.
+    if command -v sha256sum >/dev/null; then
+        printf '%s  %s\n' "$2" "$1" | sha256sum -c --status
+    else
+        printf '%s  %s\n' "$2" "$1" | shasum -a 256 -c --status
+    fi
 }
 
 # 3. Download the Whisper model (KB-Whisper, quantized q5_0)
@@ -273,8 +321,17 @@ if [[ ! -f "$REPO_ROOT/.env" ]]; then
     [[ -f "$REPO_ROOT/.env.example" ]] || die ".env.example not found — is the repo damaged?"
     cp "$REPO_ROOT/.env.example" "$REPO_ROOT/.env"
     # Non-default model size: point MODEL_PATH at the downloaded file
-    if [[ "$MODEL_SIZE" != "medium" ]]; then
-        sed -i "s|^MODEL_PATH=.*|MODEL_PATH=\"$MODEL_FILE\"|" "$REPO_ROOT/.env"
+    # (A temporary file rather than sed -i, whose syntax differs on macOS.)
+    # The platform's default size (medium; large on Apple Silicon) needs no entry.
+    if [[ "$MODEL_SIZE" != "$DEFAULT_SIZE" ]]; then
+        sed "s|^MODEL_PATH=.*|MODEL_PATH=\"$MODEL_FILE\"|" "$REPO_ROOT/.env" > "$REPO_ROOT/.env.tmp"
+        mv "$REPO_ROOT/.env.tmp" "$REPO_ROOT/.env"
+    fi
+    # macOS: the template's TRIGGER_BUTTON is the Windows mouse button; a Mac
+    # starts from F18, which no app uses (docs/INSTALL-MACOS.md).
+    if [[ $IS_MACOS -eq 1 ]]; then
+        sed 's|^TRIGGER_BUTTON=.*|TRIGGER_BUTTON="F18"|' "$REPO_ROOT/.env" > "$REPO_ROOT/.env.tmp"
+        mv "$REPO_ROOT/.env.tmp" "$REPO_ROOT/.env"
     fi
     log "Created .env from template"
 else
@@ -289,10 +346,14 @@ else
         warn "New settings in .env.example missing from your .env: $MISSING_VARS"
         warn "Copy the ones you want from .env.example (defaults apply meanwhile)"
     fi
-    if [[ "$MODEL_SIZE" != "medium" ]]; then
+    if [[ "$MODEL_SIZE" != "$DEFAULT_SIZE" ]]; then
         log "To activate the $MODEL_SIZE model, set in .env:"
         log "  MODEL_PATH=\"$MODEL_FILE\""
-        log "then restart the daemon: systemctl --user restart sayit-daemon.service"
+        if [[ $IS_MACOS -eq 1 ]]; then
+            log "then restart the daemon: launchctl kickstart -k gui/$(id -u)/io.github.mrtorriz.sayit.daemon"
+        else
+            log "then restart the daemon: systemctl --user restart sayit-daemon.service"
+        fi
     fi
 fi
 
@@ -309,7 +370,9 @@ fi
 # are sayit's own namespaced files, so re-copying on every run is the upgrade
 # path — no user content lives here.
 ICON_ROOT="${XDG_DATA_HOME:-$HOME/.local/share}/icons/hicolor/scalable"
-if [[ -d "$REPO_ROOT/icons" ]]; then
+if [[ $IS_MACOS -eq 1 ]]; then
+    :   # freedesktop theme icons; Sayit.app draws its own pill and menu icon
+elif [[ -d "$REPO_ROOT/icons" ]]; then
     mkdir -p "$ICON_ROOT/apps" "$ICON_ROOT/status"
     # An incomplete icons/ must degrade like a missing one (the scripts fall
     # back by themselves), never abort the installation — hence || below.
@@ -338,6 +401,19 @@ if command -v vulkaninfo >/dev/null; then
     else
         warn "No Vulkan GPU found — whisper.cpp falls back to CPU"
     fi
+fi
+
+# 7. macOS: build Sayit.app (trigger, pill, recorder, paste helper) and load
+# the LaunchAgents for it and the warm daemon.
+if [[ $IS_MACOS -eq 1 ]]; then
+    if [[ $SKIP_AGENT -eq 1 ]]; then
+        log "Skipping Sayit.app and the LaunchAgents"
+    else
+        "$REPO_ROOT/mac/install.sh" || die "Building Sayit.app failed — see above"
+    fi
+    log "Done. Try: ./bin/test-pipeline"
+    log "Then grant Sayit the permissions it asks for — see docs/INSTALL-MACOS.md"
+    exit 0
 fi
 
 log "Done. Try: ./bin/test-pipeline"

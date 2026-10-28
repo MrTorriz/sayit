@@ -15,6 +15,7 @@
 #   - Reports how recording will interact with a connected Bluetooth headset.
 #   - Flags leftover state from an aborted recording: a stale session file, or
 #     a headset left in its call profile.
+#   - On macOS, hands over to mac/sayit-doctor (the same contract: read-only).
 #
 # Exit codes:
 #   0  No failures (warnings may still be present)
@@ -23,13 +24,15 @@
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# macOS has no PipeWire to inspect; its checks live with the rest of mac/.
+[[ "$OSTYPE" == darwin* ]] && exec "$REPO_ROOT/mac/sayit-doctor" "$@"
 # shellcheck source=/dev/null
 [[ -f "$REPO_ROOT/.env" ]] && source "$REPO_ROOT/.env"
 
 QUIET=0
 case "${1:-}" in
     --quiet|-q) QUIET=1 ;;
-    --help|-h)  sed -n '2,21p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    --help|-h)  sed -n '2,22p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
     "")         ;;
     *)          echo "Usage: sayit-doctor [--quiet]" >&2; exit 1 ;;
 esac
