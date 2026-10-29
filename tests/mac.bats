@@ -590,6 +590,36 @@ EOF
     [ "$(grep -c "^server" "$LOG")" -eq 1 ]
 }
 
+@test "the daemon serves under a fresh private path that sayit-transcribe and only the user can read" {
+    daemon_sandbox
+    run "$DAEMON"
+    [ "$status" -eq 0 ]
+    prefix=$(cat "$RUN_DIR/sayit-daemon.path")
+    [[ "$prefix" =~ ^/[0-9a-f]{32}$ ]]
+    [[ "$output" == *"--request-path $prefix"* ]]
+    [ "$(ls -l "$RUN_DIR/sayit-daemon.path" | cut -c1-10)" = "-rw-------" ]
+    run "$DAEMON"
+    [ "$(cat "$RUN_DIR/sayit-daemon.path")" != "$prefix" ]
+
+    prefix=$(cat "$RUN_DIR/sayit-daemon.path")
+    run "$TRANSCRIBE" "$WAV"
+    [ "$output" = "daemon text" ]
+    grep -q -- "http://127.0.0.1:9876$prefix/inference" "$STUB_CTL/curl.args"
+    # Anything else in the file is ignored.
+    printf '/../load\n' > "$RUN_DIR/sayit-daemon.path"
+    run "$TRANSCRIBE" "$WAV"
+    grep -q -- "http://127.0.0.1:9876/inference" "$STUB_CTL/curl.args"
+}
+
+@test "a fallback to the cold CLI is announced in the status file" {
+    transcribe_sandbox
+    printf 'model' > "$LARGE"
+    CURL_MODE=fail run "$TRANSCRIBE" "$WAV"
+    [ "$status" -eq 0 ]
+    [ "$output" = "cli text" ]
+    [[ "$(cat "$STATUS")" == "Transcribing without the server"* ]]
+}
+
 @test "a daemon that cannot start says why in SAYIT_DAEMON_LOG" {
     daemon_sandbox
     LOG="$HOME/Library/Logs/sayit/daemon.log"

@@ -22,6 +22,9 @@
 #     the whisper-server build supports the flag. SAYIT_MODEL overrides
 #     MODEL_PATH on both paths.
 #   - A WAV with no samples returns empty without contacting either path.
+#   - macOS: the daemon's URL carries the random prefix sayit-daemon wrote to
+#     $XDG_RUNTIME_DIR/sayit-daemon.path, and a fallback to the cold CLI is
+#     announced in sayit.status for Sayit's menu.
 #   - Applies the wordlist as case-insensitive word-boundary replacements
 #   - Prints normalized text on stdout (no newlines, tabs or status lines).
 #     stderr carries error classes only — never transcribed text.
@@ -72,7 +75,13 @@ SPEECH_LANGUAGE="${SPEECH_LANGUAGE:-sv}"
 THREADS="${THREADS:-8}"
 BEAM="${BEAM:-5}"
 DAEMON_PORT="${DAEMON_PORT:-9876}"
-DAEMON_URL="http://127.0.0.1:${DAEMON_PORT}/inference"
+# macOS: the daemon serves under a random path prefix (see sayit-daemon).
+DAEMON_PREFIX=""
+if [[ "$OSTYPE" == darwin* ]]; then
+    DAEMON_PREFIX=$(cat "${XDG_RUNTIME_DIR:-/tmp}/sayit-daemon.path" 2>/dev/null) || DAEMON_PREFIX=""
+    [[ "$DAEMON_PREFIX" =~ ^/[0-9a-f]+$ ]] || DAEMON_PREFIX=""
+fi
+DAEMON_URL="http://127.0.0.1:${DAEMON_PORT}${DAEMON_PREFIX}/inference"
 INITIAL_PROMPT="${INITIAL_PROMPT:-}"
 VAD_MODEL="${VAD_MODEL:-$REPO_ROOT/models/ggml-silero-v5.1.2.bin}"
 # VAD tuning. These defaults are not whisper.cpp's. It ends a speech segment at

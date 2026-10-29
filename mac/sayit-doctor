@@ -103,8 +103,13 @@ for job in daemon agent; do
     fi
 done
 PORT="${DAEMON_PORT:-9876}"
-if curl -s -o /dev/null --max-time 2 "http://127.0.0.1:$PORT/"; then
-    ok "daemon answers on 127.0.0.1:$PORT"
+PREFIX=$(cat "$RUN_DIR/sayit-daemon.path" 2>/dev/null) || PREFIX=""
+[[ "$PREFIX" =~ ^/[0-9a-f]+$ ]] || PREFIX=""
+if curl -sf -o /dev/null --max-time 2 "http://127.0.0.1:$PORT$PREFIX/health"; then
+    ok "daemon answers on 127.0.0.1:$PORT$([[ -n "$PREFIX" ]] && echo ' (private path)')"
+elif [[ -z "$PREFIX" ]] && curl -s -o /dev/null --max-time 2 "http://127.0.0.1:$PORT/"; then
+    warn "daemon answers on 127.0.0.1:$PORT without a private path — restart it to get one"
+    more "launchctl kickstart -k $GUI/$LABEL.daemon"
 else
     warn "daemon does not answer on 127.0.0.1:$PORT — dictation falls back to the slower cold CLI"
     more "a large model takes a few seconds to load after login"

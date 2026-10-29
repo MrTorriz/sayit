@@ -17,6 +17,12 @@
 #     1 MiB is moved to .1 first - launchd rotates nothing, and the server
 #     writes timings for every request (never the transcribed text). A server
 #     that runs for weeks is rotated at its next start, not before.
+#   - macOS: serves under a random path prefix, new at every start, written
+#     mode 0600 to $XDG_RUNTIME_DIR/sayit-daemon.path for sayit-transcribe.
+#     whisper-server answers every web page (Access-Control-Allow-Origin: *)
+#     and has an unauthenticated /load that swaps the model, or exits on a
+#     file that is not one; a page can reach 127.0.0.1 but cannot guess the
+#     prefix.
 #
 # Exit codes:
 #   1  Model or whisper-server missing
@@ -91,6 +97,15 @@ fi
 VAD_MODEL="${VAD_MODEL:-$REPO_ROOT/models/ggml-silero-v5.1.2.bin}"
 if [[ -f "$VAD_MODEL" ]]; then
     ARGV+=(--vad --vad-model "$VAD_MODEL")
+fi
+
+if [[ "$OSTYPE" == darwin* ]]; then
+    RUN_DIR="${XDG_RUNTIME_DIR:-$(getconf DARWIN_USER_TEMP_DIR 2>/dev/null || echo /tmp)}"
+    RUN_DIR="${RUN_DIR%/}"
+    PREFIX="/$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')"
+    (umask 077; printf '%s\n' "$PREFIX" > "$RUN_DIR/sayit-daemon.path.$$" \
+        && mv -f "$RUN_DIR/sayit-daemon.path.$$" "$RUN_DIR/sayit-daemon.path")
+    ARGV+=(--request-path "$PREFIX")
 fi
 
 exec "$WHISPER_SERVER" "${ARGV[@]}"
