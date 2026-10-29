@@ -205,8 +205,11 @@ Pick a key you never type: a suppressed `SPACE` swallows every space.
 `auto` exists for buttons whose vendor utility turns a hold into a tap: either
 way the button works, held or tapped. If a latched recording has already ended
 — a start that failed, or a stop from the terminal — Sayit notices within a
-second and the next press starts a new one instead of stopping nothing. A recording that reached
-`MAX_RECORD_SECONDS` is still on file, so the next press transcribes it.
+second and the next press starts a new one instead of stopping nothing. A
+recording whose recorder ended on its own — `MAX_RECORD_SECONDS`, or a device
+that went away — is stopped within a second and what was captured is
+transcribed then, not at the next press, which could come hours later in
+another window.
 
 **Escape discards a recording the trigger started**, in every mode, like
 `./bin/sayit cancel`. It acts only with no modifier held, and is swallowed
@@ -214,19 +217,46 @@ when it does.
 
 ### A Logitech mouse: Logi Options+
 
-On macOS a Logitech mouse's gesture or thumb button is diverted by Logi
-Options+; Solaar does not exist there. Assign the button, in Options+, to
-whichever of these your version offers for it:
+On macOS a Logitech mouse's buttons are diverted by Logi Options+; Solaar does
+not exist there. **Most Options+ assignments never reach Sayit.** Its Back and
+Forward presets are macOS swipe gestures (`OSX_GESTURE_BACK`,
+`OSX_GESTURE_FORWARD`), and the gesture button sends gestures or shortcuts, so
+the probe shows nothing for them, or a keyboard shortcut of the utility's own.
 
-- **A mouse button** — back, forward or middle click. Set `TRIGGER_BUTTON` to
-  `XBUTTON1`, `XBUTTON2` or `MIDDLE`, or to the `MOUSE<n>` the probe shows.
-- **A keystroke** that matches `TRIGGER_BUTTON`, such as `F18`.
+What works is Options+'s generic mouse-button action, the one its **Middle
+button** preset uses (`"mouse": {"action": "BUTTON", "hidUsage": 3}`). With
+`hidUsage` 5 the button sends a real mouse button 5, held for as long as you
+hold it, which is `TRIGGER_BUTTON="XBUTTON2"` — push-to-talk, and unaffected
+by Secure Input. Options+ offers no preset for button 5 (verified with an
+MX Master 3S, October 2026), so the assignment has to be written into its
+settings database while its agent is stopped. This is an advanced step; back
+the file up first:
 
-Then probe it (next section) and hold the button for a second: the `down` and
-`up` lines say what it sends and whether it is held. Whether an Options+
-keystroke assignment holds the key for as long as the button is held **has not
-been verified**. `TRIGGER_MODE=auto` covers both outcomes — a real hold is
-push-to-talk, and a tap from the utility latches until the next press.
+```bash
+S="$HOME/Library/Application Support/LogiOptionsPlus"
+cp -p "$S"/settings.db* ~/somewhere-safe/
+launchctl bootout gui/$(id -u)/com.logi.cp-dev-mgr   # stops Options+'s agent
+# settings.db is SQLite; table "data" holds one JSON document. In every
+# "profile-…" object, find the assignment whose "slotId" ends in the button's
+# control id (_c195 = MX Master gesture button, _c86 = forward, _c83 = back)
+# and give it this card (keep "applicationId" in per-app profiles):
+#   {"id": "card_custom_sayit_mouse_button_5", "attribute": "MACRO_PLAYBACK",
+#    "name": "Mouse button 5", "readOnly": true,
+#    "macro": {"type": "MOUSE", "actionName": "MB5",
+#              "mouse": {"action": "BUTTON", "hidUsage": 5}}}
+# and set "cardId" to the same id.
+launchctl bootstrap gui/$(id -u) /Library/LaunchAgents/com.logi.optionsplus.plist
+```
+
+Change every profile that assigns the button — Options+ keeps per-app
+profiles (Safari has one by default) that override the default one. Resetting
+the button in Options+, or an Options+ update, can put the preset back; the
+probe then shows nothing again and the step has to be repeated.
+
+A **keystroke** assignment that matches `TRIGGER_BUTTON`, such as `F18`, works
+without touching the database, but Options+ sends it as a tap: `TRIGGER_MODE=auto`
+latches it, so tap once to start and once to stop. Keyboard triggers are also
+blind while Secure Input is on.
 
 Prefer a mouse-button assignment when you have the choice. Keyboard events are
 invisible to every event tap while **Secure Input** is on — a password field,
@@ -298,7 +328,9 @@ never opened.
 `MAX_RECORD_SECONDS`, 120 by default, caps one recording. `sayit-rec` enforces
 it itself, so it bounds how long the microphone stays open even if whatever
 started the recording dies before stopping it. A device that disappears
-mid-recording ends the recording with what was captured so far.
+mid-recording ends the recording with what was captured so far. Either way
+Sayit transcribes it straight away, and the status line adds `the recording
+had already stopped`.
 
 ## Recording indicator
 
@@ -318,6 +350,10 @@ ones included. The bars rest as a row of dots and move only with your voice;
 the level comes from `sayit-rec`, which has already computed it, so the
 microphone is opened exactly once. The Linux meter opens a second capture
 stream for the same job.
+
+After you release the trigger, the transient pill stays up while the
+transcription runs, with a sweep across its bars instead of the meter, and goes
+away when the text is pasted.
 
 The transient pill appears once `bin/sayit` has confirmed the recorder is
 running, about 0.3 s after the press. Its bars move once audio actually
@@ -345,14 +381,19 @@ The icon is the state at a glance:
 | --- | --- |
 | Waveform | Ready |
 | Red filled waveform | Recording |
+| Ellipsis | Transcribing; the text is pasted when it ends |
 | Warning triangle, outline | The trigger is not armed (no Accessibility yet), or the microphone is denied |
-| Orange filled triangle | A failure was reported in the last eight seconds |
+| Orange filled triangle | A problem was reported in the last eight seconds |
 
 The menu itself:
 
 - **The status line** — the last thing `bin/sayit` reported: `Recording`,
   `Transcribing...`, `Done (12 words)`, `Empty result`,
-  `Transcription failed: …`, and so on.
+  `Recording failed to start: no input device matches …`,
+  `Not pasted: … press Cmd+V`, `Transcription failed: …`, and so on. An outcome
+  older than a minute says how old it is (`· 5 min ago`). `bin/sayit` marks
+  problems with a second line in `sayit.status` (`warn` or `error`), which is
+  what turns the icon orange.
 - **The hint line** — how to dictate, such as `Hold or tap F18 to dictate · Esc
   cancels`, or what is stopping you: `Waiting for the Accessibility
   permission`, an unparsable `TRIGGER_BUTTON`. While probing, the last three
@@ -400,8 +441,17 @@ starts: after changing `MODEL_PATH`, `VAD_MODEL`, `THREADS`, `BEAM`,
 `DAEMON_PORT` or `WHISPER_SERVER`, restart the daemon. Language, initial prompt
 and the four VAD tuning settings travel with each request and need no restart.
 
+**The daemon listens under a private path.** `whisper-server` answers any web
+page (`Access-Control-Allow-Origin: *`) and has an unauthenticated `/load` that
+swaps the model, or exits when handed a file that is not one. A page in your
+browser can reach `127.0.0.1`, so `bin/sayit-daemon` starts the server under a
+random path prefix, new at every start, and writes it, readable only by you, to
+`sayit-daemon.path` in the per-user temporary directory, where
+`bin/sayit-transcribe` and the doctor read it.
+
 `bin/sayit-transcribe` tries the daemon first and falls back to `whisper-cli`
-**only** on a transport failure, the same contract as everywhere else. Expect
+**only** on a transport failure, the same contract as everywhere else. A
+fallback says so in the status line, since it takes seconds longer. Expect
 two delays that are not faults: the large model takes a few seconds to load
 after login, during which dictation uses the slower cold path; and the very
 first transcription after a whisper.cpp build takes several seconds longer
@@ -486,23 +536,25 @@ git pull
 ```
 
 `mac/install.sh` rebuilds the app only when a hash over the Swift sources, the
-repository path, `SAYIT_SIGN_IDENTITY` and the script's own build recipe — the
-compile, bundle and sign steps — has changed; `mac/install.sh --rebuild` forces it. The reason is
-permissions. macOS ties the Microphone and Accessibility grants to the app's
-code signature, and the default **ad-hoc signature changes with every build**,
-so a rebuilt app may have to be granted both again. `mac/install.sh` warns when
-that can happen. Turn Sayit on again under Privacy & Security; if a stale entry
-will not take, remove it there and let Sayit ask afresh.
+repository path, the signing identity and the script's own build recipe — the
+compile, bundle and sign steps — has changed; `mac/install.sh --rebuild` forces it.
 
-A stable signing identity is what lets an upgrade keep its grants:
+**Upgrades keep the permissions.** macOS ties the Microphone and Accessibility
+grants to the app's designated requirement. On the first install
+`mac/install.sh` creates a self-signed code-signing identity, `Sayit Local
+Signing`, in a keychain of its own (`~/Library/Keychains/sayit-signing.keychain-db`,
+no password, kept out of the keychain search list), and signs every build with
+it. The requirement is then "this identifier and this certificate" — the same
+for every build. The key signs only Sayit, but like any developer's signing key
+on their own Mac, anything running as you could use it too.
 
-```bash
-security find-identity -v -p codesigning           # the identities in your keychain
-export SAYIT_SIGN_IDENTITY="Apple Development: …"  # then run ./install.sh as usual
-```
-
-Set it for every run, for instance in your shell profile. It is part of the
-hash: a run without it rebuilds the app with an ad-hoc signature again.
+`SAYIT_SIGN_IDENTITY` names another identity from
+`security find-identity -v -p codesigning`, or `-` for an ad-hoc signature,
+whose requirement is the build's own hash: every rebuild then needs both grants
+again. Whenever the requirement changes — an ad-hoc build, or the first build
+with a new identity — `mac/install.sh` resets Sayit's old entries with
+`tccutil`, so macOS asks afresh instead of showing a switch that is on but no
+longer applies.
 
 The repository path is recorded in the app and in both LaunchAgents. After
 moving your clone, run `./install.sh` again from the new place.
@@ -567,8 +619,9 @@ symptom table.
 - Transient audio lives in the per-user temporary directory, which is on disk,
   not in RAM. The WAV is deleted after transcription, and files a crash left
   behind are swept, once they are an hour old, when the next recording starts.
-- Permissions belong to the app's signature; with the default ad-hoc signature
-  a rebuild can cost you both grants.
+- Permissions belong to the app's signature. With the local signing identity
+  they survive rebuilds; with `SAYIT_SIGN_IDENTITY=-` (ad hoc) every rebuild
+  costs both grants.
 - Only Apple Silicon has been tested.
 
 Next: [Configuration](CONFIGURATION.md) for every setting, or

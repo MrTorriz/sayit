@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Rebuild docs/logo.svg and docs/logo-lockup.svg from bin/sayit-overlay.
+"""Rebuild docs/logo.svg, docs/logo-lockup.svg and docs/logo-wordmark.svg
+from bin/sayit-overlay.
 
 The logo is the overlay's pill, so its geometry is read out of the overlay's
 own constants rather than drawn by hand. That is the whole point of this
@@ -9,7 +10,8 @@ pill in bin/sayit-overlay, run this, and the logo follows.
 
 The typography in the lockup is not generated. It is outlined type, lifted
 unchanged from the previous lockup, and this script only moves it under the
-new mark.
+new mark. docs/logo-wordmark.svg is that typography alone, without the mark,
+for the README's title.
 
 Usage:   python3 docs/build-logo.py [--check]
          --check  exit 1 if the committed files differ from what this
@@ -31,6 +33,7 @@ ROOT = pathlib.Path(__file__).resolve().parent.parent
 OVERLAY = ROOT / "bin" / "sayit-overlay"
 LOGO = ROOT / "docs" / "logo.svg"
 LOCKUP = ROOT / "docs" / "logo-lockup.svg"
+WORDMARK = ROOT / "docs" / "logo-wordmark.svg"
 
 # The meter is drawn at its top level, the pattern the overlay's BAR_MAX_U was
 # shaped to read as: a phrase, quiet at both ends. A logo showing the resting
@@ -42,6 +45,7 @@ LEVEL = 7.0
 MARK_X, MARK_Y, MARK_W = 56.5, 60.0, 441.08
 OLD_WORDMARK_TOP = 345.8            # where the old lockup set the SAYIT top
 OLD_TAGLINE_BOTTOM = 513.24
+TYPE_LEFT, TYPE_RIGHT = 62.0, 494.0  # the type's horizontal extent
 GAP = 32.3                          # the old gap between mark and wordmark
 MARGIN = 60.0                       # the old bottom margin
 
@@ -204,15 +208,40 @@ def build(ov):
 ''' % (vb_h, vb_h, alt_lockup, ov.BORDER, MARK_X, MARK_Y, scale,
        "\n".join("    " + p for p in parts), dy,
        "\n".join('    <path class="%s" d="%s"/>' % ct for ct in typography()))
-    return logo, lockup
+
+    pad = 12.0
+    wm_w = round(TYPE_RIGHT - TYPE_LEFT + 2 * pad)
+    wm_h = round(OLD_TAGLINE_BOTTOM - OLD_WORDMARK_TOP + 2 * pad)
+    wordmark = '''<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 %d %d" width="%d" height="%d" role="img" aria-label="SAYIT: don't type it. Say it.">
+  <title>sayit</title>
+  <!-- The lockup's typography without the mark: the wordmark SAYIT above the
+       line DON'T TYPE IT. SAY IT., for the README's title. Outlined type, no
+       font and no external resource. The colours follow the theme as in
+       docs/logo-lockup.svg: #1f2328 and #da4453 on light, #e6edf3 and
+       #ff4d4d on dark. -->
+  <style>
+    .m { fill: #1f2328; }
+    .t { fill: #da4453; }
+    @media (prefers-color-scheme: dark) {
+      .m { fill: #e6edf3; }
+      .t { fill: #ff4d4d; }
+    }
+  </style>
+  <g transform="translate(%.2f %.2f)">
+%s
+  </g>
+</svg>
+''' % (wm_w, wm_h, wm_w, wm_h, pad - TYPE_LEFT, pad - OLD_WORDMARK_TOP,
+       "\n".join('    <path class="%s" d="%s"/>' % ct for ct in typography()))
+    return logo, lockup, wordmark
 
 
 def main():
     check = "--check" in sys.argv[1:]
-    logo, lockup = build(load_overlay())
+    logo, lockup, wordmark = build(load_overlay())
     stale = []
-    for path, text in ((LOGO, logo), (LOCKUP, lockup)):
-        if path.read_text() != text:
+    for path, text in ((LOGO, logo), (LOCKUP, lockup), (WORDMARK, wordmark)):
+        if not path.exists() or path.read_text() != text:
             stale.append(path.name)
         if not check:
             path.write_text(text)
@@ -222,7 +251,7 @@ def main():
             return 1
         print("logo files are up to date")
         return 0
-    print("wrote %s and %s" % (LOGO.name, LOCKUP.name))
+    print("wrote %s, %s and %s" % (LOGO.name, LOCKUP.name, WORDMARK.name))
     return 0
 
 

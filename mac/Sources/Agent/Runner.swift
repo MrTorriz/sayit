@@ -43,6 +43,11 @@ final class Runner {
             let prior = self.lastStart
             DispatchQueue.global(qos: .userInitiated).async {
                 prior?.waitUntilExit()
+                // A start that failed has cleaned up and said why; a stop
+                // after it would only replace the reason with "No recording
+                // in progress". Unless a session exists after all.
+                if let p = prior, p.terminationStatus != 0,
+                   !FileManager.default.fileExists(atPath: Shared.runPath("sayit.session")) { return }
                 _ = self.spawn(verb)
             }
         }

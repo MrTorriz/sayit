@@ -2,9 +2,9 @@
 """Builds docs/social-preview.png, the 1280x640 card GitHub shows when the
 repository is linked elsewhere.
 
-The logo is not redrawn: the card renders docs/logo-lockup.svg, which
-docs/build-logo.py writes from the overlay's own constants, in the colours the
-lockup already uses for a dark page. Only the text beside it is set here.
+The wordmark is not redrawn: the card renders docs/logo-wordmark.svg (SAYIT
+and the tagline, without the pill), which docs/build-logo.py writes, in the
+colours it already uses for a dark page. Only the text beside it is set here.
 
 GitHub has no API for this image. Upload the result by hand under
 Settings -> General -> Social preview.
@@ -32,13 +32,13 @@ def rgb(hexstr):
     return tuple(int(h[i:i + 2], 16) / 255 for i in (0, 2, 4))
 
 
-def dark_lockup():
-    """The lockup with its dark-theme colours made unconditional."""
-    with open(os.path.join(HERE, "logo-lockup.svg"), encoding="utf-8") as f:
+def dark_wordmark():
+    """The wordmark with its dark-theme colours made unconditional."""
+    with open(os.path.join(HERE, "logo-wordmark.svg"), encoding="utf-8") as f:
         svg = f.read()
     dark = re.search(r"@media \(prefers-color-scheme: dark\) \{(.*?)\}\s*\}", svg, re.S)
     if not dark:
-        raise SystemExit("logo-lockup.svg has no dark-theme block; update this script")
+        raise SystemExit("logo-wordmark.svg has no dark-theme block; update this script")
     for cls, colour in re.findall(r"\.(\w) \{ fill: (#[0-9a-f]{6}); \}", dark.group(1)):
         svg = re.sub(r"(\.%s \{ fill: )#[0-9a-f]{6}" % cls, r"\g<1>" + colour, svg, count=1)
     return Rsvg.Handle.new_from_data(svg.encode())
@@ -60,12 +60,13 @@ def main():
     cr.set_source_rgb(*rgb(BG))
     cr.paint()
 
-    # The lockup, left, vertically centred.
-    logo = dark_lockup()
-    lw = 470
-    lh = lw * 430 / 554
+    # The wordmark, left, vertically centred, at the size and column it had
+    # under the pill in the earlier card.
+    logo = dark_wordmark()
+    lw = 387
+    lh = lw * 191 / 456
     vp = Rsvg.Rectangle()
-    vp.x, vp.y, vp.width, vp.height = 70, (H - lh) / 2, lw, lh
+    vp.x, vp.y, vp.width, vp.height = 112.4, (H - lh) / 2, lw, lh
     logo.render_document(cr, vp)
 
     # A hairline between logo and text.

@@ -30,7 +30,8 @@
 //     then left on the clipboard for a manual Cmd+V, and the exit code says so.
 //   - With Secure Input active (a password field, or Terminal's Secure
 //     Keyboard Entry) the keystroke may be swallowed, so the dictation is left
-//     on the clipboard instead of being restored away.
+//     on the clipboard instead of being restored away, and the exit code says
+//     so.
 //   - The paste chord is Cmd plus whichever key gives "v" with Cmd held in the
 //     current keyboard layout (Dvorak, Workman, "Dvorak - QWERTY Cmd" all
 //     differ); the ANSI V position is the fallback.
@@ -42,6 +43,8 @@
 //   0  Pasted (or typed)
 //   1  Nothing to paste, or the clipboard could not be written
 //   2  No Accessibility permission: the text is on the clipboard, not pasted
+//   3  Secure Input was on: Cmd+V was sent but may have been blocked; the
+//      text stays on the clipboard
 
 import AppKit
 import Carbon.HIToolbox
@@ -193,7 +196,7 @@ for down in [true, false] {
 
 if secureInput {
     note("Secure Input is active - the text stays on the clipboard in case the paste was blocked")
-    exit(0)
+    exit(3)
 }
 
 Thread.sleep(forTimeInterval: restoreDelay)

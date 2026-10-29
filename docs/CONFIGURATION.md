@@ -37,6 +37,7 @@ of them empty on purpose so the code can resolve a repo-relative path.
 | `AUDIO_SOURCE` | empty | all | Recording device. Linux: a PipeWire node name; empty means the headset mic, else the PipeWire default. Windows: the MMDevice endpoint ID when the driver reports one, otherwise the device name; empty means the Windows default capture device. macOS: a device UID or name, or part of a name — a PipeWire node name that embeds the device name also matches; empty means the system default input |
 | `THREADS` | `8` on Linux and macOS, `6` on Windows | all | CPU threads for whisper.cpp, passed to both the daemon at start and the CLI fallback. The platforms genuinely differ in default |
 | `BEAM` | `5` | all | Beam search size; `-1` is greedy |
+| `AUDIO_CTX_ADAPTIVE` | `0` | Linux, macOS | `1` = encode a window sized to the clip instead of the full 30 s (daemon only), with a full-window retry when the result looks wrong |
 | `VAD_MODEL` | `models/ggml-silero-v5.1.2.bin` | all | Silero VAD. Point it at a missing file to disable VAD |
 | `VAD_SPEECH_PAD_MS` | `250` | all | Audio kept after the detected end of speech, in ms. The only one of the four that lengthens the tail |
 | `VAD_THRESHOLD` | `0.30` | all | Speech probability above which Silero calls a 32 ms frame speech. whisper.cpp's own default is `0.5` |
@@ -78,7 +79,7 @@ three of its own in a section at the end of the file.
 
 | Setting | Effect |
 | --- | --- |
-| `SPEECH_LANGUAGE`, `INITIAL_PROMPT`, the four `VAD_*` tuning settings | Next dictation. They are sent with each request |
+| `SPEECH_LANGUAGE`, `INITIAL_PROMPT`, the four `VAD_*` tuning settings, `AUDIO_CTX_ADAPTIVE` | Next dictation. They are sent with each request |
 | `THREADS`, `BEAM`, `VAD_MODEL` | Immediately for the CLI fallback, but fixed at server start for the daemon — restart it |
 | `MODEL_PATH`, `DAEMON_PORT` | Immediately for the CLI fallback and for which port the client dials, but fixed at server start for the daemon — restart it |
 | `WHISPER_SERVER` | Restart the daemon |
@@ -149,6 +150,23 @@ one-word answer can vanish without a trace. That is why sayit defaults it to
 `0` where whisper.cpp defaults to 250.
 
 **Beam search (`BEAM`)** — `5` decodes more accurately than greedy (`-1`).
+On the Mac mini reference machine (FLEURS sv, 423 real clips) greedy was
+0.15 s faster per dictation for 0.2 percentage points more word errors
+(median 0.92 -> 0.77 s, WER 5.38 -> 5.60 %).
+
+**Adaptive encoder window (`AUDIO_CTX_ADAPTIVE`)** — whisper always encodes a
+30 s window, however short the dictation. `1` sizes it to the clip: the next
+multiple of 256 frames above 1.15 x the length plus one second, at least 512
+(10 s of audio), and the full window from 21.4 s up. On the same machine and
+set that cut the median from 0.77 to 0.49 s, and short dictations from 0.50 to
+0.21 s, for WER 5.60 -> 5.73 %, with no garbled result in 841 real clips. Only
+multiples of 256 are ever sent: whisper.cpp's flash attention pads the
+cross-attention cache to 256 and reads the padding unmasked, so any other size
+picks up what an earlier request left there. As a guard, a result that is
+empty, faster than five words a second, repeats a phrase three times or
+compresses unusually well, or that took longer than 2.5 s, is transcribed
+again with the full window. It applies to the warm daemon only, per request,
+with no restart.
 
 **Suppress non-speech** — the daemon and the CLI always suppress non-speech
 tokens (`[music]`, brackets, noise). An optional `SUPPRESS_REGEX` additionally

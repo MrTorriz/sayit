@@ -14,18 +14,24 @@
 #     package manager. Run by ./install.sh on macOS; runnable on its own.
 #   - Bundles them into ~/Applications/Sayit.app (SAYIT_APP_DIR overrides the
 #     directory), menu bar only, with this repository's path in Info.plist.
-#   - Signs ad hoc, or with SAYIT_SIGN_IDENTITY when it names a code-signing
-#     identity in your keychain. macOS ties the Microphone and Accessibility
-#     grants to the signature, and an ad-hoc signature changes with every
-#     build - so the app is rebuilt only when its sources change, and a stable
-#     identity is what lets an upgrade keep its grants.
+#   - Signs with a local, self-signed code-signing identity, created on the
+#     first install in a keychain of its own
+#     (~/Library/Keychains/sayit-signing.keychain-db, no password, never in
+#     the keychain search list). macOS ties the Microphone and Accessibility
+#     grants to the signature's designated requirement: with this identity it
+#     is "this identifier, this certificate", the same for every build, so a
+#     rebuild keeps the grants. SAYIT_SIGN_IDENTITY names another identity in
+#     your keychain, or "-" for ad hoc - whose requirement is the build's own
+#     hash, so every rebuild asks for the permissions again. The app is
+#     rebuilt only when its sources change.
 #   - Writes and (re)loads two LaunchAgents in ~/Library/LaunchAgents, the
 #     counterparts of the Linux systemd user units:
 #       io.github.mrtorriz.sayit.daemon  the warm whisper-server (bin/sayit-daemon)
 #       io.github.mrtorriz.sayit.agent   Sayit.app
 #     Both run only in the graphical session, with Homebrew's bash first on
 #     PATH and ProcessType Interactive (the default lets macOS throttle them).
-#   - --uninstall leaves models, .env, history and the wordlist untouched.
+#   - --uninstall also removes the signing keychain, and leaves models, .env,
+#     history and the wordlist untouched.
 #
 # Exit codes:
 #   0  Installed (or uninstalled)
@@ -93,12 +99,72 @@ if [[ $UNINSTALL -eq 1 ]]; then
             warn "$DEST is not Sayit ($id) - left in place"
         fi
     fi
+    security delete-keychain "$HOME/Library/Keychains/sayit-signing.keychain-db" 2>/dev/null \
+        && log "Removed the local signing identity"
     log "LaunchAgents removed. Models, .env, history and wordlist are untouched."
     log "The Microphone and Accessibility entries can be removed in System Settings."
     exit 0
 fi
 
 command -v swiftc >/dev/null || die "swiftc missing - run: xcode-select --install"
+
+# --- signing identity -----------------------------------------------------------
+SIGN_KEYCHAIN="$HOME/Library/Keychains/sayit-signing.keychain-db"
+SIGN_NAME="Sayit Local Signing"
+
+# Creates the identity when it is missing and unlocks its keychain. The key
+# signs only Sayit: anything running as this user could use it as well, as
+# with any developer's signing key on their own Mac.
+local_identity() {
+    if [[ ! -f "$SIGN_KEYCHAIN" ]]; then
+        # The system's LibreSSL: a newer OpenSSL writes PKCS#12 files with
+        # ciphers that `security import` cannot read.
+        local ssl=/usr/bin/openssl tmp rc=0
+        [[ -x "$ssl" ]] || return 1
+        tmp=$(mktemp -d)
+        cat > "$tmp/req.cnf" <<EOF
+[req]
+distinguished_name = dn
+prompt = no
+[dn]
+CN = $SIGN_NAME
+[ext]
+basicConstraints = critical,CA:false
+keyUsage = critical,digitalSignature
+extendedKeyUsage = critical,codeSigning
+EOF
+        {
+            "$ssl" req -x509 -newkey rsa:2048 -nodes -days 7300 -config "$tmp/req.cnf" \
+                -extensions ext -keyout "$tmp/key.pem" -out "$tmp/cert.pem" &&
+            "$ssl" pkcs12 -export -inkey "$tmp/key.pem" -in "$tmp/cert.pem" \
+                -out "$tmp/id.p12" -passout pass:sayit &&
+            security create-keychain -p "" "$SIGN_KEYCHAIN" &&
+            security set-keychain-settings "$SIGN_KEYCHAIN" &&
+            security unlock-keychain -p "" "$SIGN_KEYCHAIN" &&
+            security import "$tmp/id.p12" -k "$SIGN_KEYCHAIN" -P sayit -T /usr/bin/codesign &&
+            security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "" "$SIGN_KEYCHAIN"
+        } >/dev/null 2>&1 || rc=1
+        rm -rf "$tmp"
+        if (( rc )); then
+            security delete-keychain "$SIGN_KEYCHAIN" 2>/dev/null || true
+            return 1
+        fi
+        log "Created the local signing identity \"$SIGN_NAME\" ($SIGN_KEYCHAIN)"
+    fi
+    security unlock-keychain -p "" "$SIGN_KEYCHAIN" 2>/dev/null &&
+        security find-identity -p codesigning "$SIGN_KEYCHAIN" 2>/dev/null | grep -qF "\"$SIGN_NAME\""
+}
+
+SIGN_ARGS=()
+if [[ -n "${SAYIT_SIGN_IDENTITY:-}" ]]; then
+    IDENTITY="$SAYIT_SIGN_IDENTITY"
+elif local_identity; then
+    IDENTITY="$SIGN_NAME"
+    SIGN_ARGS=(--keychain "$SIGN_KEYCHAIN")
+else
+    warn "Could not create a local signing identity - signing ad hoc"
+    IDENTITY="-"
+fi
 
 # --- build -------------------------------------------------------------------
 xml() {  # escape for an XML text node
@@ -110,7 +176,7 @@ xml() {  # escape for an XML text node
 # The sources, the repository path, the signing identity and the build recipe
 # itself (compile, bundle, sign - everything between the two markers below).
 SOURCES_HASH=$( { find "$MAC_DIR/Sources" -name '*.swift' -print0 | sort -z | xargs -0 cat
-                  printf '%s\n' "$REPO_ROOT" "${SAYIT_SIGN_IDENTITY:-}"
+                  printf '%s\n' "$REPO_ROOT" "$IDENTITY"
                   sed -n '/^# --- build recipe/,/^# --- end build recipe/p' "${BASH_SOURCE[0]}"; } | shasum -a 256 | cut -d' ' -f1)
 INSTALLED_HASH=$(cat "$DEST/Contents/Resources/source-hash" 2>/dev/null || true)
 
@@ -154,26 +220,34 @@ else
 EOF
     printf '%s\n' "$SOURCES_HASH" > "$STAGE/Contents/Resources/source-hash"
 
-    IDENTITY="${SAYIT_SIGN_IDENTITY:--}"
-    log "Signing ${SAYIT_SIGN_IDENTITY:+with \"$IDENTITY\"}${SAYIT_SIGN_IDENTITY:-ad hoc}"
-    codesign --force --sign "$IDENTITY" --identifier "$BUNDLE_ID.rec" "$STAGE/Contents/MacOS/sayit-rec"
-    codesign --force --sign "$IDENTITY" --identifier "$BUNDLE_ID.paste" "$STAGE/Contents/MacOS/sayit-paste"
-    codesign --force --sign "$IDENTITY" "$STAGE"
+    if [[ "$IDENTITY" == - ]]; then log "Signing ad hoc"; else log "Signing with \"$IDENTITY\""; fi
+    codesign --force ${SIGN_ARGS[@]+"${SIGN_ARGS[@]}"} --sign "$IDENTITY" --identifier "$BUNDLE_ID.rec" "$STAGE/Contents/MacOS/sayit-rec"
+    codesign --force ${SIGN_ARGS[@]+"${SIGN_ARGS[@]}"} --sign "$IDENTITY" --identifier "$BUNDLE_ID.paste" "$STAGE/Contents/MacOS/sayit-paste"
+    codesign --force ${SIGN_ARGS[@]+"${SIGN_ARGS[@]}"} --sign "$IDENTITY" "$STAGE"
 # --- end build recipe ----------------------------------------------------------
 
     # Replace the installed app only now that the new one is complete.
     [[ $LAUNCHD -eq 1 ]] && unload "$AGENT_LABEL"
     mkdir -p "$APP_DIR"
+    OLD_REQ=""
     if [[ -d "$DEST" ]]; then
         old=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$DEST/Contents/Info.plist" 2>/dev/null || true)
         [[ "$old" == "$BUNDLE_ID" ]] || die "$DEST exists and is not Sayit ($old) - move it away and re-run"
+        OLD_REQ=$(codesign -d -r- "$DEST" 2>&1 | sed -n 's/^#* *designated => //p')
         rm -rf "$DEST"
     fi
     ditto "$STAGE" "$DEST"
     log "Installed $DEST"
-    if [[ -n "$INSTALLED_HASH" && -z "${SAYIT_SIGN_IDENTITY:-}" ]]; then
-        warn "The ad-hoc signature changed: macOS may ask for the Microphone and"
-        warn "Accessibility permissions again (System Settings > Privacy & Security)."
+    # A grant stays only while the designated requirement does. When it
+    # changes (an ad-hoc build, or the first build with a new identity), the
+    # old entries can still look switched on in System Settings while they no
+    # longer apply - reset them, so macOS asks afresh instead.
+    NEW_REQ=$(codesign -d -r- "$DEST" 2>&1 | sed -n 's/^#* *designated => //p')
+    if [[ -n "$INSTALLED_HASH" && "$NEW_REQ" != "${OLD_REQ:-}" ]]; then
+        tccutil reset Accessibility "$BUNDLE_ID" >/dev/null 2>&1 || true
+        tccutil reset Microphone "$BUNDLE_ID" >/dev/null 2>&1 || true
+        warn "The signature changed: allow Sayit under Microphone and Accessibility"
+        warn "again when asked (System Settings > Privacy & Security)."
     fi
 fi
 

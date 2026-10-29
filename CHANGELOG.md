@@ -5,11 +5,38 @@
 - Rework the README: the logo, highlights, a pipeline diagram, a platform
   overview and measured macOS performance come first, the installation steps
   stay short and link to the full guides.
-- Replace the terminal-only demo with animated illustrations of one dictation
-  on Linux, Windows 11 and macOS. `docs/make-demo.py` draws them with the
-  overlay's own pill functions, so they show the indicator each platform draws.
+- Replace the terminal-only demo with one dark, animated illustration of a
+  dictation: a text field, the thumb button and the pill, through the meter,
+  the transcribing sweep and the paste. `docs/make-demo.swift` draws it with
+  Sayit's own `PillView`, so it shows exactly what the app shows.
+- Head the README with the SAYIT wordmark and tagline alone
+  (`docs/logo-wordmark.svg`, written by `docs/build-logo.py`), without the pill.
+  The social preview card shows the same wordmark.
 - Add `docs/social-preview.png`, the repository's link card, and
   `docs/make-social-preview.py`, which renders it from the lockup.
+- macOS: the pill stays up with a sweep while the transcription runs, and the
+  menu bar icon shows an ellipsis.
+- macOS: every outcome reaches the menu. A failed start keeps its reason (the
+  missing device, the denied permission) instead of being replaced by "No
+  recording in progress"; a paste without Accessibility or under Secure Input
+  says the text is on the clipboard; a fallback to the cold CLI is announced;
+  problems carry a level that turns the icon orange; old outcomes show their
+  age.
+- macOS: a recording whose recorder ended on its own (`MAX_RECORD_SECONDS`, a
+  device that went away) is transcribed straight away, not at the next press.
+- macOS: the daemon serves under a random path prefix, readable only by the
+  user, so a web page cannot reach `whisper-server`'s `/load`.
+- macOS: `mac/install.sh` signs with a local self-signed identity, so rebuilds
+  keep the Microphone and Accessibility grants, and resets stale grants when
+  the signature's requirement changes.
+- macOS: Sayit checks Accessibility every 10 s instead of every second and
+  polls once a second when idle, for fewer idle wakeups.
+- The dictated text reaches `sayit-inject` on stdin, never in argv.
+- Add `AUDIO_CTX_ADAPTIVE` (off by default): the daemon encodes a window sized
+  to the clip, in multiples of 256 frames, with a full-window retry when a
+  result looks wrong. About 0.3 s faster per dictation on Apple Silicon.
+- Document how to give a Logitech button a real mouse-button action in Logi
+  Options+; its Back, Forward and gesture presets never reach Sayit.
 
 ## 2026-10-28 (v1.0.0)
 
