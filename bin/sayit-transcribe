@@ -18,6 +18,9 @@
 #     VAD_MIN_SPEECH_MS, VAD_MIN_SILENCE_MS) apply per request on both paths;
 #     THREADS, BEAM and VAD_MODEL apply to the CLI fallback — the daemon fixes
 #     those at server start (restart sayit-daemon.service after changing them).
+#     AUDIO_CTX_ADAPTIVE=1 sizes the daemon's encoder window to the clip
+#     (see audio_ctx_for) and asks again with the full window when the result
+#     looks wrong.
 #     SUPPRESS_REGEX applies to the CLI fallback, and to the daemon only when
 #     the whisper-server build supports the flag. SAYIT_MODEL overrides
 #     MODEL_PATH on both paths.
@@ -96,6 +99,7 @@ VAD_THRESHOLD="${VAD_THRESHOLD:-0.30}"
 VAD_MIN_SPEECH_MS="${VAD_MIN_SPEECH_MS:-0}"
 VAD_MIN_SILENCE_MS="${VAD_MIN_SILENCE_MS:-300}"
 SUPPRESS_REGEX="${SUPPRESS_REGEX:-}"
+AUDIO_CTX_ADAPTIVE="${AUDIO_CTX_ADAPTIVE:-0}"
 LLM_CLEANUP="${LLM_CLEANUP:-0}"
 LLM_MODEL="${LLM_MODEL:-gemma2:2b}"
 LLM_URL="${LLM_URL:-http://127.0.0.1:11434/api/generate}"
@@ -133,9 +137,8 @@ transcribe_daemon() {
     command -v curl >/dev/null || return 1
     # Deadline scales with the audio length (16 kHz mono s16 = 32000 bytes/s)
     # so a hung or busy server cannot stall a short dictation for long.
-    local bytes deadline
-    bytes=$(file_size "$WAV")
-    deadline=$(( bytes / 32000 + 10 ))
+    local deadline ctx="${1:-0}"
+    deadline=$(( WAV_BYTES / 32000 + 10 ))
     # The prompt field is sent even when empty: older whisper-server builds
     # only reset request params after a successful request, so an explicit
     # empty value is the safe way to clear any previous prompt.
@@ -157,7 +160,41 @@ transcribe_daemon() {
                 --form-string vad_min_speech_duration_ms="$VAD_MIN_SPEECH_MS"
                 --form-string vad_min_silence_duration_ms="$VAD_MIN_SILENCE_MS" )
     fi
+    (( ctx > 0 )) && args+=( --form-string audio_ctx="$ctx" )
     curl "${args[@]}" "$DAEMON_URL" 2>/dev/null
+}
+
+# AUDIO_CTX_ADAPTIVE=1: the encoder window for this clip instead of the full
+# 30 s - about 0.3 s faster per dictation on Apple Silicon (FLEURS sv: median
+# 0.77 -> 0.49 s, WER 5.60 -> 5.73 %). Only 0 (the full window) or a multiple
+# of 256: whisper.cpp pads the flash-attention cross-attention cache to 256
+# and reads the padding unmasked, so other sizes see what an earlier request
+# left there (steps of 64 garbled 54 of 423 clips). x1.15 + 1 s covers the
+# silence whisper.cpp's VAD adds back at every pause.
+audio_ctx_for() {  # audio_ctx_for <wav bytes>
+    local ms frames n
+    ms=$(( ($1 - 44) * 1000 / 32000 ))
+    frames=$(( (115 * ms + 100000 + 1999) / 2000 ))
+    n=$(( (frames + 255) / 256 * 256 ))
+    if (( n < 512 )); then n=512; fi
+    if (( n >= 1500 )); then n=0; fi
+    echo "$n"
+}
+
+# A short-window result that does not look like speech: empty, more than five
+# words a second, a phrase of up to five words three times in a row, or text
+# that compresses too well (gzip ratio over 2.4, whisper's own repetition
+# test). The text comes on stdin; $1 is the clip length in ms. Exit 0 = retry.
+suspicious() {
+    perl -MIO::Compress::Gzip=gzip -e '
+        my $t = do { local $/; <STDIN> } // "";
+        exit 0 if $t !~ /\S/;
+        my @w = split " ", $t;
+        exit 0 if $ARGV[0] > 0 && @w * 1000 / $ARGV[0] > 5;
+        exit 0 if $t =~ /(\S+(?:\s+\S+){0,4})(?:\s+\1){2}/i;
+        my $z; gzip(\$t => \$z);
+        exit 0 if length($t) >= 40 && length($t) / length($z) > 2.4;
+        exit 1;' "$1"
 }
 
 # Cold CLI fallback. whisper-cli and the model file are checked here — not up
@@ -211,7 +248,8 @@ PYEOF
 # run and be told the same thing at 20 times the cost. There is no speech in a
 # file with no audio, so answer that here. 44 bytes is a WAV header and nothing
 # else.
-if (( $(file_size "$WAV") <= 44 )); then
+WAV_BYTES=$(file_size "$WAV")
+if (( WAV_BYTES <= 44 )); then
     mark t.empty
     printf ''
     exit 0
@@ -222,7 +260,21 @@ fi
 # answer and must not cost a second, cold transcription of the same silence.
 mark t.daemon.begin
 daemon_rc=0
-RAW=$(transcribe_daemon) || daemon_rc=$?
+ctx=0
+[[ "$AUDIO_CTX_ADAPTIVE" == 1 ]] && ctx=$(audio_ctx_for "$WAV_BYTES")
+started=${EPOCHREALTIME/[.,]/}
+RAW=$(transcribe_daemon "$ctx") || daemon_rc=$?
+# A short window that went wrong is asked again with the full one: slower
+# than the 1.2 s the short window ever needed in testing, or a result that
+# does not look like speech.
+if (( daemon_rc == 0 && ctx > 0 )); then
+    took_ms=$(( (${EPOCHREALTIME/[.,]/} - started) / 1000 ))
+    if (( took_ms > 2500 )) \
+        || printf '%s' "$RAW" | suspicious $(( (WAV_BYTES - 44) * 1000 / 32000 )); then
+        mark t.daemon.retry "$ctx"
+        RAW=$(transcribe_daemon 0) || daemon_rc=$?
+    fi
+fi
 mark t.daemon.end "$daemon_rc"
 if (( daemon_rc != 0 )); then
     # macOS: the cold path takes seconds - tell Sayit's menu why it is slow.

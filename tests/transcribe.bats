@@ -26,8 +26,17 @@ setup() {
     cat > "$STUBBIN/curl" <<'EOF'
 #!/usr/bin/env bash
 printf '%s\n' "$*" > "$STUB_CTL/curl.args"
+printf '%s\n' "$*" >> "$STUB_CTL/curl.calls"
 case "${CURL_MODE:-ok}" in
     ok)    printf 'daemon text from server' ;;
+    loop)
+        # A garbled short-window answer; the full window answers properly.
+        if [[ " $* " == *' audio_ctx='* ]]; then
+            printf 'och sen och sen och sen och sen'
+        else
+            printf 'full window text'
+        fi
+        ;;
     empty) ;;
     token) printf ' <|nospeech|> ' ;;
     wrapped)
@@ -134,6 +143,32 @@ EOF
     run "$TRANSCRIBE" "$WAV"
     grep -q -- '-m 20' "$STUB_CTL/curl.args"
     grep -q -- '--connect-timeout 2' "$STUB_CTL/curl.args"
+}
+
+@test "AUDIO_CTX_ADAPTIVE sizes the window in multiples of 256, and only when set" {
+    head -c 64044 /dev/zero > "$WAV"    # 2 s
+    run "$TRANSCRIBE" "$WAV"
+    ! grep -q 'audio_ctx' "$STUB_CTL/curl.args"
+    AUDIO_CTX_ADAPTIVE=1 run "$TRANSCRIBE" "$WAV"
+    [ "$output" = "daemon text from server" ]
+    grep -q -- '--form-string audio_ctx=512 ' "$STUB_CTL/curl.args"
+    head -c 320044 /dev/zero > "$WAV"   # 10 s -> (1.15*10+1)*50 = 625 -> 768
+    AUDIO_CTX_ADAPTIVE=1 run "$TRANSCRIBE" "$WAV"
+    grep -q -- '--form-string audio_ctx=768 ' "$STUB_CTL/curl.args"
+    head -c 800044 /dev/zero > "$WAV"   # 25 s -> the full window
+    AUDIO_CTX_ADAPTIVE=1 run "$TRANSCRIBE" "$WAV"
+    ! grep -q 'audio_ctx' "$STUB_CTL/curl.args"
+    [ "$(grep -c . "$STUB_CTL/curl.calls")" -eq 4 ]   # never a retry
+}
+
+@test "a short-window answer that is not speech-like is asked again with the full window" {
+    head -c 160044 /dev/zero > "$WAV"   # 5 s
+    CURL_MODE=loop AUDIO_CTX_ADAPTIVE=1 run "$TRANSCRIBE" "$WAV"
+    [ "$status" -eq 0 ]
+    [ "$output" = "full window text" ]
+    [ "$(grep -c . "$STUB_CTL/curl.calls")" -eq 2 ]
+    grep -q 'audio_ctx=512' <(head -n 1 "$STUB_CTL/curl.calls")
+    ! grep -q 'audio_ctx' <(tail -n 1 "$STUB_CTL/curl.calls")
 }
 
 @test "SAYIT_MODEL override reaches the CLI fallback" {
