@@ -1,10 +1,10 @@
 // AppDelegate.swift - Sayit's menu bar item, permissions and settings.
 //
 // The menu bar icon is the state at a glance: a waveform at rest, a red one
-// while recording, a warning for a few seconds after a failure. The first menu
-// line is the last thing bin/sayit reported - notifications are deliberately
-// not used, because Notification Center keeps them, and a "Done" message would
-// keep a snippet of every dictation there.
+// while recording, an ellipsis while transcribing, a warning for a few seconds
+// after a problem. The first menu line is the last thing bin/sayit reported -
+// notifications are deliberately not used, because Notification Center keeps
+// them, and a "Done" message would keep a snippet of every dictation there.
 
 import AppKit
 import AVFoundation
@@ -26,6 +26,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var retryTimer: Timer?
     private var stateTimer: Timer?
     private var lastAgentStatus = ""
+    private var lastIcon = ""
+    /// AXIsProcessTrusted is a TCC request: asked every 10 s once granted
+    /// (every 2 s while waiting for it, and whenever the menu opens), not on
+    /// every refresh.
+    private var trusted = false
+    private var trustedCheckedAt: TimeInterval = -.infinity
 
     private let statusPath = Shared.runPath("sayit.status")
     private let agentPath = Shared.runPath("sayit.agent")
@@ -42,7 +48,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         runner = Runner(repository: repo)
         pill = PillController(config: config)
         trigger = Trigger(config: config, runner: runner)
-        trigger.onState = { [weak self] in self?.refresh() }
+        trigger.onState = { [weak self] in self?.pill.wake(); self?.refresh() }
         trigger.onProbe = { [weak self] line in self?.probed(line) }
         pill.onChange = { [weak self] in self?.refresh() }
         buildMenu()
@@ -131,7 +137,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         statusItem.menu = menu
     }
 
-    func menuWillOpen(_ menu: NSMenu) { refresh() }
+    func menuWillOpen(_ menu: NSMenu) {
+        trustedCheckedAt = -.infinity
+        refresh()
+    }
 
     /// The last status: its first line, the level bin/sayit gave it (warn or
     /// error, on a second line; empty for plain progress) and its age.
@@ -155,7 +164,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     private func refresh() {
         guard statusItem != nil else { return }
-        let trusted = AXIsProcessTrusted()
+        let now = ProcessInfo.processInfo.systemUptime
+        if now - trustedCheckedAt > (trusted ? 10 : 2) {
+            trusted = AXIsProcessTrusted()
+            trustedCheckedAt = now
+        }
         let mic = microphoneStatus
         var problem = false
         if let status = lastStatus(), !status.text.isEmpty {
@@ -173,6 +186,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if pill.recording || trigger.isRecording {
             symbol = "waveform.circle.fill"
             tint = .systemRed
+        } else if pill.busy {
+            symbol = "ellipsis.circle"
         } else if !trigger.isInstalled || mic == "denied" {
             symbol = "exclamationmark.triangle"
         } else if problem {
@@ -181,9 +196,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         } else {
             symbol = "waveform"
         }
-        if let button = statusItem.button {
+        let icon = symbol + (tint == nil ? "" : "/\(tint!)")
+        if icon != lastIcon, let button = statusItem.button {
             button.image = NSImage(systemSymbolName: symbol, accessibilityDescription: "sayit")
             button.contentTintColor = tint
+            lastIcon = icon
         }
 
         if !trigger.isInstalled {

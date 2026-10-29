@@ -23,7 +23,10 @@
 #     $XDG_DATA_HOME/sayit/history.jsonl
 #   - Status notifications via notify-send (when available); on macOS the
 #     last status goes to $XDG_RUNTIME_DIR/sayit.status for Sayit.app's menu
-#     instead. A persistent recording indicator (sayit-indicator) is shown once
+#     instead (a second line, warn or error, marks a problem), and
+#     sayit.busy exists while a transcription runs, for Sayit's pill. The
+#     text reaches sayit-inject on stdin. A persistent recording indicator
+#     (sayit-indicator) is shown once
 #     the microphone is actually live. Disable it with RECORDING_INDICATOR=0.
 #   - Transcription errors are summarized in a notification and appended to
 #     $XDG_RUNTIME_DIR/sayit-last-error.log (error class only — never text).
@@ -396,6 +399,11 @@ stop_and_inject() {
     trap - INT TERM HUP
 
     notify "Transcribing..."
+    # macOS: Sayit's pill shows a working state while this marker exists.
+    if [[ "$OSTYPE" == darwin* ]]; then
+        : > "$RUN_DIR/sayit.busy" 2>/dev/null || true
+        trap 'rm -f "$RUN_DIR/sayit.busy"' EXIT
+    fi
     local terr trc=0
     terr="$RUN_DIR/sayit.terr.$$"
     mark transcribe.begin
