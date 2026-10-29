@@ -240,6 +240,25 @@ What it decided:
   hardware. Thirty sentences narrow the accuracy ranking down; they do not
   settle it.
 
+### Greedy decoding and an encoder window sized to the clip
+
+On 2026-10-29, the same machine and server flags, but 423 clips: 341 distinct
+FLEURS sv_se test sentences (4-31 s), 70 real 1.1-3.1 s cuts made at natural
+pauses, and 12 concatenated clips of 15-30 s. KB-Whisper large q5_0.
+
+| Settings | Median | p90 | Max | Word error rate |
+| --- | ---: | ---: | ---: | ---: |
+| beam 5, full window (the default) | 0.92 s | 1.27 s | 2.80 s | 5.38% |
+| greedy (`BEAM=1`), full window | 0.77 s | 1.02 s | 1.94 s | 5.60% |
+| greedy, window sized to the clip (`AUDIO_CTX_ADAPTIVE=1`) | 0.49 s | 0.82 s | 1.57 s | 5.73% |
+
+On the 70 short clips the window took transcription from 0.50 to 0.21 s. The
+other 418 test recordings gave 0.78 against 0.53 s and 5.07 against 5.31%, with
+no garbled result in either set. A window size that is not a multiple of 256
+frames garbled 54 of the 423 clips, which is why `bin/sayit-transcribe` only
+ever sends those, with a full-window retry as a guard; see
+[Configuration](CONFIGURATION.md#accuracy-vad-beam-search-initial-prompt-suppression).
+
 ### First run
 
 The first transcription after building took 8 s: Metal compiles its pipelines

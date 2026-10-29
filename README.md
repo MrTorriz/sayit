@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/logo-lockup.svg" alt="sayit: don't type it, say it" width="280">
+  <img src="docs/logo-wordmark.svg" alt="SAYIT: don't type it. Say it." width="320">
 </p>
 
 <p align="center">
@@ -15,7 +15,7 @@
 </p>
 
 <p align="center">
-  <img src="docs/demo.gif" alt="Animated illustration on Linux: the thumb button is held, a waveform pill appears and follows the voice, and after release the Swedish sentence is pasted into a git commit message in the terminal" width="800">
+  <img src="docs/demo.gif" alt="Animated illustration: the thumb button of a mouse is held, a black waveform pill appears and follows the voice, a sweep shows the transcription after release, and three sentences land in the text field in one paste" width="800">
 </p>
 
 Speech is recognised on your own machine by [whisper.cpp](https://github.com/ggml-org/whisper.cpp),
@@ -34,7 +34,8 @@ be configured instead. No account, no subscription, no telemetry.
   microphone stays closed. On an Apple M6, KB-Whisper large returns a typical
   sentence in about a second.
 - **Clear feedback.** A small pill shows a live waveform while the microphone
-  is open, and only then. All three platforms draw it from the same geometry.
+  is open, and only then; on macOS it then sweeps until the text is pasted.
+  All three platforms draw it from the same geometry.
 - **Learns your vocabulary.** A wordlist fixes recurring mistakes
   (`sayit-learn "get hub" "GitHub"`), and a local history keeps what you
   dictated, with speaking-speed statistics.
@@ -76,10 +77,6 @@ Bluetooth headsets and automatic startup.
 
 ### Windows 11
 
-<p align="center">
-  <img src="docs/demo-windows.gif" alt="Animated illustration on Windows 11: Mouse 5 is held, a black waveform pill appears above the taskbar, and after release a Swedish sentence is pasted into a new message" width="720">
-</p>
-
 ```powershell
 git clone https://github.com/MrTorriz/sayit.git
 cd sayit
@@ -96,10 +93,6 @@ microphone selection, autostart and platform limits.
 
 ### macOS
 
-<p align="center">
-  <img src="docs/demo-macos.gif" alt="Animated illustration on macOS: the F18 key is held, the menu bar item turns red and a waveform pill shows the recording, and after release a Swedish sentence is pasted into a text document" width="720">
-</p>
-
 ```bash
 git clone https://github.com/MrTorriz/sayit.git
 cd sayit
@@ -111,8 +104,9 @@ The installer uses Homebrew, builds whisper.cpp with Metal, downloads the
 large model on Apple Silicon, builds the `Sayit.app` menu bar agent and loads
 its LaunchAgents. Allow Microphone and Accessibility when macOS asks. F18 is
 the default trigger: hold it to talk, or tap to start and tap again to stop.
-**Probe Trigger** in the menu shows what any key or mouse button sends.
-Requires macOS 14 or later; Apple Silicon is recommended.
+**Probe Trigger** in the menu shows what any key or mouse button sends; a
+Logitech button needs a plain mouse-button action in Logi Options+, which the
+guide explains. Requires macOS 14 or later; Apple Silicon is recommended.
 **[macOS guide](docs/INSTALL-MACOS.md)**: permissions, triggers, the
 indicator, the LaunchAgents and platform limits.
 
@@ -166,6 +160,11 @@ sentences went through the same warm server and flags that sayit uses:
 | KB-Whisper large q5_0 (the macOS default) | 1.05 s | 5.2% |
 | KB-Whisper medium q5_0 | 0.64 s | 6.4% |
 | Whisper large-v3-turbo q5_0 | 0.52 s | 8.4% |
+
+Two optional settings trade a little accuracy for speed. On 423 FLEURS clips
+greedy decoding (`BEAM=1`) took the median from 0.92 to 0.77 s and an encoder
+window sized to the clip (`AUDIO_CTX_ADAPTIVE=1`) on top to 0.49 s, for a word
+error rate of 5.73% instead of 5.38%.
 
 [Performance](docs/PERFORMANCE.md) has the Linux and Windows measurements, the
 hardware, the method and the limits of each number. Engine timings are kept

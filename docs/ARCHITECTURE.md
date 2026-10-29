@@ -344,7 +344,9 @@ same path to every command it starts, so both sides always agree.
 | `$RUN_DIR/sayit-<pid>.wav` | The recording in progress, mode 0600, unique per session. Deleted after transcription; stragglers older than an hour are swept when the next recording starts |
 | `$RUN_DIR/sayit.indicator.on` | Presence means the pill should show a recording. Created and removed by `bin/sayit-indicator show` and `hide` |
 | `$RUN_DIR/sayit.level` | One digit, `0`–`7`, rewritten in place by `sayit-rec` every 125 ms. Its modification time is the "audio is arriving" signal. Removed when the recording ends |
-| `$RUN_DIR/sayit.status` | The last status `bin/sayit` reported, shown as the first line of Sayit's menu. A `Done` status loses its text on the way |
+| `$RUN_DIR/sayit.status` | The last status `bin/sayit` reported, shown as the first line of Sayit's menu. A `Done` status loses its text on the way. A second line, `warn` or `error`, marks a problem and turns the menu bar icon orange |
+| `$RUN_DIR/sayit.busy` | Presence means a transcription is running: the pill sweeps and the icon shows an ellipsis. Removed after the paste; ignored once it is two minutes old |
+| `$RUN_DIR/sayit-daemon.path` | The random path prefix the daemon serves under, new at every start, mode 0600. Read by `bin/sayit-transcribe` and the doctor |
 | `$RUN_DIR/sayit.agent` | Kept current by Sayit, rewritten whenever it changes: its pid, the repository, both permissions, the resolved trigger, the mode and the indicator lifetime. What the doctor reads; never text. Removed when Sayit quits |
 | `$RUN_DIR/trigger-probe.log` | Probe Trigger's transcript: button and modifier transitions, and the codes of keys that type no character or are pressed with `Cmd` or `Ctrl` — never text. Started afresh by each probe and never removed |
 | `$RUN_DIR/sayit-paste.lock` | Held by `sayit-paste` from its clipboard snapshot until its restore, so two quick pastes take turns |
