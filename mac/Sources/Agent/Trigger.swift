@@ -52,15 +52,41 @@ final class Trigger {
         }
     }
 
+    /// The session last stopped for having lost its recorder, so a second
+    /// tick before bin/sayit has claimed it does not stop it twice.
+    private var endedSession = ""
+
     /// Called once a second: drops a latch whose recording no longer exists
-    /// (a failed start, a stop or cancel from the terminal). A recording that
-    /// MAX_RECORD_SECONDS ended keeps its session until the next press stops
-    /// it and transcribes what was captured.
+    /// (a failed start, a stop or cancel from the terminal), and stops a
+    /// recording whose recorder has exited on its own - MAX_RECORD_SECONDS,
+    /// or a device that went away - so what was captured is transcribed now,
+    /// not at the next press, which could come hours later in another window.
     func reconcile() {
+        if let session = endedRecording() {
+            if session != endedSession {
+                endedSession = session
+                runner.stop()
+                state = .idle
+                onState?()
+            }
+            return
+        }
         if case .latched = state, !isRecording {
             state = .idle
             onState?()
         }
+    }
+
+    /// The session line, when its recorder is gone. bin/sayit checks the
+    /// recorder 0.3 s after spawning it and retracts a session whose
+    /// recorder died at once, so only sessions older than 2 s count.
+    private func endedRecording() -> String? {
+        guard let line = try? String(contentsOfFile: Shared.runPath("sayit.session"), encoding: .utf8),
+              !FileManager.default.fileExists(atPath: Shared.runPath("sayit.starting")) else { return nil }
+        let fields = line.trimmingCharacters(in: .whitespacesAndNewlines).split(separator: "\t")
+        guard fields.count >= 3, let pid = pid_t(fields[0]), pid > 0, let start = Double(fields[2]),
+              Date().timeIntervalSince1970 - start > 2 else { return nil }
+        return kill(pid, 0) != 0 && errno == ESRCH ? line : nil
     }
 
     init(config: AgentConfig, runner: Runner) {
@@ -192,8 +218,6 @@ final class Trigger {
         case .latched:
             // The recording may have ended without us: a start that failed,
             // a stop from the terminal. Then this press means start, not stop.
-            // (After the MAX_RECORD_SECONDS cap the session is still there,
-            // so this press stops it and transcribes what was captured.)
             if sessionIsLive() {
                 runner.stop()
                 state = .idle
