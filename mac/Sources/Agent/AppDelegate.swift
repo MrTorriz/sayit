@@ -133,24 +133,39 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     func menuWillOpen(_ menu: NSMenu) { refresh() }
 
-    private func lastStatus() -> (String, TimeInterval)? {
-        guard let text = try? String(contentsOfFile: statusPath, encoding: .utf8),
+    /// The last status: its first line, the level bin/sayit gave it (warn or
+    /// error, on a second line; empty for plain progress) and its age.
+    private func lastStatus() -> (text: String, level: String, age: TimeInterval)? {
+        guard let raw = try? String(contentsOfFile: statusPath, encoding: .utf8),
               let attrs = try? FileManager.default.attributesOfItem(atPath: statusPath),
               let modified = attrs[.modificationDate] as? Date else { return nil }
-        return (text.trimmingCharacters(in: .whitespacesAndNewlines), Date().timeIntervalSince(modified))
+        let lines = raw.split(separator: "\n", omittingEmptySubsequences: false)
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+        return (lines.first ?? "", lines.count > 1 ? lines[1] : "", Date().timeIntervalSince(modified))
+    }
+
+    private static func ago(_ age: TimeInterval) -> String {
+        switch age {
+        case ..<60: return ""
+        case ..<3600: return " · \(Int(age / 60)) min ago"
+        case ..<86400: return " · \(Int(age / 3600)) h ago"
+        default: return " · \(Int(age / 86400)) d ago"
+        }
     }
 
     private func refresh() {
         guard statusItem != nil else { return }
         let trusted = AXIsProcessTrusted()
         let mic = microphoneStatus
-        let failure: Bool
-        if let (text, age) = lastStatus() {
-            statusLine.title = text.isEmpty ? "Ready" : text
-            failure = age < 8 && text.lowercased().contains("fail")
+        var problem = false
+        if let status = lastStatus(), !status.text.isEmpty {
+            // Progress lines are current by nature; an old outcome says how old.
+            let progress = status.text.hasPrefix("Recording") && status.level.isEmpty
+                || status.text.hasPrefix("Transcribing")
+            statusLine.title = status.text + (progress ? "" : AppDelegate.ago(status.age))
+            problem = status.age < 8 && (!status.level.isEmpty || status.text.lowercased().contains("fail"))
         } else {
             statusLine.title = "Ready"
-            failure = false
         }
 
         let symbol: String
@@ -160,7 +175,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             tint = .systemRed
         } else if !trigger.isInstalled || mic == "denied" {
             symbol = "exclamationmark.triangle"
-        } else if failure {
+        } else if problem {
             symbol = "exclamationmark.triangle.fill"
             tint = .systemOrange
         } else {
@@ -172,7 +187,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
 
         if !trigger.isInstalled {
-            hintLine.title = "Waiting for the Accessibility permission"
+            // After a rebuild the old entry can still look switched on.
+            hintLine.title = "Waiting for Accessibility — if Sayit is already on, remove it (−) and allow again"
         } else if let spec = trigger.spec {
             let how: String
             switch config.mode {

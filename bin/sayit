@@ -107,11 +107,13 @@ resolve_notify_icon() {
 notify() {
     # macOS: no notifications - Notification Center would keep every one,
     # dictated snippets included. Sayit.app shows the last status in its menu
-    # bar item; a "Done" status loses its text on the way.
+    # bar item; a "Done" status loses its text on the way. The optional
+    # second argument (warn or error) becomes a second line, which turns
+    # Sayit's menu bar icon into a warning for a few seconds.
     if [[ "$OSTYPE" == darwin* ]]; then
         local status="$1"
         [[ "$status" == "Done ("*"): "* ]] && status="${status%%): *})"
-        printf '%s\n' "$status" > "$RUN_DIR/sayit.status" 2>/dev/null || true
+        printf '%s\n' "$status" ${2:+"$2"} > "$RUN_DIR/sayit.status" 2>/dev/null || true
         return 0
     fi
     command -v notify-send >/dev/null || return 0
@@ -136,6 +138,32 @@ notify() {
 # the two stay independent and hide always reaches a running meter.
 indicator() {
     "$REPO_ROOT/bin/sayit-indicator" "$@" 2>/dev/null || true
+}
+
+# macOS keeps only the last status. A stop or cancel that finds no session
+# right after a failed start would replace the reason with "No recording in
+# progress" - the hold-to-talk release always arrives just then.
+recent_failure() {
+    [[ "$OSTYPE" == darwin* ]] || return 1
+    local file="$RUN_DIR/sayit.status" level="" modified
+    { read -r _ && read -r level; } < "$file" 2>/dev/null || return 1
+    [[ "$level" == error ]] || return 1
+    modified=$(stat -c %Y "$file" 2>/dev/null || stat -f %m "$file" 2>/dev/null) || return 1
+    (( ${EPOCHREALTIME%[.,]*} - modified < 10 ))
+}
+
+# "Recording failed to start", with the recorder's own reason when it gave
+# one: what it wrote to the error log after offset $1 (sayit-rec names the
+# missing device or the denied permission there).
+start_failed() {
+    local why
+    why=$(tail -c +$(( ${1:-0} + 1 )) "$ERROR_LOG" 2>/dev/null | grep -v '^[[:space:]]*$' | tail -n 1) || why=""
+    why="${why#sayit-rec: }"
+    if [[ -n "$why" ]]; then
+        notify "Recording failed to start: ${why:0:160}" error
+    else
+        notify "Recording failed to start — check the microphone" error
+    fi
 }
 
 # A PID from a state file is only trusted while its command line names the
@@ -260,9 +288,11 @@ start_recording() {
     # something external interfered — back off without touching shared state.
     [[ "$(cat "$INTENT_FILE" 2>/dev/null)" == "$$" ]] || return 0
 
-    local wav="$RUN_DIR/sayit-$$.wav" start pid
+    local wav="$RUN_DIR/sayit-$$.wav" start pid errmark
     # EPOCHREALTIME rather than date +%s.%N: older BSD date prints a literal N.
     start="${EPOCHREALTIME/,/.}"
+    # Where the recorder's stderr starts, for start_failed.
+    errmark=$(( $(wc -c 2>/dev/null < "$ERROR_LOG" || echo 0) ))
     # Detach the recorder's stdio from the caller (Solaar/hotkey handler):
     # its stderr goes to the error log, never to the caller's pipes.
     # Job control (set -m) gives the child a default SIGINT disposition —
@@ -294,7 +324,7 @@ start_recording() {
             "$(date -Iseconds)" >> "$ERROR_LOG" 2>/dev/null || true
         indicator hide
         "$REPO_ROOT/bin/sayit-bt" down 2>/dev/null || true
-        notify "Recording failed to start — check the microphone"
+        notify "Recording failed to start — check the microphone" error
         return 1
     fi
     rm -f "$INTENT_FILE"
@@ -311,7 +341,7 @@ start_recording() {
             rm -f "$SESSION_FILE.claimed.$$" "$wav"
             indicator hide
             "$REPO_ROOT/bin/sayit-bt" down 2>/dev/null || true
-            notify "Recording failed to start — check the microphone"
+            start_failed "$errmark"
             return 1
         fi
         return 0
@@ -342,7 +372,7 @@ stop_and_inject() {
     if ! claim_session; then
         trap - INT TERM HUP
         indicator hide
-        notify "No recording in progress"
+        recent_failure || notify "No recording in progress"
         return 0
     fi
     mark session.claimed
@@ -351,6 +381,10 @@ stop_and_inject() {
     # hide can never race a newer session's show.
     indicator hide
 
+    # A recorder that is already gone ended on its own: MAX_RECORD_SECONDS,
+    # or the device went away. Say so, rather than look like a normal stop.
+    local ended=""
+    is_recorder "$REC_PID" "$REC_WAV" || ended="; the recording had already stopped"
     stop_recorder
     mark record.killed
     END="${EPOCHREALTIME/,/.}"
@@ -370,13 +404,18 @@ stop_and_inject() {
     rm -f "$REC_WAV"
 
     if [[ -n "${TEXT// }" ]]; then
+        # The text goes on stdin: argv shows in every user's process listing.
+        local irc=0
+        printf '%s' "$TEXT" | "$REPO_ROOT/bin/sayit-inject" || irc=$?
+        rm -f "$RUN_DIR/sayit.busy"
         # Arithmetic drops the padding BSD wc puts before the count.
         WORDS=$(( $(printf '%s\n' "$TEXT" | wc -w) ))
-        if "$REPO_ROOT/bin/sayit-inject" "$TEXT"; then
-            notify "Done ($WORDS words): ${TEXT:0:60}"
-        else
-            notify "Injection failed — recover with: sayit-history --inject"
-        fi
+        case $irc in
+            0) notify "Done ($WORDS words$ended): ${TEXT:0:60}" ;;
+            2) notify "Not pasted: Sayit needs the Accessibility permission — the text is on the clipboard, press Cmd+V" error ;;
+            3) notify "Secure Input is on, so the paste may have been blocked — the text is on the clipboard, press Cmd+V" warn ;;
+            *) notify "Injection failed — recover with: sayit-history --inject" error ;;
+        esac
         mark inject.end
 
         # Append to history. The text goes via stdin (not argv) and the
@@ -399,7 +438,7 @@ print(json.dumps({
     'text': sys.stdin.read()
 }, ensure_ascii=False))
 " "${REC_START:-0}" "$END" "$WORDS" >> "$HIST"; then
-            notify "History write failed"
+            notify "History write failed" warn
         fi
         mark history.done
     elif (( trc != 0 )); then
@@ -412,9 +451,9 @@ print(json.dumps({
                 "$(date -Iseconds)" "$trc"
             cat "$terr" 2>/dev/null
         } >> "$ERROR_LOG" || true
-        notify "Transcription failed: ${why:-exit $trc (see sayit-last-error.log)}"
+        notify "Transcription failed: ${why:-exit $trc (see sayit-last-error.log)}" error
     else
-        notify "Empty result"
+        notify "Empty result" warn
     fi
     rm -f "$terr"
 }
@@ -426,7 +465,7 @@ cancel_recording() {
     if ! claim_session; then
         trap - INT TERM HUP
         indicator hide
-        notify "No recording in progress"
+        recent_failure || notify "No recording in progress"
         return 0
     fi
     indicator hide

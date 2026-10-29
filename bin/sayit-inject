@@ -3,9 +3,12 @@
 #
 # Usage:
 #   sayit-inject <text>
+#   printf '%s' "$TEXT" | sayit-inject
 #
 # Arguments:
-#   text  The string to type into the active window
+#   text  The string to type into the active window. Without an argument it
+#         is read from stdin - what bin/sayit does, because argv is visible
+#         to every user in a process listing.
 #
 # Behavior:
 #   Primary: put the text on the clipboard (wl-copy) and paste with
@@ -36,17 +39,27 @@
 #   macOS: hands the text on stdin to Sayit.app's sayit-paste - clipboard plus
 #   Cmd+V with the previous clipboard restored, or Unicode typing with
 #   INJECT_METHOD=type. Without the Accessibility permission the text is left
-#   on the clipboard for a manual Cmd+V, and the exit code is 1.
+#   on the clipboard for a manual Cmd+V (exit 2); with Secure Input on, the
+#   paste may have been swallowed and the text stays on the clipboard (exit 3).
 #
 # Exit codes:
 #   0  Text injected
 #   1  No injector succeeded. The text is echoed to stdout only on an
 #      interactive terminal — never into pipelines/journals (it remains
 #      recoverable via sayit-history --inject).
+#   2  macOS: no Accessibility permission; the text is on the clipboard
+#   3  macOS: Secure Input was on; the text is on the clipboard
 
 set -euo pipefail
 
-TEXT="${1:?Usage: sayit-inject <text>}"
+if (( $# > 0 )); then
+    TEXT="$1"
+elif [[ ! -t 0 ]]; then
+    TEXT=$(cat)
+else
+    TEXT=""
+fi
+[[ -n "$TEXT" ]] || { echo "Usage: sayit-inject <text>  (or the text on stdin)" >&2; exit 1; }
 
 if [[ "$OSTYPE" == darwin* ]]; then
     REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -64,9 +77,11 @@ if [[ "$OSTYPE" == darwin* ]]; then
         return 1
     }
     PASTE=$(mac_helper sayit-paste) || { echo "sayit-paste missing — run ./install.sh" >&2; exit 1; }
+    rc=0
     printf '%s' "$TEXT" | INJECT_METHOD="${INJECT_METHOD:-auto}" \
-        PASTE_RESTORE_DELAY="${PASTE_RESTORE_DELAY:-1.0}" "$PASTE" || exit 1
-    exit 0
+        PASTE_RESTORE_DELAY="${PASTE_RESTORE_DELAY:-1.0}" "$PASTE" || rc=$?
+    # 2 and 3 leave the text on the clipboard, and the caller says so.
+    case $rc in 0|2|3) exit "$rc" ;; *) exit 1 ;; esac
 fi
 
 export YDOTOOL_SOCKET="${YDOTOOL_SOCKET:-/run/.ydotool_socket}"

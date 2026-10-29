@@ -216,6 +216,11 @@ daemon_rc=0
 RAW=$(transcribe_daemon) || daemon_rc=$?
 mark t.daemon.end "$daemon_rc"
 if (( daemon_rc != 0 )); then
+    # macOS: the cold path takes seconds - tell Sayit's menu why it is slow.
+    if [[ "$OSTYPE" == darwin* ]]; then
+        printf '%s\n' "Transcribing without the server (it is not answering) — loading the model, this takes longer" \
+            > "${XDG_RUNTIME_DIR:-/tmp}/sayit.status" 2>/dev/null || true
+    fi
     cli_rc=0
     mark t.cli.begin
     RAW=$(transcribe_cli) || cli_rc=$?

@@ -72,7 +72,8 @@ EOF
     # Stub: sayit-inject — logs the injected text, exit code controllable.
     cat > "$SANDBOX/bin/sayit-inject" <<'EOF'
 #!/usr/bin/env bash
-printf '%s\n' "$1" >> "$STUB_CTL/inject.log"
+if (( $# )); then text="$1"; echo "argv" >> "$STUB_CTL/inject.argv"; else text=$(cat); fi
+printf '%s\n' "$text" >> "$STUB_CTL/inject.log"
 echo "inject" >> "$STUB_LOG"
 [[ -f "$STUB_CTL/inject.fail" ]] && exit 1
 exit 0
@@ -190,6 +191,8 @@ session_wav() { cut -f2 "$SESSION"; }
     [ ! -f "$SESSION" ]
     grep -q "indicator hide" "$STUB_LOG"
     grep -q "bt down" "$STUB_LOG"
+    # The text reached sayit-inject on stdin, never in argv.
+    [ ! -f "$STUB_CTL/inject.argv" ]
 }
 
 @test "stop appends exactly one valid JSON history line" {

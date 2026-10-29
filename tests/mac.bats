@@ -200,11 +200,27 @@ EOF
     [ "$(cat "$STUB_CTL/paste.delay")" = "0.5" ]
 }
 
-@test "a failing sayit-paste maps to exit 1 and never echoes the text" {
+@test "sayit-paste's clipboard outcomes pass through, other failures map to exit 1, the text never echoes" {
     echo 2 > "$STUB_CTL/paste.exit"   # no Accessibility permission
+    run "$SANDBOX/bin/sayit-inject" "very private dictation"
+    [ "$status" -eq 2 ]
+    [[ "$output" != *"very private dictation"* ]]
+    echo 3 > "$STUB_CTL/paste.exit"   # Secure Input was on
+    run "$SANDBOX/bin/sayit-inject" "very private dictation"
+    [ "$status" -eq 3 ]
+    echo 9 > "$STUB_CTL/paste.exit"
     run "$SANDBOX/bin/sayit-inject" "very private dictation"
     [ "$status" -eq 1 ]
     [[ "$output" != *"very private dictation"* ]]
+}
+
+@test "sayit-inject takes the text on stdin when there is no argument" {
+    run bash -c 'printf "from stdin åäö" | "$1"' _ "$SANDBOX/bin/sayit-inject"
+    [ "$status" -eq 0 ]
+    [ "$(cat "$STUB_CTL/paste.stdin")" = "from stdin åäö" ]
+    run bash -c '"$1" < /dev/null' _ "$SANDBOX/bin/sayit-inject"
+    [ "$status" -eq 1 ]
+    [[ "$output" == *Usage* ]]
 }
 
 @test "a missing sayit-paste fails with a clear message" {
@@ -320,16 +336,29 @@ EOF
     grep -q "secret words ): more secret" "$XDG_DATA_HOME/sayit/history.jsonl"
 }
 
-@test "other statuses reach the status file unchanged" {
+@test "other statuses reach the status file unchanged, problems with their level" {
     sayit_sandbox
     run "$SAYIT" stop
     [ "$status" -eq 0 ]
     [ "$(cat "$STATUS")" = "No recording in progress" ]
 
+    echo 1 > "$STUB_CTL/paste.exit"
+    "$SAYIT" start
+    "$SAYIT" stop
+    [ "$(cat "$STATUS")" = $'Injection failed — recover with: sayit-history --inject\nerror' ]
+
     echo 2 > "$STUB_CTL/paste.exit"
     "$SAYIT" start
     "$SAYIT" stop
-    [ "$(cat "$STATUS")" = "Injection failed — recover with: sayit-history --inject" ]
+    [[ "$(head -n 1 "$STATUS")" == "Not pasted: Sayit needs the Accessibility permission"*"Cmd+V" ]]
+    [ "$(sed -n 2p "$STATUS")" = error ]
+
+    echo 3 > "$STUB_CTL/paste.exit"
+    "$SAYIT" start
+    "$SAYIT" stop
+    [[ "$(head -n 1 "$STATUS")" == "Secure Input is on"*"Cmd+V" ]]
+    [ "$(sed -n 2p "$STATUS")" = warn ]
+    rm "$STUB_CTL/paste.exit"
 
     "$SAYIT" start
     "$SAYIT" cancel
@@ -484,6 +513,38 @@ EOF
     SAYIT_PROFILE=1 run "$TRANSCRIBE" "$WAV"
     [ "$status" -eq 0 ]
     grep -q ',t.empty,' "$DARWIN_TMP/sayit-profile.csv"
+}
+
+@test "a failed start keeps its reason: the release's stop does not replace it" {
+    sayit_sandbox
+    rm "$STUB_CTL/rec.live"
+    cat > "$HELPERS/sayit-rec" <<'EOF'
+#!/usr/bin/env bash
+echo 'sayit-rec: no input device matches "Studio Mic" (available: Built-in)' >&2
+exit 1
+EOF
+    run "$SAYIT" start
+    [ "$status" -eq 1 ]
+    [ "$(head -n 1 "$STATUS")" = 'Recording failed to start: no input device matches "Studio Mic" (available: Built-in)' ]
+    [ "$(sed -n 2p "$STATUS")" = error ]
+    run "$SAYIT" stop
+    [ "$status" -eq 0 ]
+    [[ "$(head -n 1 "$STATUS")" == "Recording failed to start: no input device"* ]]
+    # An old failure no longer holds the line.
+    touch -t 202001010000 "$STATUS"
+    run "$SAYIT" stop
+    [ "$(cat "$STATUS")" = "No recording in progress" ]
+}
+
+@test "a recording whose recorder already ended says so, and the busy marker goes away" {
+    sayit_sandbox
+    "$SAYIT" start
+    kill -TERM "$(cat "$STUB_CTL/rec.pid")"
+    sleep 0.5
+    run "$SAYIT" stop
+    [ "$status" -eq 0 ]
+    [ "$(cat "$STATUS")" = "Done (2 words; the recording had already stopped)" ]
+    [ ! -f "$RUN_DIR/sayit.busy" ]
 }
 
 # --- sayit-daemon -----------------------------------------------------------
