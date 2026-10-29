@@ -1,0 +1,66 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 880 132" width="880" height="132" role="img" aria-label="The dictation pipeline: hold the trigger, record with a live waveform, release, transcribe locally with whisper.cpp or OpenVINO, apply the wordlist, paste into the focused window">
+  <title>How sayit turns speech into text</title>
+  <!-- The four stages every platform shares, in the README's colours. Plain
+       text and shapes, so it renders the same on GitHub, in an editor and
+       offline; the accent marks the one stage that does the recognition. -->
+  <style>
+    .box  { fill: #f6f8fa; stroke: #d0d7de; stroke-width: 1.2; }
+    .core { fill: #fff5f6; stroke: #da4453; stroke-width: 1.6; }
+    .h    { fill: #1f2328; font: 600 14px -apple-system, "Segoe UI", "Noto Sans", Helvetica, Arial, sans-serif; }
+    .s    { fill: #59636e; font: 12px -apple-system, "Segoe UI", "Noto Sans", Helvetica, Arial, sans-serif; }
+    .n    { fill: #da4453; font: 700 11px -apple-system, "Segoe UI", "Noto Sans", Helvetica, Arial, sans-serif; letter-spacing: 0.08em; }
+    .a    { stroke: #8c959f; stroke-width: 1.6; fill: none; }
+    .ah   { fill: #8c959f; }
+    @media (prefers-color-scheme: dark) {
+      .box  { fill: #161b22; stroke: #30363d; }
+      .core { fill: #2a1418; stroke: #ff4d4d; }
+      .h    { fill: #e6edf3; }
+      .s    { fill: #9198a1; }
+      .n    { fill: #ff6b6b; }
+      .a    { stroke: #6e7681; }
+      .ah   { fill: #6e7681; }
+    }
+  </style>
+  <defs>
+    <marker id="tip" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="8" markerHeight="8" orient="auto">
+      <path class="ah" d="M0 0 L8 4 L0 8 z"/>
+    </marker>
+  </defs>
+
+  <g text-anchor="middle">
+    <rect class="box" x="1" y="16" width="140" height="100" rx="10"/>
+    <text class="n" x="71" y="40">HOLD</text>
+    <text class="h" x="71" y="64">Press the trigger</text>
+    <text class="s" x="71" y="84">the microphone</text>
+    <text class="s" x="71" y="100">opens</text>
+
+    <rect class="box" x="173" y="16" width="140" height="100" rx="10"/>
+    <text class="n" x="243" y="40">SPEAK</text>
+    <text class="h" x="243" y="64">Record</text>
+    <text class="s" x="243" y="84">16 kHz mono WAV,</text>
+    <text class="s" x="243" y="100">live waveform pill</text>
+
+    <rect class="core" x="361" y="16" width="190" height="100" rx="10"/>
+    <text class="n" x="456" y="40">RELEASE</text>
+    <text class="h" x="456" y="64">Transcribe locally</text>
+    <text class="s" x="456" y="84">whisper.cpp: Vulkan, Metal</text>
+    <text class="s" x="456" y="100">or OpenVINO Turbo</text>
+
+    <rect class="box" x="583" y="16" width="130" height="100" rx="10"/>
+    <text class="n" x="648" y="40">FIX</text>
+    <text class="h" x="648" y="64">Wordlist</text>
+    <text class="s" x="648" y="84">your recurring</text>
+    <text class="s" x="648" y="100">corrections</text>
+
+    <rect class="box" x="745" y="16" width="134" height="100" rx="10"/>
+    <text class="n" x="812" y="40">DONE</text>
+    <text class="h" x="812" y="64">Paste</text>
+    <text class="s" x="812" y="84">into the focused</text>
+    <text class="s" x="812" y="100">window</text>
+  </g>
+
+  <path class="a" d="M143 66 H169" marker-end="url(#tip)"/>
+  <path class="a" d="M315 66 H357" marker-end="url(#tip)"/>
+  <path class="a" d="M553 66 H579" marker-end="url(#tip)"/>
+  <path class="a" d="M715 66 H741" marker-end="url(#tip)"/>
+</svg>
