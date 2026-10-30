@@ -176,6 +176,15 @@ enum ConfigTests {
         check(c.mode == .hold, "TRIGGER_MODE is case-insensitive")
         check(!c.suppress && !c.indicator && c.resident, "0 and 1 flags are read")
         check(c.scale == 1.5, "INDICATOR_SCALE in range is kept")
+        check(c.trigger?.label == "mouse button 5 (forward)", "without TRIGGER_LABEL the button keeps its own name")
+
+        try? """
+            TRIGGER_BUTTON="XBUTTON2"
+            TRIGGER_LABEL="the thumb button"
+            """.write(toFile: envPath, atomically: true, encoding: .utf8)
+        c = AgentConfig(repository: repo)
+        check(c.trigger?.kind == .mouse(button: 4) && c.trigger?.label == "the thumb button",
+              "TRIGGER_LABEL renames the button and keeps what it listens for")
 
         try? """
             TRIGGER_BUTTON="nonsense"

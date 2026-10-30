@@ -38,6 +38,11 @@ final class Runner {
 
     func cancel() { after("cancel") }
 
+    /// Pastes the newest history entry again, under Sayit's permissions.
+    func pasteLast() {
+        queue.async { _ = self.spawn("--inject", script: "bin/sayit-history", extra: ["last"]) }
+    }
+
     private func after(_ verb: String) {
         queue.async {
             let prior = self.lastStart
@@ -54,10 +59,12 @@ final class Runner {
     }
 
     @discardableResult
-    private func spawn(_ verb: String) -> Process? {
+    private func spawn(_ verb: String, script: String? = nil, extra: [String] = []) -> Process? {
         let p = Process()
-        p.executableURL = URL(fileURLWithPath: sayit)
-        p.arguments = [verb]
+        let tool = script.map { ((sayit as NSString).deletingLastPathComponent as NSString)
+            .appendingPathComponent(($0 as NSString).lastPathComponent) } ?? sayit
+        p.executableURL = URL(fileURLWithPath: tool)
+        p.arguments = [verb] + extra
         p.environment = environment
         p.standardInput = FileHandle.nullDevice
         p.standardOutput = FileHandle.nullDevice
@@ -68,7 +75,7 @@ final class Runner {
         do {
             try p.run()
         } catch {
-            FileHandle.standardError.write(Data("Sayit: cannot run \(sayit) \(verb): \(error.localizedDescription)\n".utf8))
+            FileHandle.standardError.write(Data("Sayit: cannot run \(tool) \(verb): \(error.localizedDescription)\n".utf8))
             return nil
         }
         lock.lock(); running.insert(p); lock.unlock()

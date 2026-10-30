@@ -81,6 +81,28 @@ now() { date +%Y-%m-%dT%H:%M:%S; }
     [ "$status" -eq 1 ]
 }
 
+@test "--inject last re-sends the newest entry on stdin, never in argv" {
+    add_entry "$(now)" 1 1 "first"
+    add_entry "$(now)" 1 2 "senaste åäö"
+    printf '\n' >> "$HIST_FILE"
+    cat > "$SANDBOX/bin/sayit-inject" <<EOF
+#!/usr/bin/env bash
+printf '%s' "\$#" > "$BATS_TEST_TMPDIR/argc"
+cat > "$BATS_TEST_TMPDIR/stdin"
+EOF
+    chmod +x "$SANDBOX/bin/sayit-inject"
+    run "$HISTORY" --inject last
+    [ "$status" -eq 0 ]
+    [ "$(cat "$BATS_TEST_TMPDIR/stdin")" = "senaste åäö" ]
+    [ "$(cat "$BATS_TEST_TMPDIR/argc")" = "0" ]
+}
+
+@test "--copy last on an empty history fails cleanly" {
+    run "$HISTORY" --copy last
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"Empty history"* ]]
+}
+
 @test "--clear empties the history" {
     add_entry "$(now)" 1 2 "text"
     run "$HISTORY" --clear

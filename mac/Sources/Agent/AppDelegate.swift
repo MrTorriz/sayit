@@ -18,6 +18,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var statusItem: NSStatusItem!
     private let statusLine = NSMenuItem(title: "", action: nil, keyEquivalent: "")
     private let hintLine = NSMenuItem(title: "", action: nil, keyEquivalent: "")
+    private let serverLine = NSMenuItem(title: "Transcription server: checking…", action: nil, keyEquivalent: "")
+    private let pasteLastItem = NSMenuItem(title: "Paste Last Dictation", action: #selector(pasteLast), keyEquivalent: "")
+    private let settingsItem = NSMenuItem(title: "Open Settings…", action: #selector(openSettings), keyEquivalent: "")
+    private let restartItem = NSMenuItem(title: "Restart Transcription Server", action: #selector(restartServer),
+                                         keyEquivalent: "")
+    private var serverRestarting = false
     private let accessibilityItem = NSMenuItem(title: "Allow Accessibility…", action: #selector(openAccessibility), keyEquivalent: "")
     private let microphoneItem = NSMenuItem(title: "Allow Microphone…", action: #selector(openMicrophone), keyEquivalent: "")
     private let placeItem = NSMenuItem(title: "Place Indicator", action: #selector(togglePlacing), keyEquivalent: "")
@@ -123,14 +129,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.autoenablesItems = false
         statusLine.isEnabled = false
         hintLine.isEnabled = false
+        serverLine.isEnabled = false
         menu.addItem(statusLine)
         menu.addItem(hintLine)
+        menu.addItem(serverLine)
         menu.addItem(accessibilityItem)
         menu.addItem(microphoneItem)
         menu.addItem(.separator())
+        menu.addItem(pasteLastItem)
+        menu.addItem(.separator())
         menu.addItem(placeItem)
         menu.addItem(probeItem)
+        menu.addItem(settingsItem)
         menu.addItem(NSMenuItem(title: "Reload Settings", action: #selector(reload), keyEquivalent: ""))
+        menu.addItem(restartItem)
         menu.addItem(.separator())
         menu.addItem(NSMenuItem(title: "Quit Sayit", action: #selector(quit), keyEquivalent: "q"))
         for item in menu.items where item.action != nil { item.target = self }
@@ -140,6 +152,69 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     func menuWillOpen(_ menu: NSMenu) {
         trustedCheckedAt = -.infinity
         refresh()
+        checkServer()
+    }
+
+    // MARK: - Transcription server
+
+    /// Asks the daemon's /health, under its private path, and puts the answer
+    /// in the menu. curl rather than URLSession: plain HTTP to 127.0.0.1 is
+    /// all it takes, and App Transport Security has no say over curl.
+    private func checkServer() {
+        let env = Shared.readEnv((repository as NSString).appendingPathComponent(".env"))
+        let port = Int(env["DAEMON_PORT"] ?? "") ?? 9876
+        var prefix = (try? String(contentsOfFile: Shared.runPath("sayit-daemon.path"), encoding: .utf8))?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if prefix.range(of: "^/[0-9a-f]+$", options: .regularExpression) == nil { prefix = "" }
+        DispatchQueue.global(qos: .utility).async {
+            let p = Process()
+            p.executableURL = URL(fileURLWithPath: "/usr/bin/curl")
+            p.arguments = ["-sf", "-o", "/dev/null", "--max-time", "1.5", "http://127.0.0.1:\(port)\(prefix)/health"]
+            p.standardOutput = FileHandle.nullDevice
+            p.standardError = FileHandle.nullDevice
+            let ok = (try? p.run()) != nil && { p.waitUntilExit(); return p.terminationStatus == 0 }()
+            DispatchQueue.main.async {
+                if ok {
+                    self.serverRestarting = false
+                    self.serverLine.title = "Transcription server: ready"
+                } else if self.serverRestarting {
+                    self.serverLine.title = "Transcription server: loading the model…"
+                } else {
+                    self.serverLine.title = "Transcription server: not answering — dictation is slower"
+                }
+            }
+        }
+    }
+
+    @objc private func restartServer() {
+        serverRestarting = true
+        serverLine.title = "Transcription server: restarting…"
+        let label = (Bundle.main.bundleIdentifier ?? "io.github.mrtorriz.sayit") + ".daemon"
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: "/bin/launchctl")
+        p.arguments = ["kickstart", "-k", "gui/\(getuid())/\(label)"]
+        try? p.run()
+        // The large model takes a few seconds to load: look again until it answers.
+        var tries = 0
+        Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] t in
+            tries += 1
+            guard let self = self, self.serverRestarting, tries <= 20 else { t.invalidate(); return }
+            self.checkServer()
+        }
+    }
+
+    // MARK: - History and settings
+
+    @objc private func pasteLast() { runner.pasteLast() }
+
+    /// .env in the default text editor; Reload Settings applies what the app
+    /// reads, and the scripts read it on their next run anyway.
+    @objc private func openSettings() {
+        let env = (repository as NSString).appendingPathComponent(".env")
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: "/usr/bin/open")
+        p.arguments = ["-t", env]
+        try? p.run()
     }
 
     /// The last status: its first line, the level bin/sayit gave it (warn or

@@ -56,6 +56,7 @@ of them empty on purpose so the code can resolve a repo-relative path.
 | `RECORDING_METER_STYLE` | `overlay` | Linux | `overlay` is sayit's own pill, `mark` the animated mark in the Plasma OSD, `wave` a waveform in the same OSD |
 | `TRIGGER_BUTTON` | `XBUTTON2` on Windows; `F18` on macOS | Windows, macOS | Push-to-talk button. Windows: `XBUTTON1`, `XBUTTON2`, `MIDDLE`, or `VK` plus a virtual-key code such as `VK124` for F13. macOS: all of those, plus `F1`-`F20`, `MOUSE<n>` and `KEY<code>` as the probe prints them, named keys, a modifier key on its own such as `RIGHTOPTION`, and combinations such as `CTRL+OPTION+F12` — the full list is in [Installing on macOS](INSTALL-MACOS.md#choosing-the-trigger). Note that the template sets `XBUTTON2`, so a Mac reads mouse button 5 until you change it; `F18` applies only when the setting is empty or absent |
 | `TRIGGER_SUPPRESS` | `1` | Windows, macOS | Swallow the trigger so the focused application never sees it; `0` lets it through. On macOS a modifier key used alone as the trigger is never swallowed |
+| `TRIGGER_LABEL` | (empty) | macOS | The trigger's name in Sayit's menu, for when the system sees something other than what is under your thumb: `the thumb button` for a mouse button a vendor utility sends as button 5. Empty = the button's own name |
 | `TRIGGER_MODE` | `auto` | macOS | `auto`: held 0.4 s or longer, release stops; a shorter tap latches and the next press stops. `hold`: release always stops. `toggle`: each press starts or stops. Escape cancels in every mode |
 | `INJECT_METHOD` | `auto` | Windows, macOS | Windows: `auto` types short text and pastes longer text; `type` always types; `clipboard` always pastes. macOS: `auto` and `clipboard` both paste with `Cmd+V` and restore the previous clipboard; `type` sends Unicode key events and never touches the clipboard |
 | `INJECT_CLIPBOARD_THRESHOLD` | `100` | Windows | Length in characters above which `auto` switches from typing to pasting |
@@ -83,7 +84,7 @@ three of its own in a section at the end of the file.
 | `THREADS`, `BEAM`, `VAD_MODEL` | Immediately for the CLI fallback, but fixed at server start for the daemon — restart it |
 | `MODEL_PATH`, `DAEMON_PORT` | Immediately for the CLI fallback and for which port the client dials, but fixed at server start for the daemon — restart it |
 | `WHISPER_SERVER` | Restart the daemon |
-| macOS: `TRIGGER_BUTTON`, `TRIGGER_SUPPRESS`, `TRIGGER_MODE`, `RECORDING_INDICATOR`, `INDICATOR_RESIDENT`, `INDICATOR_LOCKED`, `INDICATOR_SCALE`, `INDICATOR_EXCLUDE_FROM_CAPTURE` | **Reload Settings** in Sayit's menu, or a restart of `Sayit.app`. These are read by the app, not by the scripts |
+| macOS: `TRIGGER_BUTTON`, `TRIGGER_LABEL`, `TRIGGER_SUPPRESS`, `TRIGGER_MODE`, `RECORDING_INDICATOR`, `INDICATOR_RESIDENT`, `INDICATOR_LOCKED`, `INDICATOR_SCALE`, `INDICATOR_EXCLUDE_FROM_CAPTURE` | **Reload Settings** in Sayit's menu, or a restart of `Sayit.app`. These are read by the app, not by the scripts |
 | Everything else | Next invocation of the command that reads it |
 
 Restarting the daemon:

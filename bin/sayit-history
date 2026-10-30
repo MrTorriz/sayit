@@ -8,6 +8,7 @@
 #   sayit-history --stat 7d    # same, limited to a period: Nd (days), Nh, Nm
 #   sayit-history --copy N     # copy entry N to the clipboard (wl-copy/pbcopy)
 #   sayit-history --inject N   # re-inject entry N into the focused window
+#                              # (N may be "last" for --copy and --inject)
 #   sayit-history --clear      # empty the history file
 #
 # Numbering: the listing shows each entry's absolute line number in the history
@@ -37,6 +38,11 @@ touch "$HIST"
 # A malformed line yields a clean one-line error instead of a traceback.
 entry_text() {
     local n="$1" line
+    # "last": the newest entry, the last non-empty line.
+    if [[ "$n" == last ]]; then
+        n=$(awk 'NF { n = NR } END { print n + 0 }' "$HIST" 2>/dev/null) || n=0
+        (( n > 0 )) || { echo "Empty history" >&2; exit 1; }
+    fi
     [[ "$n" =~ ^[0-9]+$ ]] || { echo "Invalid line number: $n" >&2; exit 1; }
     line=$(sed -n "${n}p" "$HIST")
     [[ -n "$line" ]] || { echo "No entry on line $n" >&2; exit 1; }
@@ -144,7 +150,8 @@ EOF
         ;;
     --inject)
         TEXT=$(entry_text "${2:?--inject requires a line number}")
-        exec "$REPO_ROOT/bin/sayit-inject" "$TEXT"
+        # On stdin: argv shows in every user's process listing.
+        printf '%s' "$TEXT" | "$REPO_ROOT/bin/sayit-inject"
         ;;
     --clear)
         : > "$HIST"
