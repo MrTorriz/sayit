@@ -8,13 +8,12 @@
 // One dictation of three sentences, drawn rather than recorded: a text field, the thumb button
 // of a mouse, and the pill. The pill is not redrawn here - it is Sayit's own
 // PillView (mac/Sources/Agent/Pill.swift), rendered frame by frame, so the
-// meter and the transcribing sweep are exactly what the app shows. Its
+// meter is exactly what the app shows. Its
 // geometry is the overlay's (docs/check-geometry.py keeps them equal).
 //
 // What the animation shows is what sayit does: nothing is typed while the
-// button is held; the pill exists only while the microphone is open and while
-// the recording is transcribed; the text arrives all at once, because it is
-// pasted.
+// button is held; the pill exists only while the microphone is open; the text
+// arrives all at once, a moment after the release, because it is pasted.
 //
 // Text is set in the system font, as on any screenshot of the platform.
 
@@ -114,7 +113,7 @@ func mouse(at o: CGPoint, held: Bool) {
 let pillView = PillView(frame: NSRect(x: 0, y: 0, width: PillGeometry.pillWidth, height: PillGeometry.pillHeight))
 let pillScale: CGFloat = 1.5
 
-func frame(_ phase: Phase, _ level: CGFloat, _ i: Int, busyPhase: CGFloat) -> CGImage {
+func frame(_ phase: Phase, _ level: CGFloat, _ i: Int) -> CGImage {
     let space = CGColorSpace(name: CGColorSpace.sRGB)!
     let cg = CGContext(data: nil, width: Int(W * density), height: Int(H * density), bitsPerComponent: 8,
                        bytesPerRow: 0, space: space, bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue)!
@@ -122,7 +121,6 @@ func frame(_ phase: Phase, _ level: CGFloat, _ i: Int, busyPhase: CGFloat) -> CG
     cg.translateBy(x: 0, y: H * density); cg.scaleBy(x: density, y: -density)
     NSGraphicsContext.current = NSGraphicsContext(cgContext: cg, flipped: true)
     let recording = phase == .held || phase == .speak
-    let pillUp = recording || phase == .transcribe
 
     page.setFill()
     CGRect(x: 0, y: 0, width: W, height: H).fill()
@@ -142,16 +140,14 @@ func frame(_ phase: Phase, _ level: CGFloat, _ i: Int, busyPhase: CGFloat) -> CG
             if n == lines.count - 1 { caretX += w } else { lineY += 34 }
         }
     }
-    if (i / 8) % 2 == 0 || pillUp {
+    if (i / 8) % 2 == 0 || recording {
         red.setFill()
         rounded(CGRect(x: caretX + 2, y: lineY + 3, width: 2, height: 26), 1).fill()
     }
 
     // The pill: Sayit's own view, scaled up so it reads at README size.
-    if pillUp {
+    if recording {
         pillView.level = phase == .speak ? level : 0
-        pillView.busy = phase == .transcribe
-        pillView.phase = busyPhase
         // On a layer of its own: the view clears its bounds first, which
         // would punch black corners into an opaque canvas.
         let k = pillScale * density
@@ -200,10 +196,8 @@ enum MakeDemo {
             FileHandle.standardError.write(Data("make-demo: cannot write \(out)\n".utf8)); exit(1)
         }
         CGImageDestinationSetProperties(dest, [kCGImagePropertyGIFDictionary: [kCGImagePropertyGIFLoopCount: 0]] as CFDictionary)
-        var busyPhase: CGFloat = 0
         for (phase, level, i) in timeline {
-            if phase == .transcribe { busyPhase += CGFloat(frameDelay / 0.9) }
-            CGImageDestinationAddImage(dest, frame(phase, level, i, busyPhase: busyPhase),
+            CGImageDestinationAddImage(dest, frame(phase, level, i),
                                        [kCGImagePropertyGIFDictionary: [kCGImagePropertyGIFDelayTime: frameDelay]] as CFDictionary)
         }
         guard CGImageDestinationFinalize(dest) else {

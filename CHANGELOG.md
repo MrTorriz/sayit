@@ -6,16 +6,16 @@
   overview and measured macOS performance come first, the installation steps
   stay short and link to the full guides.
 - Replace the terminal-only demo with one dark, animated illustration of a
-  dictation: a text field, the thumb button and the pill, through the meter,
-  the transcribing sweep and the paste. `docs/make-demo.swift` draws it with
+  dictation: a text field, the thumb button and the pill, through the meter
+  and the paste. `docs/make-demo.swift` draws it with
   Sayit's own `PillView`, so it shows exactly what the app shows.
 - Head the README with the SAYIT wordmark and tagline alone
   (`docs/logo-wordmark.svg`, written by `docs/build-logo.py`), without the pill.
   The social preview card shows the same wordmark.
 - Add `docs/social-preview.png`, the repository's link card, and
   `docs/make-social-preview.py`, which renders it from the lockup.
-- macOS: the pill stays up with a sweep while the transcription runs, and the
-  menu bar icon shows an ellipsis.
+- macOS: the menu bar icon shows an ellipsis while the transcription runs.
+  The pill goes at release, as on the other platforms.
 - macOS: every outcome reaches the menu. A failed start keeps its reason (the
   missing device, the denied permission) instead of being replaced by "No
   recording in progress"; a paste without Accessibility or under Secure Input

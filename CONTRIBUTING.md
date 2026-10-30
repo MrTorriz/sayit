@@ -103,8 +103,8 @@ and commit what it writes. The two were maintained separately once, and the
 README ended up showing a mark the product had stopped drawing.
 
 The README's artwork follows the same rule. `docs/make-demo.swift` draws the
-animation (`docs/demo.gif`) with Sayit's own `PillView`, meter and
-transcribing sweep included (build and run it on macOS as its header shows),
+animation (`docs/demo.gif`) with Sayit's own `PillView` and its meter (build
+and run it on macOS as its header shows),
 and `docs/make-social-preview.py` renders the social card from the lockup.
 Rerun them after changing the pill or the logo, look at the result, and
 commit it.

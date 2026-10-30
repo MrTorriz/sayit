@@ -13,8 +13,8 @@
 //   sayit.indicator.on   presence = recording; bin/sayit-indicator show/hide
 //   sayit.level          one digit 0..7 from sayit-rec, every 125 ms. Its
 //                        modification time is the "audio is arriving" signal.
-//   sayit.busy           presence = transcribing (bin/sayit); the transient
-//                        pill stays up with a sweep until the text is pasted.
+//   sayit.busy           presence = transcribing (bin/sayit); read only for
+//                        the menu bar icon - the pill itself goes at release.
 //
 // The panel never activates and never takes focus. Positions are stored in
 // ~/.config/sayit/overlay-position in the Linux format: points from the top
@@ -27,9 +27,6 @@ final class PillView: NSView {
     var lit = false
     var level: CGFloat = 0
     var scale: CGFloat = 1
-    /// Transcribing: a bump sweeps across the bars instead of the meter.
-    var busy = false
-    var phase: CGFloat = 0
 
     override var isFlipped: Bool { true }
     override var isOpaque: Bool { false }
@@ -83,27 +80,13 @@ final class PillView: NSView {
     private func drawWave(_ cg: CGContext, x: CGFloat, cy: CGFloat, scale s: CGFloat, maxima: [CGFloat]) {
         let G = PillGeometry.self
         cg.setFillColor(color(G.inkRgb))
-        let heights = busy ? busyHeights(maxima) : G.waveHeights(level: level, maxima: maxima)
-        for (i, h) in heights.enumerated() {
+        for (i, h) in G.waveHeights(level: level, maxima: maxima).enumerated() {
             let bw = G.barU * s
             let bh = h * s
             let bx = x + CGFloat(i) * (G.barU + G.gapU) * s
             cg.addPath(roundedRect(CGRect(x: bx, y: cy - bh / 2, width: bw, height: bh), bw / 2))
         }
         cg.fillPath()
-    }
-
-    /// A soft bump travelling out and back across the bars, dots elsewhere.
-    private func busyHeights(_ maxima: [CGFloat]) -> [CGFloat] {
-        let G = PillGeometry.self
-        let n = CGFloat(maxima.count)
-        let t = abs(phase.truncatingRemainder(dividingBy: 2) - 1)
-        let centre = t * (n - 1)
-        let width = max(1.5, n / 8)
-        return maxima.enumerated().map { i, m in
-            let d = (CGFloat(i) - centre) / width
-            return G.barU + (m - G.barU) * 0.55 * exp(-d * d)
-        }
     }
 
     private func drawWordmark(_ cg: CGContext, x: CGFloat, cy: CGFloat) {
@@ -140,7 +123,6 @@ final class PillController {
     /// Fast polling until then: set by a trigger press or release, so the
     /// pill follows at once while the idle rate stays at once a second.
     private var awakeUntil: TimeInterval = 0
-    private var recordingEnded: TimeInterval = 0
 
     private let markerPath = Shared.runPath("sayit.indicator.on")
     private let levelPath = Shared.runPath("sayit.level")
@@ -286,7 +268,7 @@ final class PillController {
     }
 
     /// A marker file that exists and was written less than maxAge ago - a
-    /// crashed bin/sayit must not leave the pill sweeping forever.
+    /// crashed bin/sayit must not leave the icon busy forever.
     private func isFresh(_ path: String, maxAge: TimeInterval) -> Bool {
         var st = stat()
         guard stat(path, &st) == 0 else { return false }
@@ -297,35 +279,27 @@ final class PillController {
         let wasRecording = recording, wasOpen = micOpen, wasBusy = busy
         let now = ProcessInfo.processInfo.systemUptime
         recording = FileManager.default.fileExists(atPath: markerPath)
-        if wasRecording && !recording { recordingEnded = now }
         busy = !recording && isFresh(busyPath, maxAge: 120)
         let (level, fresh) = readLevel()
         micOpen = fresh
         target = fresh ? level : 0
 
         if let p = panel, config.indicator, !config.resident, !placing {
-            // Bridges the moment between the recording's end and the start
-            // of the transcription, so the pill does not blink off and on.
-            let show = recording || busy || now - recordingEnded < 0.3
-            if show && !p.isVisible {
+            if recording && !p.isVisible {
                 view.level = 0
                 p.orderFrontRegardless()
-            } else if !show && p.isVisible {
+            } else if !recording && p.isVisible {
                 p.orderOut(nil)
             }
         }
         view.lit = micOpen
-        view.busy = busy
-        if busy { view.phase += CGFloat(interval / 0.9) }
         let before = view.level
         view.level += (target - view.level) * PillGeometry.ease
-        if abs(view.level - before) > 0.001 || micOpen != wasOpen || placing || busy || busy != wasBusy {
-            view.needsDisplay = true
-        }
+        if abs(view.level - before) > 0.001 || micOpen != wasOpen || placing { view.needsDisplay = true }
         if recording != wasRecording || micOpen != wasOpen || busy != wasBusy { onChange?() }
         // A still image at rest costs nothing to look at; redraw at ~30 fps
         // only while something moves, and look once a second otherwise.
-        let active = recording || micOpen || placing || busy || view.level > 0.01 || now < awakeUntil
+        let active = recording || micOpen || placing || view.level > 0.01 || now < awakeUntil
         schedule(active ? 1.0 / 30 : 1)
     }
 }

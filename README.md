@@ -15,7 +15,7 @@
 </p>
 
 <p align="center">
-  <img src="docs/demo.gif" alt="Animated illustration: the thumb button of a mouse is held, a black waveform pill appears and follows the voice, a sweep shows the transcription after release, and three sentences land in the text field in one paste" width="800">
+  <img src="docs/demo.gif" alt="Animated illustration: the thumb button of a mouse is held, a black waveform pill appears and follows the voice, and after release three sentences land in the text field in one paste" width="800">
 </p>
 
 Speech is recognised on your own machine by [whisper.cpp](https://github.com/ggml-org/whisper.cpp),
@@ -34,7 +34,7 @@ be configured instead. No account, no subscription, no telemetry.
   microphone stays closed. On an Apple M6, KB-Whisper large returns a typical
   sentence in about a second.
 - **Clear feedback.** A small pill shows a live waveform while the microphone
-  is open, and only then; on macOS it then sweeps until the text is pasted.
+  is open, and only then.
   All three platforms draw it from the same geometry.
 - **Learns your vocabulary.** A wordlist fixes recurring mistakes
   (`sayit-learn "get hub" "GitHub"`), and a local history keeps what you

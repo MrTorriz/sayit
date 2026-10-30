@@ -351,9 +351,8 @@ the level comes from `sayit-rec`, which has already computed it, so the
 microphone is opened exactly once. The Linux meter opens a second capture
 stream for the same job.
 
-After you release the trigger, the transient pill stays up while the
-transcription runs, with a sweep across its bars instead of the meter, and goes
-away when the text is pasted.
+The transient pill goes as soon as you release the trigger. While the
+transcription runs, the menu bar icon shows an ellipsis.
 
 The transient pill appears once `bin/sayit` has confirmed the recorder is
 running, about 0.3 s after the press. Its bars move once audio actually
