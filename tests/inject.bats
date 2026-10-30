@@ -38,6 +38,12 @@ EOF
     # wl-copy stub: records what was copied where.
     cat > "$STUBBIN/wl-copy" <<'EOF'
 #!/usr/bin/env bash
+if [[ -f "$STUB_CTL/copy-fail-once" ]]; then
+    rm -f "$STUB_CTL/copy-fail-once"
+    cat >/dev/null
+    echo copy-failed >> "$STUB_CTL/calls.log"
+    exit 1
+fi
 if [[ "$*" == *"--primary"* && "$*" == *"--clear"* ]]; then
     echo "primary-clear" >> "$STUB_CTL/calls.log"
     exit 0
@@ -183,4 +189,32 @@ break_stub() {
     run "$INJECT" "text"
     [ "$status" -eq 0 ]
     grep -q "ydotool type" "$STUB_CTL/calls.log"
+}
+
+@test "a transient clipboard failure retries and preserves Swedish text" {
+    printf 'prev' > "$STUB_CTL/clipboard"
+    touch "$STUB_CTL/copy-fail-once"
+    run "$INJECT" "Någonting är konstigt åäö"
+    [ "$status" -eq 0 ]
+    grep -q copy-failed "$STUB_CTL/calls.log"
+    grep -q 'ydotool key' "$STUB_CTL/calls.log"
+    ! grep -q 'ydotool type' "$STUB_CTL/calls.log"
+    [ "$(cat "$STUB_CTL/primary")" = "Någonting är konstigt åäö" ]
+}
+
+@test "persistent clipboard failure never types damaged Swedish text" {
+    break_stub wl-copy wtype
+    run "$INJECT" "Någonting är konstigt åäö"
+    [ "$status" -eq 1 ]
+    ! grep -q 'ydotool type' "$STUB_CTL/calls.log"
+    [[ "$output" == *sayit-history* ]]
+}
+
+@test "failed paste keystroke never types damaged Swedish text" {
+    printf 'prev' > "$STUB_CTL/clipboard"
+    touch "$STUB_CTL/ydotool-key.fail"
+    break_stub wtype
+    run "$INJECT" "Någonting är konstigt åäö"
+    [ "$status" -eq 1 ]
+    ! grep -q 'ydotool type' "$STUB_CTL/calls.log"
 }

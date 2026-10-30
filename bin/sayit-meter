@@ -141,11 +141,10 @@ ARGS=(--record --raw --rate 8000 --channels 1 --format s16)
 # together — on every exit path, including the normal end of the stream.
 #
 # The stop signal can also land BEFORE the pipeline exists, so the trap is
-# armed first, guarded for empty state — and the handler must exit by itself:
+# armed first and reads the job table — and the handler must exit by itself:
 # an interrupted wait on a pipeline job otherwise resumes waiting for the
 # remaining pipeline members.
 PIPE_PID=""
-PIPE_PGID=""
 
 # Both codes mean the same thing to different shellcheck versions: 0.10+ says
 # SC2329 (never invoked), older releases say SC2317 (unreachable). CI runs an
@@ -153,11 +152,13 @@ PIPE_PGID=""
 # lint job fails on a function the traps below do call.
 # shellcheck disable=SC2329,SC2317
 stop_capture() {
-    if [[ -n "$PIPE_PGID" ]]; then
-        kill -- -"$PIPE_PGID" 2>/dev/null || true
-    elif [[ -n "$PIPE_PID" ]]; then
-        kill "$PIPE_PID" 2>/dev/null || true
-    fi
+    local pgid
+    # The job table is populated as part of spawning the pipeline, before
+    # the next command can assign $! or query ps. A release in that gap
+    # must still stop every pipeline member, including the microphone.
+    for pgid in $(jobs -p); do
+        kill -- -"$pgid" 2>/dev/null || true
+    done
 }
 
 # Both codes mean the same thing to different shellcheck versions: 0.10+ says
@@ -227,10 +228,6 @@ while frames < 960:                       # safety cap: ~120 s at 8 fps
 fi
 PIPE_PID=$!
 set +m
-# Group id of the pipeline, for the whole-group stop above. An empty answer
-# just falls back to signalling the renderer alone.
-PIPE_PGID=$(ps -o pgid= -p "$PIPE_PID" 2>/dev/null | tr -d ' ') || PIPE_PGID=""
-[[ "$PIPE_PGID" =~ ^[0-9]+$ ]] || PIPE_PGID=""
 
 wait "$PIPE_PID" 2>/dev/null || true
 
