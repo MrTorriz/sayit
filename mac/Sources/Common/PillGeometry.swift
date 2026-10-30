@@ -38,10 +38,20 @@ enum PillGeometry {
     static let lampGap: CGFloat = 8
     static let layoutGap: CGFloat = 12
 
-    // The transient (recording-only) pill: more bars rather than bigger ones,
-    // spread across the whole pill inside a small shoulder.
-    static let transientWaveInset: CGFloat = 13
-    static let transientBarMaxU: [CGFloat] = [26, 31, 37, 45, 54, 61, 50, 42, 33, 29, 39, 53, 64, 58, 45, 35, 28, 40, 54, 47, 36, 60, 52, 43, 34, 28]
+    // The voice wave, the transient pill's meter, in pill points: a centred
+    // row of rounded bars, tallest in the middle and tapering to the ends
+    // like a voice, each moving a little on its own while audio arrives.
+    static let voiceBarCount = 21
+    static let voiceBarW: CGFloat = 3
+    static let voiceGap: CGFloat = 3
+    static let voiceRestH: CGFloat = 4
+    static let voiceBaseH: CGFloat = 4
+    static let voiceSpanH: CGFloat = 26
+    static let voiceEdge: CGFloat = 0.25
+    static let voiceCurve: CGFloat = 1.3
+    static let voiceMotion: CGFloat = 0.4
+    static let voiceSpeed: CGFloat = 8
+    static let voiceSpread: CGFloat = 0.9
 
     // --- colours ----------------------------------------------------------
     // The lamp is always drawn in the resident pill; colour is the whole
@@ -204,16 +214,29 @@ enum PillGeometry {
     static var wordmarkWidth: CGFloat { wordmarkHeight * wordmarkAspect }
     static var contentWidth: CGFloat { lampWidth + lampGap + waveWidth + layoutGap + wordmarkWidth }
     static var contentX: CGFloat { (pillWidth - contentWidth) / 2 }
-    static var transientWaveWidthU: CGFloat {
-        CGFloat(transientBarMaxU.count) * barU + CGFloat(transientBarMaxU.count - 1) * gapU
-    }
-    static var transientWaveScale: CGFloat { (pillWidth - 2 * transientWaveInset) / transientWaveWidthU }
 
     /// Heights in mark units for a level of 0..7: every bar is barU tall at
     /// rest (a dot) and grows towards its own maximum.
     static func waveHeights(level: CGFloat, maxima: [CGFloat]) -> [CGFloat] {
         let l = max(0, min(7, level))
         return maxima.map { barU + ($0 - barU) * l / 7 }
+    }
+
+    static var voiceX0: CGFloat {
+        (pillWidth - CGFloat(voiceBarCount) * voiceBarW - CGFloat(voiceBarCount - 1) * voiceGap) / 2
+    }
+
+    /// Voice-wave bar heights in points for a level of 0..7 and a phase in
+    /// seconds - the overlay's voice_heights, term for term.
+    static func voiceHeights(level: CGFloat, phase: CGFloat) -> [CGFloat] {
+        let l = max(0, min(1, level / 7))
+        let half = CGFloat(voiceBarCount - 1) / 2
+        return (0..<voiceBarCount).map { i in
+            let centre = 1 - abs(CGFloat(i) - half) / half
+            let envelope = voiceEdge + (1 - voiceEdge) * pow(centre, voiceCurve)
+            let motion = (1 - voiceMotion) + voiceMotion * abs(sin(phase * voiceSpeed + CGFloat(i) * voiceSpread))
+            return max(voiceRestH, voiceBaseH + voiceSpanH * l * envelope * motion)
+        }
     }
 
     /// Level 0..7 for one block of samples, by its RMS.

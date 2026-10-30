@@ -23,10 +23,10 @@ Only hand-written numbers are compared. The derived values (WaveWidth,
 ContentX and their kin) are computed on every side from the constants checked
 here, with the formulae written out in plain sight next to each other.
 
-The macOS copy carries more of the overlay than the Windows one: Sayit.app
-also draws the transient (recording-only) pill, so TRANSIENT_WAVE_INSET and
-TRANSIENT_BAR_MAX_U are checked there, and sayit-rec computes the level
-itself, so LEVELS, EASE and AUDIO_IDLE_S are too.
+Both copies carry the voice wave, the transient (recording-only) pill's
+meter, so its VOICE_* constants are checked on both sides. The macOS copy
+carries a little more: sayit-rec computes the level itself, so LEVELS, EASE
+and AUDIO_IDLE_S are checked there too.
 
 MinScale and MaxScale are deliberately absent from the Windows check: the pill
 can be resized on Windows and cannot on Linux, so they answer to nothing in
@@ -58,8 +58,18 @@ SWIFT = ROOT / "mac" / "Sources" / "Common" / "PillGeometry.swift"
 # PowerShell name, overlay name. Every plain number in the .ps1 that is not
 # derived and not Windows-only appears here; a new constant on either side
 # should be added, or it is checked by nothing.
+VOICE = ["BAR_COUNT", "BAR_W", "GAP", "REST_H", "BASE_H", "SPAN_H", "EDGE", "CURVE",
+         "MOTION", "SPEED", "SPREAD"]
+
+
+def camel(name, first_upper):
+    parts = name.lower().split("_")
+    parts = [p.capitalize() if p not in ("w", "h") else p.upper() for p in parts]
+    word = "".join(parts)
+    return word if first_upper else word[0].lower() + word[1:]
+
+
 SCALARS = [
-    ("TransientWaveInset", "TRANSIENT_WAVE_INSET"),
     ("PillWidth", "WIDTH"),
     ("PillHeight", "HEIGHT"),
     ("PillRadius", "RADIUS"),
@@ -73,10 +83,9 @@ SCALARS = [
     ("LayoutGap", "LAYOUT_GAP"),
     ("WordmarkHeight", "WORDMARK_H"),
     ("WordmarkAspect", "WORDMARK_ASPECT"),
-]
+] + [(camel("VOICE_" + n, True), "VOICE_" + n) for n in VOICE]
 
 VECTORS = [
-    ("TransientBarMaxU", "TRANSIENT_BAR_MAX_U"),
     ("BarMaxU", "BAR_MAX_U"),
     ("LampLit", "LAMP_LIT"),
     ("LampUnlit", "LAMP_UNLIT"),
@@ -101,16 +110,14 @@ SWIFT_SCALARS = [
     ("dotD", "DOT_D"),
     ("lampGap", "LAMP_GAP"),
     ("layoutGap", "LAYOUT_GAP"),
-    ("transientWaveInset", "TRANSIENT_WAVE_INSET"),
     ("ease", "EASE"),
     ("audioIdleS", "AUDIO_IDLE_S"),
     ("wordmarkHeight", "WORDMARK_H"),
     ("wordmarkAspect", "WORDMARK_ASPECT"),
-]
+] + [(camel("VOICE_" + n, False), "VOICE_" + n) for n in VOICE]
 
 SWIFT_VECTORS = [
     ("barMaxU", "BAR_MAX_U"),
-    ("transientBarMaxU", "TRANSIENT_BAR_MAX_U"),
     ("lampLit", "LAMP_LIT"),
     ("lampUnlit", "LAMP_UNLIT"),
     ("levels", "LEVELS"),

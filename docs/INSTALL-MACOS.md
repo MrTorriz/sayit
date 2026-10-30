@@ -253,6 +253,9 @@ profiles (Safari has one by default) that override the default one. Resetting
 the button in Options+, or an Options+ update, can put the preset back; the
 probe then shows nothing again and the step has to be repeated.
 
+Set `TRIGGER_LABEL="the thumb button"` as well, so Sayit's menu names the
+button you press rather than the button 5 it receives.
+
 A **keystroke** assignment that matches `TRIGGER_BUTTON`, such as `F18`, works
 without touching the database, but Options+ sends it as a tap: `TRIGGER_MODE=auto`
 latches it, so tap once to start and once to stop. Keyboard triggers are also
@@ -351,9 +354,8 @@ the level comes from `sayit-rec`, which has already computed it, so the
 microphone is opened exactly once. The Linux meter opens a second capture
 stream for the same job.
 
-After you release the trigger, the transient pill stays up while the
-transcription runs, with a sweep across its bars instead of the meter, and goes
-away when the text is pasted.
+The transient pill goes as soon as you release the trigger. While the
+transcription runs, the menu bar icon shows an ellipsis.
 
 The transient pill appears once `bin/sayit` has confirmed the recorder is
 running, about 0.3 s after the press. Its bars move once audio actually
@@ -397,13 +399,23 @@ The menu itself:
 - **The hint line** — how to dictate, such as `Hold or tap F18 to dictate · Esc
   cancels`, or what is stopping you: `Waiting for the Accessibility
   permission`, an unparsable `TRIGGER_BUTTON`. While probing, the last three
-  transitions.
+  transitions. `TRIGGER_LABEL` renames the button here, say `the thumb button`
+  when a vendor utility sends it as mouse button 5.
+- **The server line** — whether the transcription server answers, checked
+  each time the menu opens: `ready`, `loading the model…`, or `not answering —
+  dictation is slower` (the cold fallback is then used).
 - **Allow Accessibility…** and **Allow Microphone…**, shown only when needed.
+- **Paste Last Dictation** — pastes the newest history entry again into the
+  window in front (`sayit-history --inject last`), for a paste that went to the
+  wrong place.
 - **Place Indicator** / **Done Placing**.
 - **Probe Trigger**, checked while the probe runs.
+- **Open Settings…** — opens `.env` in your default text editor.
 - **Reload Settings** — re-reads `.env`: the trigger, its mode and
   suppression, and the indicator settings. The `bin/` scripts read `.env` on
   every run and need no reload.
+- **Restart Transcription Server** — restarts the daemon's LaunchAgent and
+  shows when the model has loaded again.
 - **Quit Sayit** — a clean exit, after which launchd leaves Sayit stopped until
   your next login. Start it again with
   `launchctl kickstart gui/$(id -u)/io.github.mrtorriz.sayit.agent`.

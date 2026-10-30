@@ -1,9 +1,9 @@
-# Recording-only waveform matching the Linux transient overlay.
+# Recording-only voice wave matching the Linux transient overlay.
 # Usage: sayit-indicator.ps1 show|hide|stop|place [-Managed] [-Resident]
 # The background process stays warm but its window is hidden between recordings.
 # -Resident opts into the older always-visible lamp and wordmark layout.
 # -Managed follows one caller-owned recording and exits when it ends.
-# Placement previews the waveform without opening the microphone.
+# Placement previews the meter, standing still, without opening the microphone.
 # Drag the middle to move; drag either end to resize. Layout is saved on release.
 
 [CmdletBinding()]
@@ -82,7 +82,7 @@ namespace Sayit
 
         public Overlay()
         {
-            // The mark is repainted about twelve times a second while the
+            // The meter is repainted about thirty times a second while the
             // microphone is open. Without double buffering WinForms clears the
             // background and then draws on screen, so the bars are visibly
             // missing for part of every frame - which reads as flicker.
@@ -267,7 +267,8 @@ $shape = New-SayitPillPath -Width $width -Height $height -Radius ($script:PillRa
 $form.Region = New-Object System.Drawing.Region($shape)
 $shape.Dispose()
 
-# Recording state. $micOpen drives the lamp alone; $level drives the bars alone.
+# Recording state. $micOpen drives the lamp and the voice wave's motion; $level
+# drives the bar heights alone.
 # Placement records nothing, so it starts unlit whatever the state file says.
 if ($placing) {
     $script:micOpen = $false
@@ -275,6 +276,13 @@ if ($placing) {
     $script:micOpen = Test-Path -LiteralPath $stateFile
 }
 $script:level = 0.0
+
+# The voice wave's phase, in seconds. A Stopwatch that runs exactly while the
+# microphone is open, so the bars move with real time while recording and stand
+# still otherwise - including while placing. Real time rather than a count of
+# ticks, because a WinForms timer only keeps its interval roughly.
+$script:voiceClock = New-Object System.Diagnostics.Stopwatch
+if ($script:micOpen) { $script:voiceClock.Start() }
 
 function New-RgbColor {
     param([double[]]$Rgb)
@@ -323,10 +331,12 @@ $form.Add_Paint({
 
     # The meter. Rounded capsules grown symmetrically about the pill's centre
     # line, not up from a baseline: at rest the row is a line of dots level with
-    # the lamp, and speaking opens it out in both directions.
+    # the lamp, and speaking opens it out in both directions. The recording-only
+    # pill draws the voice wave instead: 21 thin bars that rise in the middle
+    # with the level and keep moving on their own while the microphone is open.
     $barBrush = New-Object System.Drawing.SolidBrush($ink)
     $bars = if ($Resident) { Get-SayitBarRects -Level $script:level }
-            else { Get-SayitTransientBarRects -Level $script:level }
+            else { Get-SayitVoiceBarRects -Level $script:level -Phase $script:voiceClock.Elapsed.TotalSeconds }
     foreach ($b in $bars) {
         $bar = New-SayitPillPath -Width $b.Width -Height $b.Height -Radius $b.Radius
         $state = $g.Save()
@@ -526,6 +536,8 @@ $timer.Add_Tick({
         # resident one stays up and just puts its lamp out.
         if ($Managed -and -not $open) { $form.Close(); return }
         $script:micOpen = $open
+        # Start and Stop are no-ops when the clock is already in that state.
+        if ($open) { $script:voiceClock.Start() } else { $script:voiceClock.Stop() }
 
         $targetLevel = 0.0
         if ($open) {
@@ -539,6 +551,10 @@ $timer.Add_Tick({
         } elseif ($form.Visible) { $form.Hide() }
 
     }
+    # Every tick while the pill is up, not only when the level moves: the voice
+    # wave's bars move on their own at a steady level. A recording-only pill is
+    # hidden between recordings, so idle it paints nothing and the tick costs
+    # only the two file checks above.
     if ($form.Visible) { $form.Invalidate() }
 })
 $timer.Start()

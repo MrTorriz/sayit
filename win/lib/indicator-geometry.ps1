@@ -36,25 +36,74 @@ $script:GapU      = 3.0
 # progress bar. The row opens low, peaks in the middle and settles again.
 $script:BarMaxU = @(32.32, 38.08, 58.24, 45.76, 64, 42.4, 53.44, 36.16, 59.68, 40)
 
-# Recording-only layout from bin/sayit-overlay, filling the width with 26 bars.
-$script:TransientWaveInset = 13.0
-$script:TransientBarMaxU = @(26, 31, 37, 45, 54, 61, 50, 42,
-    33, 29, 39, 53, 64, 58, 45, 35, 28, 40, 54, 47, 36, 60, 52, 43, 34, 28)
-$script:TransientWaveScale = ($script:PillWidth - 2 * $script:TransientWaveInset) /
-    ($script:TransientBarMaxU.Count * $script:BarU + ($script:TransientBarMaxU.Count - 1) * $script:GapU)
+# The voice wave, the recording-only pill's meter. In pill pixels, not mark
+# units: a centred row of thin capsules that rests as a line of dots and rises
+# in the middle as the voice comes in, each bar moving a little on its own while
+# the microphone is open. bin/sayit-overlay and Sayit.app draw the same formula.
+$script:VoiceBarCount = 21
+$script:VoiceBarW = 3.0       # bar width
+$script:VoiceGap = 3.0        # gap between bars
+$script:VoiceRestH = 4.0      # minimum bar height (dot-like row at silence)
+$script:VoiceBaseH = 4.0      # height before the level adds anything
+$script:VoiceSpanH = 26.0     # extra height of the centre bar at full level
+$script:VoiceEdge = 0.25      # envelope at the two ends (1.0 in the middle)
+$script:VoiceCurve = 1.3      # envelope exponent
+$script:VoiceMotion = 0.4     # depth of each bar's own movement
+$script:VoiceSpeed = 8.0      # radians per second of that movement
+$script:VoiceSpread = 0.9     # phase step from one bar to the next
 
-function Get-SayitTransientBarRects {
-    param([double]$Level)
-    $Level = [math]::Max(0, [math]::Min(7, $Level))
-    $bw = $script:BarU * $script:TransientWaveScale
-    for ($i = 0; $i -lt $script:TransientBarMaxU.Count; $i++) {
-        $height = ($script:BarU + ($script:TransientBarMaxU[$i] - $script:BarU) * $Level / 7) * $script:TransientWaveScale
+function Get-SayitVoiceBarHeights {
+    <#
+      .SYNOPSIS
+        Voice-wave bar heights in pill pixels at a level from 0 to 7 and a
+        phase in seconds.
+      .DESCRIPTION
+        An envelope that is 1.0 in the middle and VoiceEdge at the two ends
+        shapes the row, so the voice rises in the centre. Each bar's own
+        motion, one VoiceSpread step behind its neighbour, keeps the row alive
+        at a steady level. No bar goes below VoiceRestH, which is what makes a
+        silent row a line of dots whatever the phase.
+    #>
+    param([Parameter(Mandatory)][double]$Level, [double]$Phase = 0.0)
+
+    $l = [math]::Max(0.0, [math]::Min(1.0, $Level / 7.0))
+    $half = ($script:VoiceBarCount - 1) / 2.0
+    $h = New-Object double[] $script:VoiceBarCount
+    for ($i = 0; $i -lt $script:VoiceBarCount; $i++) {
+        $centre = 1.0 - [math]::Abs($i - $half) / $half
+        $envelope = $script:VoiceEdge + (1.0 - $script:VoiceEdge) * [math]::Pow($centre, $script:VoiceCurve)
+        $motion = (1.0 - $script:VoiceMotion) +
+                  $script:VoiceMotion * [math]::Abs([math]::Sin($Phase * $script:VoiceSpeed + $i * $script:VoiceSpread))
+        $h[$i] = [math]::Max($script:VoiceRestH,
+                             $script:VoiceBaseH + $script:VoiceSpanH * $l * $envelope * $motion)
+    }
+    return $h
+}
+
+function Get-SayitVoiceBarRects {
+    <#
+      .SYNOPSIS
+        The voice wave as x, y, width, height in pill pixels, centred on the
+        pill both ways.
+      .DESCRIPTION
+        The same shape Get-SayitBarRects returns, so the paint code draws
+        either meter with one loop. A corner radius of half the width gives
+        every bar rounded ends.
+    #>
+    param([Parameter(Mandatory)][double]$Level, [double]$Phase = 0.0)
+
+    $n = $script:VoiceBarCount
+    $w = $script:VoiceBarW
+    $x0 = ($script:PillWidth - $n * $w - ($n - 1) * $script:VoiceGap) / 2.0
+    $cy = $script:PillHeight / 2.0
+    $heights = Get-SayitVoiceBarHeights -Level $Level -Phase $Phase
+    for ($i = 0; $i -lt $n; $i++) {
         [pscustomobject]@{
-            X = $script:TransientWaveInset + $i * ($script:BarU + $script:GapU) * $script:TransientWaveScale
-            Y = ($script:PillHeight - $height) / 2
-            Width = $bw
-            Height = $height
-            Radius = $bw / 2
+            X      = $x0 + $i * ($w + $script:VoiceGap)
+            Y      = $cy - $heights[$i] / 2.0
+            Width  = $w
+            Height = $heights[$i]
+            Radius = $w / 2.0
         }
     }
 }

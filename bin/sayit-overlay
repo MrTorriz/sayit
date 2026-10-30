@@ -31,12 +31,13 @@
 #     map order: the pill was visible at rest or hidden behind the panel
 #     depending on which surface the compositor mapped last. A fixture that
 #     is only sometimes a fixture is worse than one that always covers.
-#   - The transient recording pill shows only a 26-bar waveform. Resident
-#     and placement windows retain lamp, ten-bar meter and wordmark.
-#     The bars follow the voice
-#     level, growing symmetrically about the pill's centre line and standing
-#     still when nothing drives them. The wordmark is stored as outlines, so
-#     no font is needed at runtime.
+#   - The transient recording pill shows only the voice wave: a row of thin
+#     bars, tallest in the middle, that opens out with the voice level and
+#     ripples on its own while audio arrives. Resident and placement windows
+#     retain lamp, ten-bar meter and wordmark; those bars follow the level
+#     alone. Both meters grow symmetrically about the pill's centre line and
+#     stand still when nothing drives them. The wordmark is stored as
+#     outlines, so no font is needed at runtime.
 #   - In resident mode the lamp distinguishes three states. Microphone closed:
 #     a dark lamp. Open but silent: a steady lamp, the meter at rest.
 #     Open and speaking: the same steady lamp, and the meter is the ONLY
@@ -73,8 +74,8 @@ import time
 
 # 160x40. The height is what a panel dictates: measured, a default Plasma
 # panel is 44 px, so 40 fills it with 2 px to spare rather than floating in
-# the middle of it. The transient pill uses that whole width for the meter;
-# resident and placement windows instead hold a lamp, meter and wordmark.
+# the middle of it. The transient pill holds only the voice wave, centred in
+# it; resident and placement windows instead hold a lamp, meter and wordmark.
 # RADIUS and everything under "mark geometry" are proportional to HEIGHT, so
 # the shape survives a resize.
 WIDTH, HEIGHT, RADIUS = 160, 40, 12
@@ -129,20 +130,27 @@ LAMP_UNLIT = (0.42, 0.13, 0.15)
 WAVE_W_U = BAR_COUNT * BAR_U + (BAR_COUNT - 1) * GAP_U
 LAMP_W = DOT_D * MARK_SCALE
 WAVE_W = WAVE_W_U * MARK_SCALE
-# The recording-only pill has no static label to read. Let the moving waveform
-# use its width instead, while leaving a small, deliberate shoulder inside the
-# border. Its tallest bar still has more than 4 px of breathing room vertically.
-TRANSIENT_WAVE_INSET = 13.0
-# Keep the physical stroke close to the original meter. More bars, rather
-# than scaled-up bars, make the wide transient meter read as a waveform.
-TRANSIENT_BAR_MAX_U = (26.0, 31.0, 37.0, 45.0, 54.0, 61.0, 50.0, 42.0,
-                       33.0, 29.0, 39.0, 53.0, 64.0, 58.0, 45.0, 35.0,
-                       28.0, 40.0, 54.0, 47.0, 36.0, 60.0, 52.0, 43.0,
-                       34.0, 28.0)
-TRANSIENT_WAVE_W_U = (len(TRANSIENT_BAR_MAX_U) * BAR_U
-                       + (len(TRANSIENT_BAR_MAX_U) - 1) * GAP_U)
-TRANSIENT_WAVE_SCALE = (WIDTH - 2 * TRANSIENT_WAVE_INSET) / TRANSIENT_WAVE_W_U
-TRANSIENT_WAVE_W = TRANSIENT_WAVE_W_U * TRANSIENT_WAVE_SCALE
+
+# --- the voice wave -------------------------------------------------------
+# The transient pill's meter, in pill pixels (the space WIDTH and HEIGHT are
+# in) rather than mark units: it is not part of the logo and is never scaled
+# with the mark. Each bar's height is the level times a fixed envelope --
+# tallest in the middle, low at the ends -- times a slow ripple of its own,
+# so a steady voice still reads as a voice. voice_heights() is the formula;
+# Windows and macOS implement the identical one.
+VOICE_BAR_COUNT = 21
+VOICE_BAR_W = 3.0                   # bar width
+VOICE_GAP = 3.0                     # gap between bars
+VOICE_REST_H = 4.0                  # minimum height: a row of dots at silence
+VOICE_BASE_H = 4.0                  # height before the level adds anything
+VOICE_SPAN_H = 26.0                 # extra height of the centre bar at full level
+VOICE_EDGE = 0.25                   # envelope at the two ends (1.0 in the middle)
+VOICE_CURVE = 1.3                   # envelope exponent
+VOICE_MOTION = 0.4                  # depth of each bar's own movement
+VOICE_SPEED = 8.0                   # radians per second of that movement
+VOICE_SPREAD = 0.9                  # phase step from one bar to the next
+VOICE_WAVE_W = VOICE_BAR_COUNT * VOICE_BAR_W + (VOICE_BAR_COUNT - 1) * VOICE_GAP
+VOICE_X = (WIDTH - VOICE_WAVE_W) / 2.0
 
 # --- the wordmark ---------------------------------------------------------
 # "sayit" as Bezier outlines rather than as text. The shapes came from Libre
@@ -410,6 +418,41 @@ def bar_heights(level):
     return wave_heights(level, BAR_MAX_U)
 
 
+def voice_heights(level, phase):
+    """Voice wave bar heights in pill pixels, for a level of 0..7.
+
+    `phase` is seconds of audio so far; it only sets each bar's own ripple.
+    At level 0 every bar is VOICE_REST_H whatever the phase, so silence is
+    a still row of dots. A plain function, so the formula can be checked
+    without a window, and against the Windows and macOS copies.
+    """
+    loud = max(0.0, min(1.0, level / 7.0))
+    half = (VOICE_BAR_COUNT - 1) / 2.0
+    heights = []
+    for i in range(VOICE_BAR_COUNT):
+        centre = 1.0 - abs(i - half) / half
+        envelope = VOICE_EDGE + (1.0 - VOICE_EDGE) * centre ** VOICE_CURVE
+        motion = ((1.0 - VOICE_MOTION) + VOICE_MOTION
+                  * abs(math.sin(phase * VOICE_SPEED + i * VOICE_SPREAD)))
+        heights.append(max(VOICE_REST_H,
+                           VOICE_BASE_H + VOICE_SPAN_H * loud * envelope * motion))
+    return heights
+
+
+def draw_voice(cr, cy, level, phase):
+    """The transient pill's voice wave, centred in the pill on cy.
+
+    Grown about the centre line like the resident meter, with fully rounded
+    ends, so at rest it is a row of dots across the middle of the pill.
+    """
+    for i, height in enumerate(voice_heights(level, phase)):
+        bx = VOICE_X + i * (VOICE_BAR_W + VOICE_GAP)
+        rounded_rect(cr, bx, cy - height / 2.0, VOICE_BAR_W, height,
+                     VOICE_BAR_W / 2.0)
+    cr.set_source_rgb(1, 1, 1)
+    cr.fill()
+
+
 def draw_wave(cr, x, cy, level, scale=MARK_SCALE, maxima=BAR_MAX_U):
     """The meter, grown symmetrically about cy.
 
@@ -510,6 +553,8 @@ class Overlay:
         self.buf = b""               # partial PCM between reads
         self.level = 0.0             # target, from the audio stream
         self.shown = 0.0             # eased value actually drawn
+        self.phase = 0.0             # seconds of audio, drives the voice wave
+        self.phase_at = None         # monotonic time of the last phase step
         self.frame = 0
         self.drag = None
 
@@ -662,6 +707,16 @@ class Overlay:
         """
         return self.active
 
+    def audio_flowing(self, now):
+        """Is audio arriving right now, as opposed to merely expected?
+
+        The voice wave's own movement runs only while it is. A piped overlay
+        is open for the whole recording, but its stream can still stall or
+        not have started yet, and bars rippling over no audio would claim a
+        voice that is not there.
+        """
+        return self.mic_open() and now - self.last_audio <= AUDIO_IDLE_S
+
     def set_active(self, active):
         """The microphone opened or closed. Resident mode only."""
         if active == self.active:
@@ -706,7 +761,7 @@ class Overlay:
 
     # -- drawing ----------------------------------------------------------
     def on_draw(self, _widget, cr):
-        """A voice meter and wordmark, centred together.
+        """The voice wave alone, or lamp, meter and wordmark centred together.
 
         A transient pill exists only during recording, so its visibility
         already signals an open microphone. Resident and placement windows
@@ -735,8 +790,7 @@ class Overlay:
             x += WAVE_W + LAYOUT_GAP
             draw_wordmark(cr, x, cy)
         else:
-            draw_wave(cr, TRANSIENT_WAVE_INSET, cy, self.shown,
-                      TRANSIENT_WAVE_SCALE, TRANSIENT_BAR_MAX_U)
+            draw_voice(cr, cy, self.shown, self.phase)
         return False
 
     def tick(self):
@@ -755,9 +809,18 @@ class Overlay:
                 self.set_active(False)
 
         self.shown += (self.level - self.shown) * EASE
+        # The voice wave's ripple advances by real elapsed time, not by
+        # frames, so a late timer does not slow it, and only while audio is
+        # arriving: when the stream stops, the bars stop with it.
+        now = time.monotonic()
+        if self.phase_at is not None and self.audio_flowing(now):
+            self.phase += now - self.phase_at
+        self.phase_at = now
         # At rest the drawing is a still image; redrawing it 30 times a
         # second for the whole session would be pure waste. Redraw until the
-        # eased level has settled, then stop asking.
+        # eased level has settled, then stop asking. While audio arrives the
+        # voice wave moves even at a steady level; self.active covers that,
+        # since the phase only advances while the microphone is open.
         if self.shown > 0.01 or self.active or self.place_mode:
             self.win.queue_draw()
 
@@ -793,8 +856,8 @@ class Overlay:
                 self.Gtk.main_quit()
                 return False
             return True
+        self.last_audio = time.monotonic()  # piped too: it moves the wave
         if self.resident:
-            self.last_audio = time.monotonic()
             self.set_active(True)
         self.buf += chunk
         while len(self.buf) >= CHUNK:

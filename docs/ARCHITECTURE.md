@@ -39,7 +39,7 @@ flowchart LR
 | **History format** | `history.jsonl`, one JSON object per line: `time` (local ISO-8601 to seconds), `seconds`, `words`, `text`. Same field names, order and types, so a history file is portable between the platforms |
 | **Settings** | One `.env` from one `.env.example`. A setting that exists on more than one platform has the same name and the same meaning; the file carries a clearly marked Windows section and a macOS section at the end. `Sayit.app` deliberately reads the Windows names for the trigger and the indicator |
 | **Diagnostics discipline** | A separate read-only `doctor` command on each platform; error logs record error *classes*, never dictated text; profiling records timings, never text |
-| **Documentation and identity** | Shared documentation and logo. Every platform shows a 26-bar recording waveform without a lamp or wordmark; Windows also omits the outline. Optional resident views retain the lamp and wordmark. `docs/check-geometry.py` checks the Windows and macOS copies of the shared geometry against the Linux overlay; `docs/build-logo.py` generates the logo from the resident design |
+| **Documentation and identity** | Shared documentation and logo. Every platform shows the same voice wave while recording (21 bars, tallest in the middle, from the shared `VOICE_*` constants) without a lamp or wordmark; Windows also omits the outline. Optional resident views retain the lamp and wordmark. `docs/check-geometry.py` checks the Windows and macOS copies of the shared geometry against the Linux overlay; `docs/build-logo.py` generates the logo from the resident design |
 
 ### Where they diverge, and why
 
@@ -345,7 +345,7 @@ same path to every command it starts, so both sides always agree.
 | `$RUN_DIR/sayit.indicator.on` | Presence means the pill should show a recording. Created and removed by `bin/sayit-indicator show` and `hide` |
 | `$RUN_DIR/sayit.level` | One digit, `0`–`7`, rewritten in place by `sayit-rec` every 125 ms. Its modification time is the "audio is arriving" signal. Removed when the recording ends |
 | `$RUN_DIR/sayit.status` | The last status `bin/sayit` reported, shown as the first line of Sayit's menu. A `Done` status loses its text on the way. A second line, `warn` or `error`, marks a problem and turns the menu bar icon orange |
-| `$RUN_DIR/sayit.busy` | Presence means a transcription is running: the pill sweeps and the icon shows an ellipsis. Removed after the paste; ignored once it is two minutes old |
+| `$RUN_DIR/sayit.busy` | Presence means a transcription is running: the menu bar icon shows an ellipsis (the pill has already gone). Removed after the paste; ignored once it is two minutes old |
 | `$RUN_DIR/sayit-daemon.path` | The random path prefix the daemon serves under, new at every start, mode 0600. Read by `bin/sayit-transcribe` and the doctor |
 | `$RUN_DIR/sayit.agent` | Kept current by Sayit, rewritten whenever it changes: its pid, the repository, both permissions, the resolved trigger, the mode and the indicator lifetime. What the doctor reads; never text. Removed when Sayit quits |
 | `$RUN_DIR/trigger-probe.log` | Probe Trigger's transcript: button and modifier transitions, and the codes of keys that type no character or are pressed with `Cmd` or `Ctrl` — never text. Started afresh by each probe and never removed |
@@ -568,8 +568,11 @@ The live meter takes the same idea further. While recording, `sayit-meter`
 opens its own low-rate PipeWire capture (sources allow concurrent readers,
 so the recording itself is untouched) and reduces the audio to a single
 level about 8 times per second. The meter is the mark's own row of bars:
-they follow the voice level. The transient overlay shows a wide meter without
-a red lamp or wordmark; its presence already indicates that recording is active.
+they follow the voice level. The transient overlay shows the voice wave
+instead: a centred row of 21 thin bars, tallest in the middle and tapering to
+the ends, each moving a little on its own while audio arrives (it stands still,
+a row of dots, at silence). It has no red lamp or wordmark; its presence
+already indicates that recording is active.
 The samples are used only for that computation; no audio is stored.
 
 Three styles render it, each falling back to the next when its
@@ -592,7 +595,7 @@ requirements are missing, so the meter degrades instead of vanishing:
   | | Piped (default) | Resident (`sayit-overlay.service`) |
   | --- | --- | --- |
   | On screen | only while recording | the whole session |
-  | Contents | wide meter only | lamp, meter and wordmark |
+  | Contents | the voice wave only | lamp, meter and wordmark |
   | Audio inlet | stdin, from the meter's `pw-cat` | `$XDG_RUNTIME_DIR/sayit.overlay`, written by the same `pw-cat` |
   | Recording starts | the process starting is the signal | audio arriving on the FIFO |
   | Recording ends | end of stream ends the process | `AUDIO_IDLE_S` (0.4 s) without audio |

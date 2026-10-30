@@ -176,6 +176,15 @@ enum ConfigTests {
         check(c.mode == .hold, "TRIGGER_MODE is case-insensitive")
         check(!c.suppress && !c.indicator && c.resident, "0 and 1 flags are read")
         check(c.scale == 1.5, "INDICATOR_SCALE in range is kept")
+        check(c.trigger?.label == "mouse button 5 (forward)", "without TRIGGER_LABEL the button keeps its own name")
+
+        try? """
+            TRIGGER_BUTTON="XBUTTON2"
+            TRIGGER_LABEL="the thumb button"
+            """.write(toFile: envPath, atomically: true, encoding: .utf8)
+        c = AgentConfig(repository: repo)
+        check(c.trigger?.kind == .mouse(button: 4) && c.trigger?.label == "the thumb button",
+              "TRIGGER_LABEL renames the button and keeps what it listens for")
 
         try? """
             TRIGGER_BUTTON="nonsense"
@@ -212,8 +221,16 @@ enum ConfigTests {
         let mid = PillGeometry.waveHeights(level: 3.5, maxima: maxima)
         check(zip(zip(rest, mid), maxima).allSatisfy { $0.0 < $0.1 && $0.1 < $1 },
               "between 0 and 7 every bar lies strictly between dot and maximum")
-        let transient = PillGeometry.transientBarMaxU
-        check(close(PillGeometry.waveHeights(level: 7, maxima: transient), transient),
-              "the transient maxima are reached at level 7 too")
+
+        let quiet = PillGeometry.voiceHeights(level: 0, phase: 1.234)
+        check(quiet.count == PillGeometry.voiceBarCount, "one voice bar per count")
+        check(quiet.allSatisfy { $0 == PillGeometry.voiceRestH }, "at silence the voice wave is a row of dots")
+        let loud = PillGeometry.voiceHeights(level: 7, phase: 0)
+        let centre = PillGeometry.voiceBarCount / 2
+        check(abs(loud[centre] - (4 + 26 * (0.6 + 0.4 * abs(sin(CGFloat(centre) * 0.9))))) < 1e-9,
+              "the centre bar at level 7 follows the shared formula")
+        check(loud[centre] > loud[0] && loud[centre] > loud[loud.count - 1], "the voice wave is tallest in the middle")
+        check(PillGeometry.voiceHeights(level: 20, phase: 0) == loud, "a level above 7 is clamped")
+        check(loud.allSatisfy { $0 <= PillGeometry.pillHeight }, "the voice wave stays inside the pill")
     }
 }

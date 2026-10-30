@@ -359,16 +359,55 @@ Describe 'residency' {
 }
 
 Describe 'recording-only waveform' {
-    It 'fills the pill with 26 bars and equal 13-pixel shoulders' {
-        $bars = @(Get-SayitTransientBarRects -Level 7)
-        $bars.Count | Should -Be 26
-        $bars[0].X | Should -Be 13
-        [math]::Round($bars[-1].X + $bars[-1].Width, 5) | Should -Be 147
+    It 'centres a voice wave of 21 bars, 3 wide with 3 between' {
+        $bars = @(Get-SayitVoiceBarRects -Level 7 -Phase 0)
+        $bars.Count | Should -Be 21
+        # (160 - 21 * 3 - 20 * 3) / 2 on either side.
+        $bars[0].X | Should -Be 18.5
+        [math]::Round($bars[-1].X + $bars[-1].Width, 9) | Should -Be 141.5
         foreach ($bar in $bars) {
-            ($bar.Y + $bar.Height / 2) | Should -Be 20
-            $bar.Y | Should -BeGreaterThan 4
+            $bar.Width  | Should -Be 3
+            $bar.Radius | Should -Be 1.5
+            [math]::Round($bar.Y + $bar.Height / 2, 9) | Should -Be 20
         }
     }
+
+    It 'rests as a row of 4-pixel dots whatever the phase' {
+        foreach ($phase in 0.0, 0.37, 12.5) {
+            foreach ($h in @(Get-SayitVoiceBarHeights -Level 0 -Phase $phase)) {
+                $h | Should -Be 4
+            }
+        }
+    }
+
+    It 'rises in the middle at full level' {
+        # Written out from the shared formula at phase 0, not recomputed:
+        # end bars 4 + 26 * 0.25 * (0.6 + 0.4 * |sin(0)|) and
+        # 4 + 26 * 0.25 * (0.6 + 0.4 * |sin(18)|), the centre bar
+        # 4 + 26 * (0.6 + 0.4 * |sin(9)|).
+        $h = @(Get-SayitVoiceBarHeights -Level 7 -Phase 0)
+        [math]::Round($h[0], 6)  | Should -Be 7.9
+        [math]::Round($h[10], 6) | Should -Be 23.886032
+        [math]::Round($h[20], 6) | Should -Be 9.852567
+    }
+
+    It 'stays inside the pill and keeps moving at a steady level' {
+        foreach ($phase in 0.0, 0.1, 0.25, 1.0, 3.3) {
+            foreach ($h in @(Get-SayitVoiceBarHeights -Level 7 -Phase $phase)) {
+                $h | Should -BeGreaterOrEqual 4
+                $h | Should -BeLessOrEqual 30
+            }
+        }
+        $a = @(Get-SayitVoiceBarHeights -Level 7 -Phase 0)
+        $b = @(Get-SayitVoiceBarHeights -Level 7 -Phase 0.1)
+        ($a -join ';') | Should -Not -Be ($b -join ';')
+    }
+
+    It 'moves the wave only while the microphone is open' {
+        $script:IndicatorSource | Should -Match 'Get-SayitVoiceBarRects -Level \$script:level -Phase \$script:voiceClock'
+        $script:IndicatorSource | Should -Match 'if \(\$open\) \{ \$script:voiceClock\.Start\(\) \} else \{ \$script:voiceClock\.Stop\(\) \}'
+    }
+
     It 'uses a hidden event loop rather than showing the form at idle' {
         $script:IndicatorSource | Should -Match 'Application\]::Run\(\$context\)'
         $script:IndicatorSource | Should -Match '\$visible = \$Resident -or \$open'

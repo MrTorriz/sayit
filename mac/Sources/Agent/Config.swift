@@ -129,7 +129,11 @@ struct AgentConfig {
             return v != "0"
         }
         triggerRaw = (env["TRIGGER_BUTTON"].flatMap { $0.isEmpty ? nil : $0 }) ?? AgentConfig.defaultTrigger
-        trigger = TriggerSpec.parse(triggerRaw)
+        // TRIGGER_LABEL names the button in the menu when what the system
+        // sees differs from what is under your thumb (a vendor utility can
+        // send a mouse's thumb button as button 5, say).
+        let label = (env["TRIGGER_LABEL"] ?? "").trimmingCharacters(in: .whitespaces)
+        trigger = TriggerSpec.parse(triggerRaw).map { label.isEmpty ? $0 : TriggerSpec(kind: $0.kind, label: label) }
         suppress = flag("TRIGGER_SUPPRESS", true)
         mode = TriggerMode(rawValue: (env["TRIGGER_MODE"] ?? "").lowercased()) ?? .auto
         indicator = flag("RECORDING_INDICATOR", true)

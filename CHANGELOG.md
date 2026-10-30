@@ -6,16 +6,28 @@
   overview and measured macOS performance come first, the installation steps
   stay short and link to the full guides.
 - Replace the terminal-only demo with one dark, animated illustration of a
-  dictation: a text field, the thumb button and the pill, through the meter,
-  the transcribing sweep and the paste. `docs/make-demo.swift` draws it with
+  dictation: a text field, the thumb button and the pill, through the meter
+  and the paste. `docs/make-demo.swift` draws it with
   Sayit's own `PillView`, so it shows exactly what the app shows.
 - Head the README with the SAYIT wordmark and tagline alone
   (`docs/logo-wordmark.svg`, written by `docs/build-logo.py`), without the pill.
   The social preview card shows the same wordmark.
 - Add `docs/social-preview.png`, the repository's link card, and
   `docs/make-social-preview.py`, which renders it from the lockup.
-- macOS: the pill stays up with a sweep while the transcription runs, and the
-  menu bar icon shows an ellipsis.
+- The recording pill draws a voice wave on every platform: 21 thin bars,
+  tallest in the middle and tapering to the ends, each moving a little on its
+  own while audio arrives, a row of dots at silence. Linux, Windows and macOS
+  compute it from the same `VOICE_*` constants and formula, and
+  `docs/check-geometry.py` holds the copies to the overlay's. The 26-bar meter
+  it replaces is gone; the logo and the resident pill keep the mark.
+- macOS: the menu bar icon shows an ellipsis while the transcription runs.
+  The pill goes at release, as on the other platforms.
+- macOS: Sayit's menu shows whether the transcription server answers, and adds
+  **Paste Last Dictation**, **Open Settings…** and **Restart Transcription
+  Server**. `TRIGGER_LABEL` names the trigger in the menu (say, the thumb
+  button a vendor utility sends as button 5).
+- `sayit-history --copy` and `--inject` take `last` for the newest entry, and
+  `--inject` hands the text to `sayit-inject` on stdin.
 - macOS: every outcome reaches the menu. A failed start keeps its reason (the
   missing device, the denied permission) instead of being replaced by "No
   recording in progress"; a paste without Accessibility or under Secure Input
