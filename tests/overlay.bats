@@ -202,13 +202,13 @@ PY
     [ "$output" = "True" ]
 }
 
-@test "the transient wave spans the pill without a wordmark" {
-    run load_overlay "(round(ov.TRANSIENT_WAVE_INSET, 4), round(ov.TRANSIENT_WAVE_W, 4), round(ov.TRANSIENT_WAVE_INSET + ov.TRANSIENT_WAVE_W, 4))"
-    [ "$output" = "(13.0, 134.0, 147.0)" ]
-    run load_overlay "len(ov.TRANSIENT_BAR_MAX_U) > ov.BAR_COUNT"
+@test "the voice wave is centred in the pill, a row of dots at rest, tallest in the middle" {
+    run load_overlay "(round(ov.VOICE_X, 4), round(ov.VOICE_WAVE_W, 4), round(ov.VOICE_X + ov.VOICE_WAVE_W, 4))"
+    [ "$output" = "(18.5, 123.0, 141.5)" ]
+    run load_overlay "set(ov.voice_heights(0, 1.7)) == {ov.VOICE_REST_H}"
     [ "$output" = "True" ]
-    run load_overlay "ov.TRANSIENT_WAVE_SCALE > ov.MARK_SCALE"
-    [ "$output" = "True" ]
+    run load_overlay "(lambda h: (round(h[10], 6), h[10] > h[0] and h[10] > h[-1], max(h) <= ov.HEIGHT))(ov.voice_heights(7, 0))"
+    [ "$output" = "(23.886032, True, True)" ]
     run bash -c "sed -n '/def on_draw/,/return False/p' '$OVERLAY' | grep -c 'draw_wordmark'"
     [ "$output" = "1" ]
 }
@@ -272,8 +272,10 @@ PY
     [ "$output" = "True" ]
 }
 
-@test "nothing on the pill pulses or fades over time" {
-    # No frame counter reaches the drawing any more: same inputs, same pixels.
+@test "nothing on the pill pulses or fades over time; only the voice wave moves" {
+    # No frame counter reaches the drawing: same inputs, same pixels. The
+    # voice wave's phase is an input too, and it advances only while audio
+    # arrives, so a pill at rest is a still image.
     run load_overlay "ov.bar_heights.__code__.co_argcount"
     [ "$output" = "1" ]
     run bash -c "sed -n '/def on_draw/,/return False/p' '$OVERLAY' | grep -cE 'self\.frame|math\.sin'"

@@ -8,7 +8,7 @@
 // One dictation of three sentences, drawn rather than recorded: a text field, the thumb button
 // of a mouse, and the pill. The pill is not redrawn here - it is Sayit's own
 // PillView (mac/Sources/Agent/Pill.swift), rendered frame by frame, so the
-// meter is exactly what the app shows. Its
+// voice wave is exactly what the app shows. Its
 // geometry is the overlay's (docs/check-geometry.py keeps them equal).
 //
 // What the animation shows is what sayit does: nothing is typed while the
@@ -113,7 +113,7 @@ func mouse(at o: CGPoint, held: Bool) {
 let pillView = PillView(frame: NSRect(x: 0, y: 0, width: PillGeometry.pillWidth, height: PillGeometry.pillHeight))
 let pillScale: CGFloat = 1.5
 
-func frame(_ phase: Phase, _ level: CGFloat, _ i: Int) -> CGImage {
+func frame(_ phase: Phase, _ level: CGFloat, _ i: Int, voicePhase: CGFloat) -> CGImage {
     let space = CGColorSpace(name: CGColorSpace.sRGB)!
     let cg = CGContext(data: nil, width: Int(W * density), height: Int(H * density), bitsPerComponent: 8,
                        bytesPerRow: 0, space: space, bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue)!
@@ -148,6 +148,7 @@ func frame(_ phase: Phase, _ level: CGFloat, _ i: Int) -> CGImage {
     // The pill: Sayit's own view, scaled up so it reads at README size.
     if recording {
         pillView.level = phase == .speak ? level : 0
+        pillView.phase = voicePhase
         // On a layer of its own: the view clears its bounds first, which
         // would punch black corners into an opaque canvas.
         let k = pillScale * density
@@ -196,8 +197,11 @@ enum MakeDemo {
             FileHandle.standardError.write(Data("make-demo: cannot write \(out)\n".utf8)); exit(1)
         }
         CGImageDestinationSetProperties(dest, [kCGImagePropertyGIFDictionary: [kCGImagePropertyGIFLoopCount: 0]] as CFDictionary)
+        // The voice wave moves only while audio arrives, as in the app.
+        var voicePhase: CGFloat = 0
         for (phase, level, i) in timeline {
-            CGImageDestinationAddImage(dest, frame(phase, level, i),
+            if phase == .speak { voicePhase += CGFloat(frameDelay) }
+            CGImageDestinationAddImage(dest, frame(phase, level, i, voicePhase: voicePhase),
                                        [kCGImagePropertyGIFDictionary: [kCGImagePropertyGIFDelayTime: frameDelay]] as CFDictionary)
         }
         guard CGImageDestinationFinalize(dest) else {

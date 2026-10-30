@@ -1,8 +1,8 @@
 // Pill.swift - the recording indicator: the same pill bin/sayit-overlay draws.
 //
 // Two lifetimes, as on Linux:
-//   transient (default)  on screen only while recording, the whole width a
-//                        meter, click-through - it exists for seconds and must
+//   transient (default)  on screen only while recording, a voice wave across
+//                        the pill, click-through - it exists for seconds and must
 //                        never be in the way.
 //   resident             INDICATOR_RESIDENT=1: on screen for the whole session
 //                        with the lamp, the meter and the wordmark. The lamp is
@@ -12,7 +12,8 @@
 // Inputs are files in the run directory, the Windows indicator's model:
 //   sayit.indicator.on   presence = recording; bin/sayit-indicator show/hide
 //   sayit.level          one digit 0..7 from sayit-rec, every 125 ms. Its
-//                        modification time is the "audio is arriving" signal.
+//                        modification time is the "audio is arriving" signal,
+//                        which is also what sets the voice wave moving.
 //   sayit.busy           presence = transcribing (bin/sayit); read only for
 //                        the menu bar icon - the pill itself goes at release.
 //
@@ -27,6 +28,8 @@ final class PillView: NSView {
     var lit = false
     var level: CGFloat = 0
     var scale: CGFloat = 1
+    /// The voice wave's motion, in seconds; it advances while audio arrives.
+    var phase: CGFloat = 0
 
     override var isFlipped: Bool { true }
     override var isOpaque: Bool { false }
@@ -71,7 +74,7 @@ final class PillView: NSView {
             x += G.waveWidth + G.layoutGap
             drawWordmark(cg, x: x, cy: cy)
         } else {
-            drawWave(cg, x: G.transientWaveInset, cy: cy, scale: G.transientWaveScale, maxima: G.transientBarMaxU)
+            drawVoiceWave(cg, cy: cy)
         }
         cg.restoreGState()
     }
@@ -85,6 +88,19 @@ final class PillView: NSView {
             let bh = h * s
             let bx = x + CGFloat(i) * (G.barU + G.gapU) * s
             cg.addPath(roundedRect(CGRect(x: bx, y: cy - bh / 2, width: bw, height: bh), bw / 2))
+        }
+        cg.fillPath()
+    }
+
+    /// The transient meter, the voice wave (PillGeometry.voiceHeights): a row
+    /// of dots at rest that rises in the middle as the voice comes in.
+    private func drawVoiceWave(_ cg: CGContext, cy: CGFloat) {
+        let G = PillGeometry.self
+        let w = G.voiceBarW
+        cg.setFillColor(color(G.inkRgb))
+        for (i, h) in G.voiceHeights(level: level, phase: phase).enumerated() {
+            let x = G.voiceX0 + CGFloat(i) * (w + G.voiceGap)
+            cg.addPath(roundedRect(CGRect(x: x, y: cy - h / 2, width: w, height: h), w / 2))
         }
         cg.fillPath()
     }
@@ -293,9 +309,12 @@ final class PillController {
             }
         }
         view.lit = micOpen
+        if micOpen { view.phase += CGFloat(interval) }
         let before = view.level
         view.level += (target - view.level) * PillGeometry.ease
-        if abs(view.level - before) > 0.001 || micOpen != wasOpen || placing { view.needsDisplay = true }
+        if abs(view.level - before) > 0.001 || micOpen != wasOpen || placing || (micOpen && view.level > 0.01) {
+            view.needsDisplay = true
+        }
         if recording != wasRecording || micOpen != wasOpen || busy != wasBusy { onChange?() }
         // A still image at rest costs nothing to look at; redraw at ~30 fps
         // only while something moves, and look once a second otherwise.
