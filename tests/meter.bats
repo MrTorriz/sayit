@@ -71,6 +71,7 @@ if [[ "$1" == "--check" ]]; then
     exit 0
 fi
 echo "overlay-start" >> "$STUB_CTL/calls.log"
+printf '%s\n' "$$" > "$STUB_CTL/overlay.pid"
 [[ -f "$STUB_CTL/overlay-exits-now" ]] && exit 0
 trap 'echo overlay-stop >> "$STUB_CTL/calls.log"; exit 0' INT TERM
 cat >/dev/null
@@ -163,6 +164,20 @@ install_icons() {
     ! kill -0 "$mpid" 2>/dev/null
     [ -f "$STUB_CTL/pw-cat.pid" ]
     ! kill -0 "$(cat "$STUB_CTL/pw-cat.pid")" 2>/dev/null
+}
+
+@test "release between pipeline spawn and PID assignment stops both children" {
+    # Force the release at the vulnerable command boundary. Neither PID
+    # variable is populated yet, but the shell already owns the pipeline job.
+    touch "$STUB_CTL/pw-cat.forever"
+    # perl, not sed -i: GNU and BSD sed disagree on both -i and the i command.
+    perl -pi -e 'print qq{sleep 0.1\n}, q{kill -TERM "$$"}, qq{\n} if /^PIPE_PID=\$!/' "$METER"
+    "$METER" >/dev/null 2>&1
+    sleep 0.5
+    [ -f "$STUB_CTL/pw-cat.pid" ]
+    [ -f "$STUB_CTL/overlay.pid" ]
+    ! kill -0 "$(cat "$STUB_CTL/pw-cat.pid")" 2>/dev/null
+    ! kill -0 "$(cat "$STUB_CTL/overlay.pid")" 2>/dev/null
 }
 
 @test "missing pw-cat is a silent no-op" {

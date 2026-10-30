@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- Linux: the clipboard paste names its type (UTF-8 text) and retries a
+  transient `wl-copy` failure once; `wl-copy` keeps its payload in the private
+  runtime directory instead of `/tmp`; and the keycode-typing fallback is used
+  only for plain ASCII, so a failed paste can no longer type damaged Swedish
+  letters.
+- Linux: the meter stops its whole capture pipeline, microphone included, even
+  when the release arrives between spawning the pipeline and recording its PID.
+
 - Rework the README: the logo, highlights, a pipeline diagram, a platform
   overview and measured macOS performance come first, the installation steps
   stay short and link to the full guides.

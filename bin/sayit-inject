@@ -112,6 +112,11 @@ attempt() { "$@" 2>/dev/null; }
 inject_clipboard() {
     command -v wl-copy >/dev/null && command -v ydotool >/dev/null || return 1
 
+    # wl-copy stores its payload in TMPDIR. The desktop runtime directory
+    # keeps dictation private and avoids a full per-user /tmp quota.
+    local TMPDIR="${XDG_RUNTIME_DIR:-${TMPDIR:-/tmp}}"
+    export TMPDIR
+
     # Decide whether the current clipboard is safe to save and restore.
     # Only a plain-text clipboard without a password-manager hint qualifies.
     local types="" saved=""
@@ -128,8 +133,20 @@ inject_clipboard() {
     fi
     mark i.saved
 
-    printf '%s' "$TEXT" | wl-copy 2>/dev/null || { rm -f "$saved"; return 1; }
-    printf '%s' "$TEXT" | wl-copy --primary 2>/dev/null || true
+    # Dictation is always UTF-8 text. Avoid MIME autodetection and retry a
+    # transient compositor/clipboard failure once before reporting failure.
+    local copy_rc=0
+    printf '%s' "$TEXT" | wl-copy --type 'text/plain;charset=utf-8' 2>/dev/null || copy_rc=$?
+    if (( copy_rc != 0 )); then
+        mark i.copy.failed "$copy_rc"
+        sleep 0.05
+        printf '%s' "$TEXT" | wl-copy --type 'text/plain;charset=utf-8' 2>/dev/null || {
+            mark i.copy.retry_failed
+            rm -f "$saved"
+            return 1
+        }
+    fi
+    printf '%s' "$TEXT" | wl-copy --primary --type 'text/plain;charset=utf-8' 2>/dev/null || true
     mark i.copied
     attempt ydotool key 42:1 110:1 110:0 42:0
     local rc=$?
@@ -167,7 +184,10 @@ if [[ "${XDG_SESSION_TYPE:-}" == "x11" ]] && command -v xdotool >/dev/null \
     && attempt xdotool type --clearmodifiers -- "$TEXT"; then
     exit 0
 fi
-if command -v ydotool >/dev/null \
+# US keycode typing cannot represent Swedish letters. A failed clipboard
+# operation must never silently turn a correct transcript into damaged text.
+LC_ALL=C  # Make the ASCII range independent of the desktop's locale.
+if [[ "$TEXT" != *[!\ -~]* ]] && command -v ydotool >/dev/null \
     && attempt ydotool type --key-delay 0 --key-hold 2 -- "$TEXT"; then
     exit 0
 fi
