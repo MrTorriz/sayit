@@ -122,7 +122,7 @@ development and diagnostics.
 | `WHISPER_REF` | `install.sh` | Tag or commit to build instead of the pinned release |
 | `SAYIT_KEEP_CONSOLE` | `win\sayit-autostart.ps1` | `1` keeps the supervisor's console window visible |
 | `SAYIT_SIGN_IDENTITY` | `mac/install.sh` | A code-signing identity in your keychain to sign `Sayit.app` with, instead of ad hoc. A stable identity lets upgrades keep the Microphone and Accessibility grants. Part of the build hash: set it on every run |
-| `SAYIT_APP_DIR` | `mac/install.sh`, `mac/sayit-doctor` | Directory to install `Sayit.app` into instead of `~/Applications`. The doctor looks there first when it is set, then in `~/Applications` and `/Applications`; set it for the doctor too |
+| `SAYIT_APP_DIR` | `mac/install.sh`, `mac/sayit-doctor` | Directory to install `Sayit.app` into instead of `/Applications` (or `~/Applications` when `/Applications` is not writable). The doctor looks there first when it is set, then in `~/Applications` and `/Applications`; set it for the doctor too |
 | `XDG_RUNTIME_DIR` | every macOS component | When set, used as the run directory instead of the per-user temporary directory |
 | `SAYIT_REPO` | `Sayit.app` | The repository whose `bin/sayit` to run. Set by the agent's LaunchAgent; the path recorded in the app at build time otherwise |
 | `SAYIT_MAC_HELPERS` | `bin/sayit-record`, `bin/sayit-inject` | Directory holding `sayit-rec` and `sayit-paste`. Set by `Sayit.app` to its own bundle, so its grants apply |
