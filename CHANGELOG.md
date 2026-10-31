@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- macOS: Sayit.app has an icon - the pill, with its lit lamp and ten-bar mark,
+  on a dark tile. `mac/Sources/Icon` draws it from the same geometry as the
+  logo at install time, and `iconutil` packs it into the bundle.
 - Linux: the clipboard paste names its type (UTF-8 text) and retries a
   transient `wl-copy` failure once; `wl-copy` keeps its payload in the private
   runtime directory instead of `/tmp`; and the keycode-typing fallback is used

@@ -13,7 +13,9 @@
 #     with swiftc from the Xcode Command Line Tools: no Xcode project and no
 #     package manager. Run by ./install.sh on macOS; runnable on its own.
 #   - Bundles them into ~/Applications/Sayit.app (SAYIT_APP_DIR overrides the
-#     directory), menu bar only, with this repository's path in Info.plist.
+#     directory), menu bar only, with this repository's path in Info.plist and
+#     an icon (the pill on a dark tile) drawn by mac/Sources/Icon from the same
+#     geometry as the logo, then packed with iconutil.
 #   - Signs with a local, self-signed code-signing identity, created on the
 #     first install in a keychain of its own
 #     (~/Library/Keychains/sayit-signing.keychain-db, no password, never in
@@ -197,6 +199,12 @@ else
     "${SWIFTC[@]}" "$MAC_DIR"/Sources/Common/*.swift "$MAC_DIR"/Sources/Agent/*.swift \
         -o "$STAGE/Contents/MacOS/Sayit"
 
+    log "Drawing the app icon"
+    "${SWIFTC[@]}" "$MAC_DIR"/Sources/Common/*.swift "$MAC_DIR/Sources/Icon/main.swift" -o "$BUILD/sayit-icon"
+    rm -rf "$BUILD/AppIcon.iconset"
+    "$BUILD/sayit-icon" "$BUILD/AppIcon.iconset"
+    iconutil -c icns -o "$STAGE/Contents/Resources/AppIcon.icns" "$BUILD/AppIcon.iconset"
+
     VERSION=$(git -C "$REPO_ROOT" describe --tags --always 2>/dev/null || echo dev)
     cat > "$STAGE/Contents/Info.plist" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
@@ -207,6 +215,7 @@ else
     <key>CFBundleName</key><string>Sayit</string>
     <key>CFBundleDisplayName</key><string>Sayit</string>
     <key>CFBundleExecutable</key><string>Sayit</string>
+    <key>CFBundleIconFile</key><string>AppIcon</string>
     <key>CFBundlePackageType</key><string>APPL</string>
     <key>CFBundleShortVersionString</key><string>$(xml "$VERSION")</string>
     <key>CFBundleVersion</key><string>1</string>
@@ -237,6 +246,10 @@ EOF
         rm -rf "$DEST"
     fi
     ditto "$STAGE" "$DEST"
+    # Tell Launch Services about the new bundle, so Finder and Launchpad pick
+    # up its icon without waiting for their own rescan.
+    /System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister \
+        -f "$DEST" >/dev/null 2>&1 || true
     log "Installed $DEST"
     # A grant stays only while the designated requirement does. When it
     # changes (an ad-hoc build, or the first build with a new identity), the

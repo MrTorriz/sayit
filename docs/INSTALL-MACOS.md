@@ -123,6 +123,11 @@ large:
 launchctl kickstart -k gui/$(id -u)/io.github.mrtorriz.sayit.daemon   # after editing an existing .env
 ```
 
+The app's icon is the pill itself, with its lit lamp and ten-bar mark, on a
+dark tile. `mac/install.sh` draws it at install time from the same geometry as
+the logo (`mac/Sources/Icon`), so it shows in Finder, Launchpad and System
+Settings.
+
 ## Granting Microphone and Accessibility
 
 When the LaunchAgent starts `Sayit.app` for the first time, it asks for both

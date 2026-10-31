@@ -94,6 +94,9 @@ jobs:
           "${swiftc[@]}" mac/Sources/Common/*.swift mac/Sources/Rec/main.swift -o "$out/sayit-rec"
           "${swiftc[@]}" mac/Sources/Paste/main.swift -o "$out/sayit-paste"
           "${swiftc[@]}" mac/Sources/Common/*.swift mac/Sources/Agent/*.swift -o "$out/Sayit"
+          "${swiftc[@]}" mac/Sources/Common/*.swift mac/Sources/Icon/main.swift -o "$out/sayit-icon"
+          "$out/sayit-icon" "$out/AppIcon.iconset"
+          iconutil -c icns -o "$out/AppIcon.icns" "$out/AppIcon.iconset"
 
       - name: Swift unit tests
         run: mac/tests/run.sh
