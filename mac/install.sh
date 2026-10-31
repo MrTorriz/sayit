@@ -12,8 +12,12 @@
 #   - Compiles Sayit (trigger, pill, menu bar item), sayit-rec and sayit-paste
 #     with swiftc from the Xcode Command Line Tools: no Xcode project and no
 #     package manager. Run by ./install.sh on macOS; runnable on its own.
-#   - Bundles them into ~/Applications/Sayit.app (SAYIT_APP_DIR overrides the
-#     directory), menu bar only, with this repository's path in Info.plist.
+#   - Bundles them into /Applications/Sayit.app when that folder is writable
+#     (an administrator account), so Sayit shows under Applications in Finder,
+#     else into ~/Applications (SAYIT_APP_DIR overrides either); a copy left
+#     in the other place by an earlier install is removed. Menu bar only, with this repository's path in Info.plist and
+#     an icon (the pill on a dark tile) drawn by mac/Sources/Icon from the same
+#     geometry as the logo, then packed with iconutil.
 #   - Signs with a local, self-signed code-signing identity, created on the
 #     first install in a keychain of its own
 #     (~/Library/Keychains/sayit-signing.keychain-db, no password, never in
@@ -63,8 +67,27 @@ MAC_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$MAC_DIR/.." && pwd)"
 BUILD="$MAC_DIR/build"
 APP_NAME="Sayit.app"
-APP_DIR="${SAYIT_APP_DIR:-$HOME/Applications}"
+if [[ -n "${SAYIT_APP_DIR:-}" ]]; then
+    APP_DIR="$SAYIT_APP_DIR"
+elif [[ -w /Applications ]]; then
+    APP_DIR=/Applications
+else
+    APP_DIR="$HOME/Applications"
+fi
 DEST="$APP_DIR/$APP_NAME"
+
+# Removes a bundle only when it is Sayit's.
+remove_ours() {  # remove_ours <bundle>
+    [[ -d "$1" ]] || return 0
+    local id
+    id=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$1/Contents/Info.plist" 2>/dev/null || true)
+    if [[ "$id" == "$BUNDLE_ID" ]]; then
+        rm -rf "$1"
+        log "Removed $1"
+    else
+        warn "$1 is not Sayit ($id) - left in place"
+    fi
+}
 BUNDLE_ID="io.github.mrtorriz.sayit"
 AGENTS="$HOME/Library/LaunchAgents"
 LOGS="$HOME/Library/Logs/sayit"
@@ -89,16 +112,10 @@ if [[ $UNINSTALL -eq 1 ]]; then
         unload "$label"
         rm -f "$AGENTS/$label.plist"
     done
-    # Only ever remove a bundle that is ours.
-    if [[ -d "$DEST" ]]; then
-        id=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$DEST/Contents/Info.plist" 2>/dev/null || true)
-        if [[ "$id" == "$BUNDLE_ID" ]]; then
-            rm -rf "$DEST"
-            log "Removed $DEST"
-        else
-            warn "$DEST is not Sayit ($id) - left in place"
-        fi
-    fi
+    # Wherever an install put it; only ever a bundle that is ours.
+    for app in "$DEST" "/Applications/$APP_NAME" "$HOME/Applications/$APP_NAME"; do
+        remove_ours "$app"
+    done
     security delete-keychain "$HOME/Library/Keychains/sayit-signing.keychain-db" 2>/dev/null \
         && log "Removed the local signing identity"
     log "LaunchAgents removed. Models, .env, history and wordlist are untouched."
@@ -197,6 +214,12 @@ else
     "${SWIFTC[@]}" "$MAC_DIR"/Sources/Common/*.swift "$MAC_DIR"/Sources/Agent/*.swift \
         -o "$STAGE/Contents/MacOS/Sayit"
 
+    log "Drawing the app icon"
+    "${SWIFTC[@]}" "$MAC_DIR"/Sources/Common/*.swift "$MAC_DIR/Sources/Icon/main.swift" -o "$BUILD/sayit-icon"
+    rm -rf "$BUILD/AppIcon.iconset"
+    "$BUILD/sayit-icon" "$BUILD/AppIcon.iconset"
+    iconutil -c icns -o "$STAGE/Contents/Resources/AppIcon.icns" "$BUILD/AppIcon.iconset"
+
     VERSION=$(git -C "$REPO_ROOT" describe --tags --always 2>/dev/null || echo dev)
     cat > "$STAGE/Contents/Info.plist" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
@@ -207,6 +230,7 @@ else
     <key>CFBundleName</key><string>Sayit</string>
     <key>CFBundleDisplayName</key><string>Sayit</string>
     <key>CFBundleExecutable</key><string>Sayit</string>
+    <key>CFBundleIconFile</key><string>AppIcon</string>
     <key>CFBundlePackageType</key><string>APPL</string>
     <key>CFBundleShortVersionString</key><string>$(xml "$VERSION")</string>
     <key>CFBundleVersion</key><string>1</string>
@@ -237,7 +261,16 @@ EOF
         rm -rf "$DEST"
     fi
     ditto "$STAGE" "$DEST"
+    # Tell Launch Services about the new bundle, so Finder and Launchpad pick
+    # up its icon without waiting for their own rescan.
+    /System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister \
+        -f "$DEST" >/dev/null 2>&1 || true
     log "Installed $DEST"
+    # A copy an earlier install left in the other place would be found first
+    # by a manual run of bin/sayit, and is stale from now on.
+    for app in "/Applications/$APP_NAME" "$HOME/Applications/$APP_NAME"; do
+        [[ "$app" == "$DEST" ]] || remove_ours "$app"
+    done
     # A grant stays only while the designated requirement does. When it
     # changes (an ad-hoc build, or the first build with a new identity), the
     # old entries can still look switched on in System Settings while they no

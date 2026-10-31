@@ -81,7 +81,8 @@ What `install.sh` does on macOS, in order:
 6. Creates `.env` from `.env.example` and seeds
    `~/.config/sayit/wordlist.tsv`.
 7. Runs `mac/install.sh`, which compiles `Sayit`, `sayit-rec` and `sayit-paste`
-   with `swiftc`, bundles them into `~/Applications/Sayit.app`, signs the
+   with `swiftc`, bundles them into `/Applications/Sayit.app` (or
+   `~/Applications/Sayit.app` when `/Applications` is not writable), signs the
    bundle, and writes and loads the two LaunchAgents described
    [below](#the-daemon-and-the-launchagents).
 
@@ -122,6 +123,11 @@ large:
 ./install.sh --model medium
 launchctl kickstart -k gui/$(id -u)/io.github.mrtorriz.sayit.daemon   # after editing an existing .env
 ```
+
+The app's icon is the pill itself, with its lit lamp and ten-bar mark, on a
+dark tile. `mac/install.sh` draws it at install time from the same geometry as
+the logo (`mac/Sources/Icon`), so it shows in Finder, Launchpad and System
+Settings.
 
 ## Granting Microphone and Accessibility
 
@@ -276,7 +282,7 @@ while the probe runs. Choose the item again to stop.
 From a terminal, the same for 30 seconds, swallowing nothing:
 
 ```bash
-~/Applications/Sayit.app/Contents/MacOS/Sayit --probe
+/Applications/Sayit.app/Contents/MacOS/Sayit --probe
 ```
 
 That terminal needs Input Monitoring (or Accessibility) of its own; the menu
@@ -301,8 +307,8 @@ item needs nothing extra. Translating what the probe prints:
 
 ```bash
 ./bin/sayit doctor                                                  # inputs, and what AUDIO_SOURCE resolves to
-~/Applications/Sayit.app/Contents/MacOS/sayit-rec --list            # * marks the default; UID, name
-~/Applications/Sayit.app/Contents/MacOS/sayit-rec --resolve "Alias" # what one value would select
+/Applications/Sayit.app/Contents/MacOS/sayit-rec --list            # * marks the default; UID, name
+/Applications/Sayit.app/Contents/MacOS/sayit-rec --resolve "Alias" # what one value would select
 ```
 
 `AUDIO_SOURCE` is empty by default, which records from the system default
@@ -570,9 +576,11 @@ longer applies.
 
 The repository path is recorded in the app and in both LaunchAgents. After
 moving your clone, run `./install.sh` again from the new place.
-`SAYIT_APP_DIR` installs the app somewhere other than `~/Applications`. Set it
-for `./bin/sayit doctor` as well, which otherwise looks only in
-`~/Applications` and `/Applications`.
+`Sayit.app` goes into `/Applications` when your account can write there, so it
+shows under Applications in Finder, and into `~/Applications` otherwise; a copy
+an earlier install left in the other place is removed. `SAYIT_APP_DIR` installs
+the app somewhere else. Set it for `./bin/sayit doctor` as well, which
+otherwise looks only in `~/Applications` and `/Applications`.
 
 ## Uninstalling
 
@@ -581,7 +589,8 @@ mac/install.sh --uninstall
 ```
 
 This unloads both LaunchAgents, removes their plists, and removes
-`~/Applications/Sayit.app` — only if its bundle identifier is Sayit's. It
+`Sayit.app` from `/Applications` and `~/Applications` — only a bundle whose
+identifier is Sayit's. It
 leaves alone the models, `.env`, your history and the wordlist, and also:
 
 - the whisper.cpp build in `~/.local/src/whisper.cpp` and the

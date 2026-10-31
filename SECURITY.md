@@ -167,9 +167,11 @@ details in the issue.
   rule above says and do not publish it. It is moved to `daemon.log.1` once it
   passes 1 MiB, when the daemon next starts. `agent.log` holds error messages
   from Sayit and the commands it starts.
-- Nothing requires administrator rights. Apart from Homebrew's formulae,
-  everything installs into your home directory: `~/Applications/Sayit.app`,
-  two per-user LaunchAgents and `~/.local`. The app is signed ad hoc unless
+- Nothing requires administrator rights. `Sayit.app` goes into
+  `/Applications` when your account can write there, and into
+  `~/Applications` otherwise; apart from that and Homebrew's formulae,
+  everything installs into your home directory: two per-user LaunchAgents and
+  `~/.local`. The app is signed ad hoc unless
   `SAYIT_SIGN_IDENTITY` names an identity of yours; macOS ties both permissions
   to that signature.
 
