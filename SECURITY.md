@@ -140,8 +140,8 @@ details in the issue.
   meanwhile. A clipboard a password manager marked
   `org.nspasteboard.ConcealedType` or `TransientType` is never read, saved or
   re-offered, so the dictation stays on the clipboard instead; it also stays
-  when Accessibility is missing, when Secure Input is on, and when the old
-  clipboard is larger than 64 MiB.
+  when Accessibility is missing, when the app in front has Secure Input on,
+  and when the old clipboard is larger than 64 MiB.
 - `sayit-paste` writes the dictation as current-host-only clipboard contents,
   so Handoff's Universal Clipboard does not offer it to your other Apple
   devices. A clipboard it restores afterwards is written back normally.

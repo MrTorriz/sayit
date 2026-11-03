@@ -337,6 +337,12 @@ directory as `$TMPDIR` — unless `XDG_RUNTIME_DIR` is set, in which case that
 wins everywhere. The bash scripts compute and export it; `Sayit.app` passes the
 same path to every command it starts, so both sides always agree.
 
+macOS clears that directory of files older than three days every night
+(`dirhelper`), so nothing that must last as long as a process does lives
+there. The daemon's private path is the one such file: it is written once when
+the server starts and the server runs for weeks, so it goes to the state
+directory instead, `$XDG_STATE_HOME/sayit` (by default `~/.local/state/sayit`).
+
 | Path | Purpose |
 |---|---|
 | `$RUN_DIR/sayit.session` | As on Linux: `pid<TAB>wav<TAB>start`, claimed atomically. Sayit also reads its presence to decide whether a press on a latched recording means stop or start |
@@ -346,12 +352,12 @@ same path to every command it starts, so both sides always agree.
 | `$RUN_DIR/sayit.level` | One digit, `0`–`7`, rewritten in place by `sayit-rec` every 125 ms. Its modification time is the "audio is arriving" signal. Removed when the recording ends |
 | `$RUN_DIR/sayit.status` | The last status `bin/sayit` reported, shown as the first line of Sayit's menu. A `Done` status loses its text on the way. A second line, `warn` or `error`, marks a problem and turns the menu bar icon orange |
 | `$RUN_DIR/sayit.busy` | Presence means a transcription is running: the menu bar icon shows an ellipsis (the pill has already gone). Removed after the paste; ignored once it is two minutes old |
-| `$RUN_DIR/sayit-daemon.path` | The random path prefix the daemon serves under, new at every start, mode 0600. Read by `bin/sayit-transcribe` and the doctor |
 | `$RUN_DIR/sayit.agent` | Kept current by Sayit, rewritten whenever it changes: its pid, the repository, both permissions, the resolved trigger, the mode and the indicator lifetime. What the doctor reads; never text. Removed when Sayit quits |
 | `$RUN_DIR/trigger-probe.log` | Probe Trigger's transcript: button and modifier transitions, and the codes of keys that type no character or are pressed with `Cmd` or `Ctrl` — never text. Started afresh by each probe and never removed |
 | `$RUN_DIR/sayit-paste.lock` | Held by `sayit-paste` from its clipboard snapshot until its restore, so two quick pastes take turns |
 | `$RUN_DIR/sayit-last-error.log` | Error classes from failed stages and the recorder's stderr, including the silent-capture report (never dictated text) |
 | `$RUN_DIR/sayit-profile.csv` | Per-stage timestamps when `SAYIT_PROFILE=1` (timing data only). Uptime comes from `kern.boottime`, as there is no `/proc/uptime` |
+| `~/.local/state/sayit/sayit-daemon.path` | The random path prefix the daemon serves under, new at every start, mode 0600 in a 0700 directory. Read by `bin/sayit-transcribe`, Sayit's menu and the doctor. `$XDG_STATE_HOME`, not the run directory, which macOS clears of files older than three days |
 | `~/.local/share/sayit/history.jsonl` | One JSON object per dictation — `$XDG_DATA_HOME`, as on Linux |
 | `~/.config/sayit/wordlist.tsv` | User vocabulary, grown by `sayit-learn` — `$XDG_CONFIG_HOME`, as on Linux |
 | `~/.config/sayit/overlay-position` | Where the pill sits, in the Linux file format: points from the top-left corner of the main screen |
@@ -961,8 +967,16 @@ out of their history.
 Three conditions leave the dictation on the clipboard instead of restoring the
 old one away: no Accessibility permission (no keystroke can be sent; exit code
 2, so the status says the injection failed and `Cmd+V` recovers it), Secure
-Input (the keystroke may have been swallowed), and a clipboard larger than
-64 MiB (not worth a round trip). The paste key is whichever key types "v"
+Input turned on by the app in front (the keystroke may have been swallowed),
+and a clipboard larger than 64 MiB (not worth a round trip). Secure Input that
+an app in the background left on does not stand between `Cmd+V` and the app in
+front, so that paste goes ahead and is restored as usual; the session's
+`kCGSSessionSecureInputPID` names the holder, and the log names the app.
+
+`sayit-paste` answers `pasted` on stdout the moment `Cmd+V` is out and lets go
+of stdout and stderr, then stays only for the restore. `bin/sayit-inject`
+returns on that line, so the status, the history and the end of the busy
+marker no longer wait out `PASTE_RESTORE_DELAY`. The paste key is whichever key types "v"
 with `Cmd` held in the current layout — Dvorak and its kin move it — with the
 ANSI position as the fallback, and the chord sets `Cmd` and nothing else, so a
 modifier still held from the trigger cannot turn it into a different shortcut.

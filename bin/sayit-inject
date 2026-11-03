@@ -39,8 +39,10 @@
 #   macOS: hands the text on stdin to Sayit.app's sayit-paste - clipboard plus
 #   Cmd+V with the previous clipboard restored, or Unicode typing with
 #   INJECT_METHOD=type. Without the Accessibility permission the text is left
-#   on the clipboard for a manual Cmd+V (exit 2); with Secure Input on, the
-#   paste may have been swallowed and the text stays on the clipboard (exit 3).
+#   on the clipboard for a manual Cmd+V (exit 2); with Secure Input on in the
+#   app in front, the paste may have been swallowed and the text stays on the
+#   clipboard (exit 3). Returns as soon as the paste is out; sayit-paste
+#   restores the previous clipboard on its own a moment later.
 #
 # Exit codes:
 #   0  Text injected
@@ -77,9 +79,18 @@ if [[ "$OSTYPE" == darwin* ]]; then
         return 1
     }
     PASTE=$(mac_helper sayit-paste) || { echo "sayit-paste missing — run ./install.sh" >&2; exit 1; }
+    # sayit-paste says "pasted" the moment Cmd+V is out and stays only to put
+    # the previous clipboard back PASTE_RESTORE_DELAY later: return on that
+    # line rather than wait for it. Any other outcome ends the process, and
+    # its exit code tells.
+    exec {paste_out}< <(INJECT_METHOD="${INJECT_METHOD:-auto}" \
+        PASTE_RESTORE_DELAY="${PASTE_RESTORE_DELAY:-1.0}" exec "$PASTE" < <(printf '%s' "$TEXT"))
+    paste_pid=$!
+    answer=""
+    read -r -u "$paste_out" answer || true
+    [[ "$answer" == pasted ]] && exit 0
     rc=0
-    printf '%s' "$TEXT" | INJECT_METHOD="${INJECT_METHOD:-auto}" \
-        PASTE_RESTORE_DELAY="${PASTE_RESTORE_DELAY:-1.0}" "$PASTE" || rc=$?
+    wait "$paste_pid" || rc=$?
     # 2 and 3 leave the text on the clipboard, and the caller says so.
     case $rc in 0|2|3) exit "$rc" ;; *) exit 1 ;; esac
 fi

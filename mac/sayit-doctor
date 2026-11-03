@@ -103,7 +103,7 @@ for job in daemon agent; do
     fi
 done
 PORT="${DAEMON_PORT:-9876}"
-PREFIX=$(cat "$RUN_DIR/sayit-daemon.path" 2>/dev/null) || PREFIX=""
+PREFIX=$(cat "${XDG_STATE_HOME:-$HOME/.local/state}/sayit/sayit-daemon.path" 2>/dev/null) || PREFIX=""
 [[ "$PREFIX" =~ ^/[0-9a-f]+$ ]] || PREFIX=""
 if curl -sf -o /dev/null --max-time 2 "http://127.0.0.1:$PORT$PREFIX/health"; then
     ok "daemon answers on 127.0.0.1:$PORT$([[ -n "$PREFIX" ]] && echo ' (private path)')"
@@ -169,8 +169,11 @@ if [[ -n "$HELPERS" ]]; then
         info "AUDIO_SOURCE empty — recording uses the default input"
     fi
 fi
-if [[ -n "$HELPERS" ]] && [[ "$("$HELPERS/sayit-paste" --check 2>/dev/null)" == *"secure_input=on"* ]]; then
-    warn "Secure Input is on: keyboard triggers are not seen and a paste may be blocked"
+CHECK=""
+[[ -n "$HELPERS" ]] && { CHECK=$("$HELPERS/sayit-paste" --check 2>/dev/null) || CHECK=""; }
+if [[ "$CHECK" == *"secure_input=on"* ]]; then
+    SECURE_APP=$(sed -n 's/^secure_input_app=//p' <<< "$CHECK")
+    warn "Secure Input is on${SECURE_APP:+ in $SECURE_APP}: keyboard triggers are not seen, and a paste into that app may be blocked"
     more "a password field or Terminal > Secure Keyboard Entry; a mouse-button trigger still works"
 fi
 

@@ -124,6 +124,7 @@ development and diagnostics.
 | `SAYIT_SIGN_IDENTITY` | `mac/install.sh` | A code-signing identity in your keychain to sign `Sayit.app` with, instead of ad hoc. A stable identity lets upgrades keep the Microphone and Accessibility grants. Part of the build hash: set it on every run |
 | `SAYIT_APP_DIR` | `mac/install.sh`, `mac/sayit-doctor` | Directory to install `Sayit.app` into instead of `/Applications` (or `~/Applications` when `/Applications` is not writable). The doctor looks there first when it is set, then in `~/Applications` and `/Applications`; set it for the doctor too |
 | `XDG_RUNTIME_DIR` | every macOS component | When set, used as the run directory instead of the per-user temporary directory |
+| `XDG_STATE_HOME` | `bin/sayit-daemon`, `bin/sayit-transcribe`, `Sayit.app`, `mac/sayit-doctor` | macOS: where the daemon's private path is kept, `$XDG_STATE_HOME/sayit/sayit-daemon.path`. Defaults to `~/.local/state`; the daemon and its readers must see the same value |
 | `SAYIT_REPO` | `Sayit.app` | The repository whose `bin/sayit` to run. Set by the agent's LaunchAgent; the path recorded in the app at build time otherwise |
 | `SAYIT_MAC_HELPERS` | `bin/sayit-record`, `bin/sayit-inject` | Directory holding `sayit-rec` and `sayit-paste`. Set by `Sayit.app` to its own bundle, so its grants apply |
 | `SAYIT_DAEMON_LOG` | `bin/sayit-daemon` | Append the script's own errors and the server's output to this file; at each start a file past 1 MiB is moved to `.1` first. Set by the daemon's LaunchAgent to `~/Library/Logs/sayit/daemon.log` |

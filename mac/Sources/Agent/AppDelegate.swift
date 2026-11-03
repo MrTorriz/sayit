@@ -163,7 +163,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private func checkServer() {
         let env = Shared.readEnv((repository as NSString).appendingPathComponent(".env"))
         let port = Int(env["DAEMON_PORT"] ?? "") ?? 9876
-        var prefix = (try? String(contentsOfFile: Shared.runPath("sayit-daemon.path"), encoding: .utf8))?
+        var prefix = (try? String(contentsOfFile: Shared.statePath("sayit-daemon.path"), encoding: .utf8))?
             .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         if prefix.range(of: "^/[0-9a-f]+$", options: .regularExpression) == nil { prefix = "" }
         DispatchQueue.global(qos: .utility).async {
