@@ -10,7 +10,7 @@
 setup() {
     export OSTYPE=darwin27
     unset AUDIO_SOURCE MAX_RECORD_SECONDS INJECT_METHOD RECORDING_INDICATOR \
-          MODEL_PATH SAYIT_MODEL WORDLIST INITIAL_PROMPT SAYIT_DAEMON_LOG 2>/dev/null || true
+          MODEL_PATH SAYIT_MODEL WORDLIST INITIAL_PROMPT SAYIT_DAEMON_LOG XDG_STATE_HOME 2>/dev/null || true
 
     SANDBOX="$BATS_TEST_TMPDIR/repo"
     mkdir -p "$SANDBOX"
@@ -56,7 +56,9 @@ teardown() {
 # rec.exit (default 0) — or, with rec.live, behaves like a recorder: writes
 # START, and FINAL after a short flush once SIGINT/SIGTERM arrives.
 # sayit-paste stores stdin, its argument count, INJECT_METHOD and
-# PASTE_RESTORE_DELAY, and exits with paste.exit (default 0).
+# PASTE_RESTORE_DELAY, and exits with paste.exit (default 0) - or, with
+# paste.answer, says "pasted" as the real one does once Cmd+V is out, lets go
+# of stdout and stderr and writes paste.restored after paste.answer's seconds.
 install_helpers() {
     mkdir -p "$1"
     cat > "$1/sayit-rec" <<'EOF'
@@ -81,6 +83,12 @@ cat > "$STUB_CTL/paste.stdin"
 printf '%s\n' "$#" > "$STUB_CTL/paste.argc"
 printf '%s\n' "${INJECT_METHOD-unset}" > "$STUB_CTL/paste.method"
 printf '%s\n' "${PASTE_RESTORE_DELAY-unset}" > "$STUB_CTL/paste.delay"
+if [[ -f "$STUB_CTL/paste.answer" ]]; then
+    echo pasted
+    exec 1>/dev/null 2>/dev/null
+    sleep "$(cat "$STUB_CTL/paste.answer")"
+    : > "$STUB_CTL/paste.restored"
+fi
 exit "$(cat "$STUB_CTL/paste.exit" 2>/dev/null || echo 0)"
 EOF
     chmod +x "$1/sayit-rec" "$1/sayit-paste"
@@ -212,6 +220,18 @@ EOF
     run "$SANDBOX/bin/sayit-inject" "very private dictation"
     [ "$status" -eq 1 ]
     [[ "$output" != *"very private dictation"* ]]
+}
+
+@test "sayit-inject returns once sayit-paste says pasted, not after its clipboard restore" {
+    echo 3 > "$STUB_CTL/paste.answer"
+    started=$SECONDS
+    run "$SANDBOX/bin/sayit-inject" "text"
+    [ "$status" -eq 0 ]
+    (( SECONDS - started < 2 ))
+    [ ! -f "$STUB_CTL/paste.restored" ]
+    # The restore still happens, after the caller has moved on.
+    for _ in $(seq 50); do [ -f "$STUB_CTL/paste.restored" ] && break; sleep 0.1; done
+    [ -f "$STUB_CTL/paste.restored" ]
 }
 
 @test "sayit-inject takes the text on stdin when there is no argument" {
@@ -592,23 +612,38 @@ EOF
 
 @test "the daemon serves under a fresh private path that sayit-transcribe and only the user can read" {
     daemon_sandbox
+    # In the state directory: macOS clears the run directory of old files.
+    local file="$HOME/.local/state/sayit/sayit-daemon.path"
     run "$DAEMON"
     [ "$status" -eq 0 ]
-    prefix=$(cat "$RUN_DIR/sayit-daemon.path")
+    prefix=$(cat "$file")
     [[ "$prefix" =~ ^/[0-9a-f]{32}$ ]]
     [[ "$output" == *"--request-path $prefix"* ]]
-    [ "$(ls -l "$RUN_DIR/sayit-daemon.path" | cut -c1-10)" = "-rw-------" ]
+    [ "$(ls -l "$file" | cut -c1-10)" = "-rw-------" ]
+    [ "$(ls -ld "$HOME/.local/state/sayit" | cut -c1-10)" = "drwx------" ]
+    [ ! -e "$RUN_DIR/sayit-daemon.path" ]
     run "$DAEMON"
-    [ "$(cat "$RUN_DIR/sayit-daemon.path")" != "$prefix" ]
+    [ "$(cat "$file")" != "$prefix" ]
 
-    prefix=$(cat "$RUN_DIR/sayit-daemon.path")
+    prefix=$(cat "$file")
     run "$TRANSCRIBE" "$WAV"
     [ "$output" = "daemon text" ]
     grep -q -- "http://127.0.0.1:9876$prefix/inference" "$STUB_CTL/curl.args"
     # Anything else in the file is ignored.
-    printf '/../load\n' > "$RUN_DIR/sayit-daemon.path"
+    printf '/../load\n' > "$file"
     run "$TRANSCRIBE" "$WAV"
     grep -q -- "http://127.0.0.1:9876/inference" "$STUB_CTL/curl.args"
+}
+
+@test "XDG_STATE_HOME moves the daemon's private path for the daemon and sayit-transcribe alike" {
+    daemon_sandbox
+    export XDG_STATE_HOME="$BATS_TEST_TMPDIR/state"
+    run "$DAEMON"
+    [ "$status" -eq 0 ]
+    prefix=$(cat "$XDG_STATE_HOME/sayit/sayit-daemon.path")
+    [ ! -e "$HOME/.local/state/sayit/sayit-daemon.path" ]
+    run "$TRANSCRIBE" "$WAV"
+    grep -q -- "http://127.0.0.1:9876$prefix/inference" "$STUB_CTL/curl.args"
 }
 
 @test "a fallback to the cold CLI is announced in the status file" {

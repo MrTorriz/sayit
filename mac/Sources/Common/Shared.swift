@@ -31,6 +31,19 @@ enum Shared {
         (runDir as NSString).appendingPathComponent(name)
     }
 
+    /// Where state that must outlive the run directory goes: macOS clears the
+    /// per-user temporary directory of files older than three days every
+    /// night, while the daemon whose private path is kept here runs on.
+    static var stateDir: String {
+        var base = ProcessInfo.processInfo.environment["XDG_STATE_HOME"] ?? ""
+        if base.isEmpty { base = (NSHomeDirectory() as NSString).appendingPathComponent(".local/state") }
+        return (base as NSString).appendingPathComponent("sayit")
+    }
+
+    static func statePath(_ name: String) -> String {
+        (stateDir as NSString).appendingPathComponent(name)
+    }
+
     static var configDir: String {
         let base = ProcessInfo.processInfo.environment["XDG_CONFIG_HOME"]
             ?? (NSHomeDirectory() as NSString).appendingPathComponent(".config")

@@ -18,7 +18,9 @@
 #     writes timings for every request (never the transcribed text). A server
 #     that runs for weeks is rotated at its next start, not before.
 #   - macOS: serves under a random path prefix, new at every start, written
-#     mode 0600 to $XDG_RUNTIME_DIR/sayit-daemon.path for sayit-transcribe.
+#     mode 0600 to ${XDG_STATE_HOME:-~/.local/state}/sayit/sayit-daemon.path
+#     for sayit-transcribe - not to the run directory, which macOS clears of
+#     files older than three days every night while the server runs on.
 #     whisper-server answers every web page (Access-Control-Allow-Origin: *)
 #     and has an unauthenticated /load that swaps the model, or exits on a
 #     file that is not one; a page can reach 127.0.0.1 but cannot guess the
@@ -100,11 +102,11 @@ if [[ -f "$VAD_MODEL" ]]; then
 fi
 
 if [[ "$OSTYPE" == darwin* ]]; then
-    RUN_DIR="${XDG_RUNTIME_DIR:-$(getconf DARWIN_USER_TEMP_DIR 2>/dev/null || echo /tmp)}"
-    RUN_DIR="${RUN_DIR%/}"
+    STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/sayit"
     PREFIX="/$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')"
-    (umask 077; printf '%s\n' "$PREFIX" > "$RUN_DIR/sayit-daemon.path.$$" \
-        && mv -f "$RUN_DIR/sayit-daemon.path.$$" "$RUN_DIR/sayit-daemon.path")
+    (umask 077; mkdir -p "$STATE_DIR" \
+        && printf '%s\n' "$PREFIX" > "$STATE_DIR/sayit-daemon.path.$$" \
+        && mv -f "$STATE_DIR/sayit-daemon.path.$$" "$STATE_DIR/sayit-daemon.path")
     ARGV+=(--request-path "$PREFIX")
 fi
 

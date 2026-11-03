@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+- macOS: the daemon's private path moves from the per-user temporary
+  directory, which macOS clears of files older than three days every night, to
+  `~/.local/state/sayit/sayit-daemon.path` (`$XDG_STATE_HOME`). A server that
+  ran for more than three days no longer sends every dictation to the slow
+  cold CLI.
+- macOS: `sayit-paste` answers as soon as `Cmd+V` is out and restores the
+  previous clipboard on its own, so the status, the history and the busy
+  marker no longer wait out `PASTE_RESTORE_DELAY` (about one second per
+  dictation).
+- macOS: Secure Input keeps the dictation on the clipboard only when the app
+  in front turned it on. An app in the background that left it on no longer
+  stops the clipboard restore, and the log and the doctor name the app.
+- `install.sh` verifies a download by comparing its digest instead of piping
+  a checklist to `sha256sum -c`, which Apple's `sha256sum` (macOS 27) rejects:
+  the model download no longer fails with a false checksum mismatch there.
 - macOS: Sayit.app has an icon - the pill, with its lit lamp and ten-bar mark,
   on a dark tile. `mac/Sources/Icon` draws it from the same geometry as the
   logo at install time, and `iconutil` packs it into the bundle.
