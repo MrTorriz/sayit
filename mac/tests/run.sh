@@ -6,10 +6,12 @@
 #
 # Behavior:
 #   - Compiles mac/tests/ConfigTests.swift together with
-#     mac/Sources/Common/*.swift and mac/Sources/Agent/Config.swift, with the
-#     swiftc flags mac/install.sh builds Sayit.app with, into a temporary
-#     directory that is removed on exit.
-#   - Runs the result there. Nothing is installed, signed or loaded, and no
+#     mac/Sources/Common/*.swift and mac/Sources/Agent/Config.swift, and
+#     mac/tests/SegmenterTests.swift together with
+#     mac/Sources/Rec/Segmenter.swift, with the swiftc flags mac/install.sh
+#     builds Sayit.app with, into a temporary directory that is removed on
+#     exit.
+#   - Runs both there. Nothing is installed, signed or loaded, and no
 #     microphone, clipboard or keystroke is touched.
 #   - Needs only the Xcode Command Line Tools: no Xcode, no XCTest.
 #
@@ -27,9 +29,12 @@ MAC_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 WORK=$(mktemp -d "${TMPDIR:-/tmp}/sayit-mac-tests.XXXXXX")
 trap 'rm -rf "$WORK"' EXIT
 
-swiftc -O -swift-version 5 -target "$(uname -m)-apple-macos14.0" \
-    "$MAC_DIR"/Sources/Common/*.swift "$MAC_DIR/Sources/Agent/Config.swift" \
+SWIFTC=(swiftc -O -swift-version 5 -target "$(uname -m)-apple-macos14.0")
+"${SWIFTC[@]}" "$MAC_DIR"/Sources/Common/*.swift "$MAC_DIR/Sources/Agent/Config.swift" \
     "$MAC_DIR/tests/ConfigTests.swift" -o "$WORK/config-tests" || exit 1
+"${SWIFTC[@]}" "$MAC_DIR/Sources/Rec/Segmenter.swift" \
+    "$MAC_DIR/tests/SegmenterTests.swift" -o "$WORK/segmenter-tests" || exit 1
 
 # The tests write their fixtures to NSTemporaryDirectory(), which follows TMPDIR.
 TMPDIR="$WORK/" "$WORK/config-tests" || exit 1
+"$WORK/segmenter-tests" || exit 1

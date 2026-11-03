@@ -3,9 +3,18 @@
 #
 # Usage:
 #   sayit-transcribe <file.wav>
+#   sayit-transcribe --part <piece.wav> < previous-text
+#   sayit-transcribe --join <text-file>...
 #
 # Arguments:
-#   file.wav  16 kHz mono PCM file (same format as sayit-record produces)
+#   file.wav    16 kHz mono PCM file (same format as sayit-record produces)
+#   --part      one piece of a recording that is still going on
+#               (SEGMENT_WHILE_RECORDING): the previous piece's text, read from
+#               stdin, follows INITIAL_PROMPT in the prompt. Daemon only, and
+#               the text comes out without LLM cleanup or wordlist, both of
+#               which --join applies to the whole
+#   --join      the pieces' texts, in order: joined with spaces, then LLM
+#               cleanup and wordlist as for a whole recording
 #
 # Behavior:
 #   - Daemon first: POSTs to a warm whisper-server when it responds. The CLI
@@ -35,6 +44,7 @@
 # Exit codes:
 #   0  Successful transcription (even when the result is empty)
 #   1  File missing, or transcription failed on both the daemon and CLI paths
+#      (--part: on the daemon)
 
 set -euo pipefail
 
@@ -58,8 +68,18 @@ if command -v flock >/dev/null; then
     flock -sn 8 || { echo 'Engine switch in progress; try again when ready.' >&2; exit 1; }
 fi
 
-WAV="${1:?Usage: sayit-transcribe <file.wav>}"
-[[ -f "$WAV" ]] || { echo "File not found: $WAV" >&2; exit 1; }
+MODE=whole
+case "${1:-}" in
+    --part) MODE="part"; shift ;;
+    --join) MODE="join"; shift ;;
+esac
+USAGE="Usage: sayit-transcribe <file.wav> | --part <piece.wav> | --join <text-file>..."
+WAV="${1:?$USAGE}"
+if [[ "$MODE" == join ]]; then
+    for f in "$@"; do [[ -f "$f" ]] || { echo "File not found: $f" >&2; exit 1; }; done
+else
+    [[ -f "$WAV" ]] || { echo "File not found: $WAV" >&2; exit 1; }
+fi
 
 WHISPER_CLI="${WHISPER_CLI:-$HOME/.local/bin/whisper-cli}"
 # SAYIT_MODEL (environment variable) wins over .env:MODEL_PATH — same
@@ -86,6 +106,7 @@ if [[ "$OSTYPE" == darwin* ]]; then
 fi
 DAEMON_URL="http://127.0.0.1:${DAEMON_PORT}${DAEMON_PREFIX}/inference"
 INITIAL_PROMPT="${INITIAL_PROMPT:-}"
+PROMPT="$INITIAL_PROMPT"
 VAD_MODEL="${VAD_MODEL:-$REPO_ROOT/models/ggml-silero-v5.1.2.bin}"
 # VAD tuning. These defaults are not whisper.cpp's. It ends a speech segment at
 # the first 32 ms frame whose speech probability drops below VAD_THRESHOLD minus
@@ -145,7 +166,7 @@ transcribe_daemon() {
     local args=( -sf --connect-timeout 2 -m "$deadline"
                  -F file=@"$WAV"
                  --form-string language="$SPEECH_LANGUAGE"
-                 --form-string prompt="$INITIAL_PROMPT"
+                 --form-string prompt="$PROMPT"
                  --form-string no_timestamps=true
                  --form-string response_format=text )
     # Match the CLI's -nt: whisper-server otherwise wraps text at 60 characters,
@@ -242,6 +263,49 @@ except Exception:
 PYEOF
 }
 
+# LLM cleanup, then the wordlist, then the text on stdout.
+finish() {
+    # Optional LLM cleanup (contextual). Runs before the wordlist so that exact
+    # replacements always get the final say on domain terms.
+    if [[ "$LLM_CLEANUP" == "1" && -n "${RAW// }" ]]; then
+        RAW=$(llm_cleanup "$RAW")
+    fi
+
+    # Apply the wordlist (auto-replacement for recurring mistranscriptions).
+    # See bin/sayit-wordlist for the matching rules.
+    WORDLIST="${WORDLIST:-${XDG_CONFIG_HOME:-$HOME/.config}/sayit/wordlist.tsv}"
+    if [[ -f "$WORDLIST" && -n "${RAW// }" ]]; then
+        RAW=$(printf '%s' "$RAW" | "$REPO_ROOT/bin/sayit-wordlist" "$WORDLIST")
+    fi
+    mark t.wordlist.end
+
+    printf '%s' "$RAW"
+}
+
+# --join: the pieces' texts, each already normalized. The wordlist runs on
+# the whole, so a rule can match across the place a piece ended.
+if [[ "$MODE" == join ]]; then
+    RAW=""
+    for f in "$@"; do
+        piece=$(cat "$f")
+        [[ -n "${piece// }" ]] && RAW+="${RAW:+ }$piece"
+    done
+    finish
+    exit 0
+fi
+
+# --part: the previous piece's text continues the prompt, so the decoder
+# picks up where it left off - its last 300 characters, from a word start, as
+# whisper keeps only the end of a long prompt and INITIAL_PROMPT should stay.
+if [[ "$MODE" == part ]]; then
+    PREVIOUS=$(cat)
+    if (( ${#PREVIOUS} > 300 )); then
+        PREVIOUS="${PREVIOUS: -300}"
+        PREVIOUS="${PREVIOUS#* }"
+    fi
+    PROMPT="$INITIAL_PROMPT${INITIAL_PROMPT:+${PREVIOUS:+ }}$PREVIOUS"
+fi
+
 # A WAV with no samples is what a very short press leaves behind. Both paths
 # reject it - the daemon answers HTTP 400 "Invalid request", which curl -f turns
 # into the same exit status as an unreachable daemon - so the CLI fallback would
@@ -276,6 +340,12 @@ if (( daemon_rc == 0 && ctx > 0 )); then
     fi
 fi
 mark t.daemon.end "$daemon_rc"
+# A piece has no cold fallback: one CLI run per piece would cost seconds
+# each, and the caller transcribes the whole recording instead.
+if (( daemon_rc != 0 )) && [[ "$MODE" == part ]]; then
+    echo "piece not transcribed: daemon unreachable (curl exit $daemon_rc)" >&2
+    exit 1
+fi
 if (( daemon_rc != 0 )); then
     # macOS: the cold path takes seconds - tell Sayit's menu why it is slow.
     if [[ "$OSTYPE" == darwin* ]]; then
@@ -301,18 +371,8 @@ RAW=$(printf '%s' "$RAW" \
     | tr '\n' ' ' \
     | sed -e 's/  */ /g' -e 's/^ //' -e 's/ $//')
 
-# Optional LLM cleanup (contextual). Runs before the wordlist so that exact
-# replacements always get the final say on domain terms.
-if [[ "$LLM_CLEANUP" == "1" && -n "${RAW// }" ]]; then
-    RAW=$(llm_cleanup "$RAW")
+if [[ "$MODE" == part ]]; then
+    printf '%s' "$RAW"
+    exit 0
 fi
-
-# Apply the wordlist (auto-replacement for recurring mistranscriptions).
-# See bin/sayit-wordlist for the matching rules.
-WORDLIST="${WORDLIST:-${XDG_CONFIG_HOME:-$HOME/.config}/sayit/wordlist.tsv}"
-if [[ -f "$WORDLIST" && -n "${RAW// }" ]]; then
-    RAW=$(printf '%s' "$RAW" | "$REPO_ROOT/bin/sayit-wordlist" "$WORDLIST")
-fi
-mark t.wordlist.end
-
-printf '%s' "$RAW"
+finish

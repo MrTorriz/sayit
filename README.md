@@ -164,7 +164,10 @@ sentences went through the same warm server and flags that sayit uses:
 Two optional settings trade a little accuracy for speed. On 423 FLEURS clips
 greedy decoding (`BEAM=1`) took the median from 0.92 to 0.77 s and an encoder
 window sized to the clip (`AUDIO_CTX_ADAPTIVE=1`) on top to 0.49 s, for a word
-error rate of 5.73% instead of 5.38%.
+error rate of 5.73% instead of 5.38%. With `SEGMENT_WHILE_RECORDING=1` a long
+dictation is transcribed piece by piece while you speak: the median from
+release to text stayed between 0.6 and 0.8 s from 5 to 30 s of speech, against
+up to 2.8 s without it.
 
 [Performance](docs/PERFORMANCE.md) has the Linux and Windows measurements, the
 hardware, the method and the limits of each number. Engine timings are kept
@@ -181,7 +184,8 @@ Input (a password field, for example) hides keyboard triggers, and a blocked
 paste leaves the text on the clipboard.
 
 The model and its helpers stay running between dictations, which costs memory.
-Transcription still takes a moment after release, longer for long recordings.
+Transcription still takes a moment after release, longer for long recordings
+unless `SEGMENT_WHILE_RECORDING=1` (macOS) transcribes them while you speak.
 
 ## Privacy
 

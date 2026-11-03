@@ -131,7 +131,7 @@ shellcheck mac/install.sh mac/sayit-doctor
 
 # 2. Compile the three Swift targets exactly as mac/install.sh does
 out=$(mktemp -d); t="$(uname -m)-apple-macos14.0"
-swiftc -O -swift-version 5 -target "$t" mac/Sources/Common/*.swift mac/Sources/Rec/main.swift -o "$out/sayit-rec"
+swiftc -O -swift-version 5 -target "$t" mac/Sources/Common/*.swift mac/Sources/Rec/*.swift -o "$out/sayit-rec"
 swiftc -O -swift-version 5 -target "$t" mac/Sources/Paste/main.swift -o "$out/sayit-paste"
 swiftc -O -swift-version 5 -target "$t" mac/Sources/Common/*.swift mac/Sources/Agent/*.swift -o "$out/Sayit"
 

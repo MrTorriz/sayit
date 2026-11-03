@@ -30,6 +30,11 @@
 #     the microphone is actually live. Disable it with RECORDING_INDICATOR=0.
 #   - Transcription errors are summarized in a notification and appended to
 #     $XDG_RUNTIME_DIR/sayit-last-error.log (error class only — never text).
+#   - SEGMENT_WHILE_RECORDING=1 (macOS): sayit-rec cuts the recording at
+#     pauses and a background worker transcribes each piece while the
+#     recording goes on (segment_worker), so stop only waits for the last one
+#     and joins the texts. A recording that was never cut, or a piece that
+#     failed, is transcribed whole, as without the setting.
 #
 # Exit codes:
 #   0  Normal flow (including empty results — "Empty result" is notified)
@@ -241,6 +246,67 @@ await_session() {
     done
 }
 
+# SEGMENT_WHILE_RECORDING (macOS): runs in the background for the whole
+# session, on the recorder's stdout, where sayit-rec names each piece it cut
+# at a pause. Each is transcribed as it comes, with the previous piece's text
+# as its prompt, into <stem>-part-<n>.txt. The state file <stem>.segments
+# holds this worker's PID until the recorder has exited (end of input), then
+# done<TAB>pieces<TAB>ok|failed. A state file that is gone means the session
+# was cancelled or already handled: then the pieces are dropped, not
+# transcribed, and whatever this worker wrote is removed.
+segment_worker() {  # segment_worker <stem>
+    local stem="$1" state="$1.segments" part n=0 rc=ok prev=/dev/null txt
+    umask 077
+    printf '%s\n' "$BASHPID" > "$state" || return 0
+    while IFS= read -r part; do
+        n=$(( n + 1 ))
+        txt="$stem-part-$n.txt"
+        # A piece out of order (one sayit-rec could not write) spoils the
+        # join: stop then transcribes the whole recording instead.
+        [[ "$part" == "$stem-part-$n.wav" ]] || rc=failed
+        if [[ "$rc" == ok && -f "$state" ]]; then
+            mark segment.begin "$n"
+            if "$REPO_ROOT/bin/sayit-transcribe" --part "$part" < "$prev" > "$txt.tmp" \
+                && mv "$txt.tmp" "$txt"; then
+                prev="$txt"
+            else
+                rc=failed
+            fi
+            mark segment.end "$n"
+        fi
+        rm -f "$part" "$txt.tmp"
+    done
+    if [[ -f "$state" ]]; then
+        printf 'done\t%s\t%s\n' "$n" "$rc" > "$state.tmp" && mv "$state.tmp" "$state"
+    else
+        rm -f "$stem-part-"*
+    fi
+}
+
+# Waits for this session's segment worker and sets SEGMENT_TEXTS to its texts
+# in order. Fails when there is nothing to join (no cut, a failed piece, a
+# worker that died), which leaves the whole recording to the usual path. The
+# wait is bounded by the recording's length, like the transcription's own
+# deadline.
+await_segments() {  # await_segments <stem>
+    local stem="$1" state n status i limit
+    SEGMENT_TEXTS=()
+    limit=$(( $(wc -c 2>/dev/null < "$REC_WAV" || echo 0) * 2 / 32000 + 20 ))
+    for (( i = 0; i < limit * 100; i++ )); do
+        state=""
+        { IFS= read -r state < "$stem.segments"; } 2>/dev/null || [[ -n "$state" ]] || return 1
+        [[ "$state" == done$'\t'* ]] && break
+        [[ "$state" =~ ^[0-9]+$ ]] && ! kill -0 "$state" 2>/dev/null && return 1
+        sleep 0.01
+    done
+    IFS=$'\t' read -r _ n status <<< "$state"
+    [[ "$status" == ok && "$n" =~ ^[1-9][0-9]*$ ]] || return 1
+    for (( i = 1; i <= n; i++ )); do
+        [[ -f "$stem-part-$i.txt" ]] || return 1
+        SEGMENT_TEXTS+=("$stem-part-$i.txt")
+    done
+}
+
 start_recording() {
     mark start.enter
     # Refuse when a session is already live; clean up leftovers of a crash.
@@ -268,7 +334,8 @@ start_recording() {
     find "$RUN_DIR" -maxdepth 1 \
         \( -name 'sayit-*.wav' -o -name 'sayit.session.claimed.*' \
            -o -name 'sayit.session.tmp.*' -o -name 'sayit.terr.*' \
-           -o -name 'sayit-clipboard.*' \) \
+           -o -name 'sayit-clipboard.*' -o -name 'sayit-*-part-*' \
+           -o -name 'sayit-*.segments*' \) \
         -mmin +60 -delete 2>/dev/null || true
 
     # A configured AUDIO_SOURCE means a dedicated microphone is in use, so
@@ -302,7 +369,14 @@ start_recording() {
     # async children of a non-interactive shell otherwise ignore SIGINT,
     # which would make the stop signal a no-op for shell-based recorders.
     set -m
-    "$REPO_ROOT/bin/sayit-record" "$wav" "$SOURCE" >/dev/null 2>>"$ERROR_LOG" &
+    if [[ "$OSTYPE" == darwin* && "${SEGMENT_WHILE_RECORDING:-0}" == 1 ]]; then
+        # The worker reads the recorder's stdout; it is the recorder's own
+        # child, so $! stays the recorder.
+        SAYIT_SEGMENTS=1 "$REPO_ROOT/bin/sayit-record" "$wav" "$SOURCE" \
+            > >(segment_worker "${wav%.wav}" >/dev/null 2>>"$ERROR_LOG") 2>>"$ERROR_LOG" &
+    else
+        "$REPO_ROOT/bin/sayit-record" "$wav" "$SOURCE" >/dev/null 2>>"$ERROR_LOG" &
+    fi
     pid=$!
     set +m
     disown
@@ -322,7 +396,7 @@ start_recording() {
         # point of this branch is that the run directory is already failing.
         rm -f "$SESSION_FILE.tmp.$$" 2>/dev/null || true
         REC_PID="$pid" REC_WAV="$wav" stop_recorder
-        rm -f "$wav" "$INTENT_FILE" 2>/dev/null || true
+        rm -f "$wav" "${wav%.wav}.segments" "$INTENT_FILE" 2>/dev/null || true
         printf '%s start: could not commit the session file\n' \
             "$(date -Iseconds)" >> "$ERROR_LOG" 2>/dev/null || true
         indicator hide
@@ -341,7 +415,7 @@ start_recording() {
         # already claimed it, that stop owns the outcome and we back off.
         if [[ "$(cat "$SESSION_FILE" 2>/dev/null)" == "$pid"$'\t'"$wav"$'\t'"$start" ]] \
             && mv "$SESSION_FILE" "$SESSION_FILE.claimed.$$" 2>/dev/null; then
-            rm -f "$SESSION_FILE.claimed.$$" "$wav"
+            rm -f "$SESSION_FILE.claimed.$$" "$wav" "${wav%.wav}.segments"
             indicator hide
             "$REPO_ROOT/bin/sayit-bt" down 2>/dev/null || true
             start_failed "$errmark"
@@ -404,12 +478,17 @@ stop_and_inject() {
         : > "$RUN_DIR/sayit.busy" 2>/dev/null || true
         trap 'rm -f "$RUN_DIR/sayit.busy"' EXIT
     fi
-    local terr trc=0
+    local terr trc=0 stem="${REC_WAV%.wav}"
     terr="$RUN_DIR/sayit.terr.$$"
     mark transcribe.begin
-    TEXT=$("$REPO_ROOT/bin/sayit-transcribe" "$REC_WAV" 2>"$terr") || trc=$?
+    if [[ -f "$stem.segments" ]] && await_segments "$stem"; then
+        mark segments.ready "${#SEGMENT_TEXTS[@]}"
+        TEXT=$("$REPO_ROOT/bin/sayit-transcribe" --join "${SEGMENT_TEXTS[@]}" 2>"$terr") || trc=$?
+    else
+        TEXT=$("$REPO_ROOT/bin/sayit-transcribe" "$REC_WAV" 2>"$terr") || trc=$?
+    fi
     mark transcribe.end "${#TEXT}"
-    rm -f "$REC_WAV"
+    rm -f "$REC_WAV" "$stem.segments" "$stem-part-"*
 
     if [[ -n "${TEXT// }" ]]; then
         # The text goes on stdin: argv shows in every user's process listing.
@@ -477,8 +556,10 @@ cancel_recording() {
         return 0
     fi
     indicator hide
+    # Gone before the recorder stops, so its worker transcribes no more.
+    rm -f "${REC_WAV%.wav}.segments"
     stop_recorder
-    rm -f "$REC_WAV"
+    rm -f "$REC_WAV" "${REC_WAV%.wav}-part-"*
     "$REPO_ROOT/bin/sayit-bt" down 2>/dev/null || true
     trap - INT TERM HUP
     notify "Recording cancelled — nothing injected"

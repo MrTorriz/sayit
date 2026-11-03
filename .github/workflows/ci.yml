@@ -91,7 +91,7 @@ jobs:
         run: |
           out=$(mktemp -d)
           swiftc=(swiftc -O -swift-version 5 -target "$(uname -m)-apple-macos14.0")
-          "${swiftc[@]}" mac/Sources/Common/*.swift mac/Sources/Rec/main.swift -o "$out/sayit-rec"
+          "${swiftc[@]}" mac/Sources/Common/*.swift mac/Sources/Rec/*.swift -o "$out/sayit-rec"
           "${swiftc[@]}" mac/Sources/Paste/main.swift -o "$out/sayit-paste"
           "${swiftc[@]}" mac/Sources/Common/*.swift mac/Sources/Agent/*.swift -o "$out/Sayit"
           "${swiftc[@]}" mac/Sources/Common/*.swift mac/Sources/Icon/main.swift -o "$out/sayit-icon"

@@ -18,7 +18,8 @@
 #     otherwise the PipeWire default mic
 #   - Records until the process receives SIGINT or SIGTERM
 #   - macOS: execs sayit-rec, which also publishes the level for the pill and
-#     stops itself after MAX_RECORD_SECONDS (default 120)
+#     stops itself after MAX_RECORD_SECONDS (default 120). SAYIT_SEGMENTS=1,
+#     set by bin/sayit for SEGMENT_WHILE_RECORDING, passes through to it.
 #
 # Exit codes:
 #   0  Normal termination (SIGINT)
