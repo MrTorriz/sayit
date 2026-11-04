@@ -121,6 +121,15 @@ setup() {
     grep -qE 'WHISPER_REF="?\$\{WHISPER_REF:-v[0-9]+\.[0-9]+\.[0-9]+\}"?' "$INSTALL"
 }
 
+@test "Linux pins whisper.cpp v1.9.2" {
+    mkdir -p "$HOME/.local/bin"
+    printf '#!/bin/sh\n' > "$HOME/.local/bin/whisper-cli"
+    chmod +x "$HOME/.local/bin/whisper-cli"
+    run "$INSTALL" --skip-packages --skip-model -y
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"to update to v1.9.2"* ]]
+}
+
 @test "verify_sha256 compares the digest, so a sha256sum that takes no checklist on stdin works" {
     # Apple's sha256sum (macOS 27) answers a checklist on stdin with its usage
     # line and exit 1; this stand-in does the same and hashes files as usual.

@@ -931,6 +931,18 @@ EOF
     [[ "$output" == *"Building Sayit.app failed"* ]]
 }
 
+@test "macOS pins whisper.cpp v1.9.5, and WHISPER_REF still overrides it" {
+    install_sandbox
+    mkdir -p "$HOME/.local/bin"
+    printf '#!/bin/sh\n' > "$HOME/.local/bin/whisper-cli"
+    chmod +x "$HOME/.local/bin/whisper-cli"
+    run "$INSTALL" --skip-packages --skip-model -y --skip-agent
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"to update to v1.9.5"* ]]
+    WHISPER_REF=v1.9.2 run "$INSTALL" --skip-packages --skip-model -y --skip-agent
+    [[ "$output" == *"to update to v1.9.2"* ]]
+}
+
 @test "Apple Silicon leaves MODEL_PATH to the scripts, whose default is large there" {
     install_sandbox
     HOSTTYPE=aarch64 run "$INSTALL" "${SKIP[@]}" --skip-agent

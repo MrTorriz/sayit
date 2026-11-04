@@ -259,6 +259,131 @@ frames garbled 54 of the 423 clips, which is why `bin/sayit-transcribe` only
 ever sends those, with a full-window retry as a guard; see
 [Configuration](CONFIGURATION.md#accuracy-vad-beam-search-initial-prompt-suppression).
 
+### Five engine changes, measured one at a time
+
+On 2026-11-03, the same machine, macOS 27.2. The baseline is sayit's own
+configuration on this Mac: KB-Whisper large q5_0, greedy (`BEAM=1`), flash
+attention, 8 threads, Silero VAD v5.1.2 with sayit's tuning and
+`AUDIO_CTX_ADAPTIVE=1`. Each change was measured against the setting it would
+replace. Both ran in warm `whisper-server`s side by side (one shared server
+when only the request differed), and every clip went to both in alternating
+order, through a copy of `bin/sayit-transcribe` itself: the adaptive window
+and its retry included, no `.env`, no wordlist, an empty prompt. Times are the
+wall time of `sayit-transcribe`, about 25 ms above the HTTP round trip, so
+they are not comparable with the tables above. Errors are strict word-level
+edit distance against FLEURS' normalised transcription.
+
+The clips: the 341 FLEURS sv_se test sentences again (4.2-31.5 s); 12
+concatenations of 15-30 s; 100 cuts of 1.1-3.5 s made in real pauses inside
+FLEURS recordings, each kept only when the words on both sides of the cut
+matched the reference, so its reference is exact; and 48 non-speech clips
+(FLEURS' quiet lead-ins and tails joined to 1.5-2.3 s, digital silence, faint
+white noise), where any word is an error. The temperature and VAD tests add
+the first 100 sentences under white noise at 5 dB SNR and the 100 cuts over
+three other FLEURS speakers at 10 dB.
+
+| Change | Speech clips | Median | p90 | p95 | Word errors | Taken? |
+| --- | ---: | ---: | ---: | ---: | ---: | --- |
+| whisper.cpp v1.9.2 → v1.9.5 | 450 | 0.606 → 0.607 s | 1.116 → 1.063 s | 1.372 → 1.280 s | 5.83% → 5.83%, the same text | Yes, on macOS |
+| `temperature_inc=0` per request | 451 clean, 198 noisy | 0.577 → 0.578 s | 1.004 → 0.966 s | 1.162 → 1.153 s | the same text | No |
+| `THREADS=6` instead of 8 | 452 | 0.605 → 0.603 s | 1.021 → 1.026 s | 1.189 → 1.152 s | the same text | No |
+| Silero VAD v6.2.0 instead of v5.1.2 | 653 clean and noisy, 48 non-speech | 0.523 → 0.522 s | 0.925 → 0.958 s | 1.083 → 1.139 s | 8.30% → 8.34%; no words on non-speech either way | No |
+| `GGML_METAL_RESIDENCY_KEEP_ALIVE_S=3600` instead of 180 | one 7 s clip after 4-10 min pauses, 4 per arm | first after a pause 0.63 → 0.51 s | | | the same text | No |
+
+Medians of unpaired lists hide small differences; the paired differences per
+clip below are the measurement.
+
+#### whisper.cpp v1.9.5
+
+The text was identical on all 450 speech clips, so the adaptive window's steps
+of 256 still give exactly what they gave on v1.9.2. Per clip the newer release
+was 7 ms faster in the median (95% interval 5-9 ms), more on long dictations
+(67 ms over 20 s), and its p90 and p95 fell by 5% and 7%. With the full 30 s
+window it saves 53 ms (5.7%) at every length, and with beam 5 on the thirty
+sentences of the model comparison 127 ms (8%: 1.25 to 1.15 s over two passes,
+with 74 instead of 78 word errors of 1436). Which of ggml's newer Metal kernels
+accounts for it was not measured. The synthetic harness, same settings:
+
+| `tests/benchmark.sh` (synthetic speech) | v1.9.2 median | v1.9.5 median |
+| --- | ---: | ---: |
+| Warm daemon, short (2.2 s) | 0.281 s | 0.277 s |
+| Warm daemon, medium (8.7 s) | 0.597 s | 0.588 s |
+| Warm daemon, long (20.8 s) | 1.438 s | 1.410 s |
+| Cold `whisper-cli`, short / medium | 1.05 / 1.47 s | 0.95 / 1.22 s |
+| Server start to accepting connections | 0.44 s | 0.44 s |
+
+Another job shared the GPU for part of the comparison: the 100 short cuts
+were therefore run again, twice each, on an otherwise idle machine (5 ms
+faster with the adaptive window, 54 ms with the full one, the same text), and
+the table above is from an idle run too.
+
+`install.sh` pins v1.9.5 on macOS. Vulkan, Windows and the OpenVINO adapter's
+libwhisper version check were not tested with it, so the other platforms stay
+on v1.9.2.
+
+#### Temperature fallback
+
+When a greedy decode looks unreliable, whisper decodes the segment again at a
+higher temperature. `whisper-server` parses `--no-fallback` but never uses it,
+so `temperature_inc=0` in the request is the only way to turn this off for the
+daemon. It changed nothing: the same text on all 649 clean and noisy clips and
+no difference in time, because the fallback almost never fires: the server
+counted two in the 707 requests that allowed one, both on noisy clips, and
+neither changed the text. sayit leaves it on.
+
+#### Threads
+
+The M6 has 2 super, 4 performance and 6 efficiency cores, so 8 threads spill
+onto efficiency cores. On Metal the threads only serve the parts left on the
+CPU, such as the mel spectrogram; whisper.cpp runs Silero on the CPU with four
+threads of its own whatever `THREADS` says. 6 threads against 8: +1 ms per clip
+(interval 0 to +2 ms), 4 threads +3 ms, the same text. `THREADS` stays 8.
+
+#### Silero VAD v6.2.0
+
+What a VAD model is for is accuracy, not speed. With sayit's tuning, v6.2.0
+made 4 more word errors than v5.1.2 over the 653 speech clips, clean and noisy
+(8.30% against 8.34%, 95% interval -15 to +23), and neither model let a single
+word through on the 48 non-speech clips. At whisper.cpp's default threshold of
+0.50 instead of sayit's 0.30, v6.2.0 made 14 fewer (8.16%, interval -35 to +6):
+within the noise as well, and with v5.1.2 at 0.50 not measured, not even
+attributable to the model. sayit stays on v5.1.2 and its tuning.
+
+#### Metal residency keep-alive
+
+ggml keeps the model's GPU memory wired for `GGML_METAL_RESIDENCY_KEEP_ALIVE_S`
+seconds after the last request, 180 by default, by asking for residency every
+5 ms. Two servers, one at 180 s and one at 3600 s, took turns: after a pause
+of 4 or 10 minutes the one whose turn it was got a 7 s synthetic sentence
+(macOS `say`, voice Alva) and then the same sentence again. The first
+request after the pause took 0.53-0.67 s (median 0.63 s) at 180 s against
+0.48-0.52 s (median 0.51 s) at 3600 s; the second, warm one 0.46-0.52 s for
+both. So a longer keep-alive saves about 0.1 s on the first dictation after
+a pause of more than three minutes, and nothing on any other. The cost is the
+5 ms heartbeat - some 200 wakeups a second - running for an hour after every
+dictation instead of three minutes, on a machine whose idle wakeups sayit
+already works to keep down. Four samples per arm, and the running daemon was
+used during six of the eight pauses, so the GPU was not idle throughout.
+sayit leaves the default.
+
+[Individual measurements](macos-benchmark-20261103.json) carry clip ids,
+sets, durations, timings and error counts, and no text.
+
+### Reproducing the macOS numbers
+
+The synthetic harness runs on macOS too. With sayit's settings there:
+
+```bash
+AUDIO_CTX_ADAPTIVE=1 BENCH_BEAM=1 \
+BENCH_MODEL=models/ggml-kb-whisper-large-q5_0.bin \
+BENCH_VAD=models/ggml-silero-v5.1.2.bin \
+./tests/benchmark.sh
+```
+
+`WHISPER_SERVER` and `WHISPER_CLI` select another build, `BENCH_THREADS` the
+server's threads. The FLEURS comparisons used their own scripts, which are
+not part of the repository.
+
 ### Transcribing while you speak
 
 On 2026-11-03, the same machine, KB-Whisper large q5_0 with greedy decoding
