@@ -71,6 +71,7 @@ EOF
     unset SAYIT_MODEL 2>/dev/null || true
     unset WORDLIST 2>/dev/null || true
     unset INITIAL_PROMPT 2>/dev/null || true
+    unset SPOKEN_PUNCTUATION 2>/dev/null || true
 
     TRANSCRIBE="$SANDBOX/bin/sayit-transcribe"
     WAV="$BATS_TEST_TMPDIR/test.wav"
@@ -207,6 +208,15 @@ EOF
     printf 'daemon\tDAEMON\n' > "$WL"
     WORDLIST="$WL" run "$TRANSCRIBE" "$WAV"
     [ "$output" = "DAEMON text from server" ]
+}
+
+@test "SPOKEN_PUNCTUATION=1 attaches marks after the wordlist, and only when set" {
+    WL="$BATS_TEST_TMPDIR/wl.tsv"
+    printf 'server\tserver frågetecken\ntext\tslash\n' > "$WL"
+    WORDLIST="$WL" run "$TRANSCRIBE" "$WAV"
+    [ "$output" = "daemon slash from server frågetecken" ]
+    WORDLIST="$WL" SPOKEN_PUNCTUATION=1 run "$TRANSCRIBE" "$WAV"
+    [ "$output" = "daemon/from server?" ]
 }
 
 @test "missing WAV argument fails with exit 1" {

@@ -1,0 +1,47 @@
+#!/usr/bin/env bash
+# sayit-punctuation — turn spoken punctuation into marks, on text from stdin
+#
+# Usage:
+#   sayit-punctuation < input > output
+#
+# Behavior:
+#   - Attaching marks: "frågetecken" ?, "utropstecken" !, "kommatecken" ,,
+#     "kolon" :, "semikolon" ;. The mark goes straight after the previous
+#     word, and the punctuation the model put around the spoken word goes:
+#     "Hur går det, frågetecken." -> "Hur går det?".
+#   - Joining mark: "snedstreck" and "slash" become /, which joins the words
+#     on both sides: "slash Users slash martin" -> "/Users/martin", and
+#     "Slash commit" -> "/commit". Spaces and commas around it go; a sentence
+#     end before it keeps one space ("Klart. /help"). Text that starts with
+#     a spoken slash, a command, loses the period the model ends it with.
+#   - A mark already standing alone between spaces (a wordlist rule such as
+#     "slash<TAB>/" put it there) is tidied the same way. A mark attached to a
+#     word, as the model writes them, is never touched.
+#   - Words match case-insensitively, whole words only.
+#
+# Exit codes:
+#   0  Success
+
+set -euo pipefail
+
+exec perl -CSD -Mutf8 -e '
+    my %mark = (frågetecken => "?", utropstecken => "!", kommatecken => ",",
+                kolon => ":", semikolon => ";");
+    my $words = join "|", sort { length($b) <=> length($a) } keys %mark;
+    my $p = qr/[,.;:!?]/;
+    local $_ = do { local $/; <STDIN> } // "";
+
+    # Joining first: a placeholder, so the spacing pass below sees only the
+    # slashes inserted here and never one in a URL or a date.
+    s{[\s,]*(?:(?<!\w)(?:snedstreck|slash)(?!\w)|(?:^|(?<=\s))/(?=\s|$))[\s,]*}{\x01}gi;
+    s{([.!?;:])\x01}{$1 \x01}g;
+    s{\.$}{} if /^\x01/;
+    s{\x01}{/}g;
+
+    # Attaching: the model punctuation and spaces before the word, the word
+    # (or a lone mark), and the model punctuation after it, become the mark.
+    s{(?:\s|$p)*(?:(?<!\w)($words)(?!\w)|(?:^|(?<=\s))($p)(?=\s|$p|$))$p*}
+     {defined $1 ? $mark{lc $1} : $2}gie;
+
+    print;
+'

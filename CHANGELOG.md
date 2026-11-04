@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- `SPOKEN_PUNCTUATION=1` turns spoken punctuation into marks: "frågetecken",
+  "utropstecken", "kommatecken", "kolon" and "semikolon" attach to the word
+  before them and replace the punctuation the model added, and "snedstreck"
+  or "slash" joins the words on both sides, so "slash Users slash martin"
+  becomes `/Users/martin`. A wordlist rule that maps a word to a bare mark is
+  tidied the same way. Linux and macOS, off by default; new
+  `bin/sayit-punctuation`.
 - macOS: `install.sh` builds whisper.cpp v1.9.5; Linux and Windows stay on
   v1.9.2. On an Apple M6 it gave the same text as v1.9.2 on 450 FLEURS clips
   with sayit's settings, a little faster: 7 ms in the median, 7% at p95, 6-8%

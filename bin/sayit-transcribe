@@ -14,7 +14,8 @@
 #               the text comes out without LLM cleanup or wordlist, both of
 #               which --join applies to the whole
 #   --join      the pieces' texts, in order: joined with spaces, then LLM
-#               cleanup and wordlist as for a whole recording
+#               cleanup, wordlist and spoken punctuation as for a whole
+#               recording
 #
 # Behavior:
 #   - Daemon first: POSTs to a warm whisper-server when it responds. The CLI
@@ -38,6 +39,9 @@
 #     ${XDG_STATE_HOME:-~/.local/state}/sayit/sayit-daemon.path, and a
 #     fallback to the cold CLI is announced in sayit.status for Sayit's menu.
 #   - Applies the wordlist as case-insensitive word-boundary replacements
+#   - SPOKEN_PUNCTUATION=1: then turns spoken punctuation ("frågetecken",
+#     "slash") into marks, attached to the words around them
+#     (bin/sayit-punctuation)
 #   - Prints normalized text on stdout (no newlines, tabs or status lines).
 #     stderr carries error classes only — never transcribed text.
 #
@@ -122,6 +126,7 @@ VAD_MIN_SILENCE_MS="${VAD_MIN_SILENCE_MS:-300}"
 SUPPRESS_REGEX="${SUPPRESS_REGEX:-}"
 AUDIO_CTX_ADAPTIVE="${AUDIO_CTX_ADAPTIVE:-0}"
 LLM_CLEANUP="${LLM_CLEANUP:-0}"
+SPOKEN_PUNCTUATION="${SPOKEN_PUNCTUATION:-0}"
 LLM_MODEL="${LLM_MODEL:-gemma2:2b}"
 LLM_URL="${LLM_URL:-http://127.0.0.1:11434/api/generate}"
 
@@ -263,7 +268,7 @@ except Exception:
 PYEOF
 }
 
-# LLM cleanup, then the wordlist, then the text on stdout.
+# LLM cleanup, the wordlist, spoken punctuation, then the text on stdout.
 finish() {
     # Optional LLM cleanup (contextual). Runs before the wordlist so that exact
     # replacements always get the final say on domain terms.
@@ -278,6 +283,12 @@ finish() {
         RAW=$(printf '%s' "$RAW" | "$REPO_ROOT/bin/sayit-wordlist" "$WORDLIST")
     fi
     mark t.wordlist.end
+
+    # Spoken punctuation after the wordlist, so a rule that turns a word into
+    # a mark gets its spacing right as well.
+    if [[ "$SPOKEN_PUNCTUATION" == "1" && -n "${RAW// }" ]]; then
+        RAW=$(printf '%s' "$RAW" | "$REPO_ROOT/bin/sayit-punctuation")
+    fi
 
     printf '%s' "$RAW"
 }

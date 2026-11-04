@@ -255,8 +255,8 @@ which machine and desktop you exercised it on.
   one file: `bin/sayit-overlay` is Python because the pill is drawn through
   GTK and layer-shell bindings. Its `gi` imports are deliberately inside
   functions, so the file compiles and its tests run without GTK installed.
-  `bin/sayit-wordlist` shells out to perl for its regex engine but is itself
-  a bash script.
+  `bin/sayit-wordlist` and `bin/sayit-punctuation` shell out to perl for its
+  regex engine but are themselves bash scripts.
 - CI dispatches on the shebang, so a new Python file goes through
   `py_compile` and a new shell file through `shellcheck` with no workflow
   change — as long as it lands inside one of the four globs above.
