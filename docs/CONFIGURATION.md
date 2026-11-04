@@ -344,7 +344,7 @@ whole dictation.
 
 ```text
 Hur går det, frågetecken.      ->  Hur går det?
-slash Users slash martin       ->  /Users/martin
+slash Users slash alex         ->  /Users/alex
 Slash commit.                  ->  /commit
 Klart. Slash help              ->  Klart. /help
 ```

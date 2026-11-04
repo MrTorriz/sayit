@@ -31,10 +31,10 @@ apply() {
 }
 
 @test "slash joins the words on both sides into a path" {
-    run apply "slash Users slash martin"
-    [ "$output" = "/Users/martin" ]
-    run apply "Slash, Users, slash, Martin."
-    [ "$output" = "/Users/Martin" ]
+    run apply "slash Users slash alex"
+    [ "$output" = "/Users/alex" ]
+    run apply "Slash, Users, slash, Alex."
+    [ "$output" = "/Users/Alex" ]
     run apply "och snedstreck eller"
     [ "$output" = "och/eller" ]
 }
@@ -52,8 +52,8 @@ apply() {
 @test "lone marks a wordlist rule left between spaces are tidied" {
     run apply "Hur går det ?."
     [ "$output" = "Hur går det?" ]
-    run apply "/ Users / martin"
-    [ "$output" = "/Users/martin" ]
+    run apply "/ Users / alex"
+    [ "$output" = "/Users/alex" ]
 }
 
 @test "marks the model wrote, URLs, numbers and times are untouched" {
