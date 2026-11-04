@@ -10,6 +10,8 @@
 #   BENCH_PORT    test whisper-server port          (default 19876)
 #   BENCH_DIR     working/results directory         (default $XDG_DATA_HOME/sayit-bench)
 #   BENCH_REPS    repetitions per warm scenario     (default 25)
+#   BENCH_BEAM    test server's beam size           (default 5)
+#   BENCH_THREADS test server's threads             (default 8)
 #   BENCH_STALL   1 = also demonstrate the deadline cap by SIGSTOPping the
 #                 TEST server for a few reps        (default 0)
 #   WHISPER_SERVER / WHISPER_CLI  binaries          (default install locations)
@@ -47,6 +49,8 @@ BENCH_VAD="${BENCH_VAD:-}"
 BENCH_PORT="${BENCH_PORT:-19876}"
 BENCH_DIR="${BENCH_DIR:-${XDG_DATA_HOME:-$HOME/.local/share}/sayit-bench}"
 BENCH_REPS="${BENCH_REPS:-25}"
+BENCH_BEAM="${BENCH_BEAM:-5}"
+BENCH_THREADS="${BENCH_THREADS:-8}"
 BENCH_STALL="${BENCH_STALL:-0}"
 WHISPER_SERVER="${WHISPER_SERVER:-$HOME/.local/src/whisper.cpp/build/bin/whisper-server}"
 WHISPER_CLI="${WHISPER_CLI:-$HOME/.local/bin/whisper-cli}"
@@ -97,7 +101,8 @@ for f in short medium long silence; do
 done
 
 # Start the private test server (never the production daemon/port).
-SERVER_ARGS=( --model "$BENCH_MODEL" --language sv --threads 8 --beam-size 5
+SERVER_ARGS=( --model "$BENCH_MODEL" --language sv --threads "$BENCH_THREADS"
+              --beam-size "$BENCH_BEAM"
               --flash-attn --suppress-nst --host 127.0.0.1 --port "$BENCH_PORT" )
 [[ -n "$BENCH_VAD" && -f "$BENCH_VAD" ]] && SERVER_ARGS+=( --vad --vad-model "$BENCH_VAD" )
 
@@ -126,11 +131,16 @@ log "server ready after ${LOAD_S}s (model load + init)"
 
 # One timed transcription. Environment pins every input: the test daemon
 # port, the benchmarked model for the CLI path, and a non-existent wordlist.
+# The run and state directories are the harness's own: on macOS
+# sayit-transcribe reads the running daemon's private path prefix from one of
+# them, which the test server would answer with a 404 - and every "warm" run
+# would be the cold CLI.
 run_one() {  # run_one <scenario> <rep> <wav> <daemon_port> [extra env...]
     local scenario="$1" rep="$2" wav="$3" port="$4"; shift 4
     local t_start t_end
     t_start=$EPOCHREALTIME
-    env "$@" DAEMON_PORT="$port" MODEL_PATH="$BENCH_MODEL" \
+    env XDG_RUNTIME_DIR="$BENCH_DIR" XDG_STATE_HOME="$BENCH_DIR" "$@" \
+        DAEMON_PORT="$port" MODEL_PATH="$BENCH_MODEL" \
         WHISPER_CLI="$WHISPER_CLI" WORDLIST="$BENCH_DIR/no-wordlist.tsv" \
         VAD_MODEL="${BENCH_VAD:-/nonexistent}" \
         "$TRANSCRIBE" "$wav" >/dev/null 2>&1 || true
@@ -140,7 +150,9 @@ run_one() {  # run_one <scenario> <rep> <wav> <daemon_port> [extra env...]
 
 # Warm-up (not recorded): first requests page the model through the backend.
 for _ in 1 2 3; do run_one warmup 0 "$WAV_DIR/short.wav" "$BENCH_PORT"; done
-sed -i '/^warmup,/d' "$RESULTS"
+# Not sed -i: its argument syntax differs between GNU and BSD (macOS) sed.
+grep -v '^warmup,' "$RESULTS" > "$RESULTS.tmp" || true
+mv "$RESULTS.tmp" "$RESULTS"
 
 for len in short medium long; do
     log "warm daemon: $len x$BENCH_REPS"
