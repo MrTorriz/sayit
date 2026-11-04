@@ -50,9 +50,11 @@ put `/opt/homebrew/bin` and `/usr/local/bin` first on `PATH`. `install.sh`
 itself runs under the system's bash 3.2, so it works on a fresh Mac before
 Homebrew's bash is there.
 
-whisper.cpp v1.9.2, the release `install.sh` pins on every platform, builds its
-Metal backend (with Accelerate for BLAS) by default on Apple Silicon. No GPU
-SDK is needed.
+whisper.cpp v1.9.5, the release `install.sh` pins on macOS, builds its Metal
+backend (with Accelerate for BLAS) by default on Apple Silicon. No GPU SDK is
+needed. Linux and Windows stay on v1.9.2 until the newer release is measured
+there; on a Mac it gave the same text, slightly faster
+([Performance](PERFORMANCE.md#whispercpp-v195)).
 
 ## Installation
 

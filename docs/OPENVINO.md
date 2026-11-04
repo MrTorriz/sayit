@@ -129,7 +129,7 @@ each dictation and apply to the next request.
 | `VAD_THRESHOLD` | Speech probability threshold, default `0.30` |
 
 The adapter supports the libwhisper VAD context ABI in versions **1.8.4** and
-**1.9.2**. The latter is the base installer's pin. Unknown versions fail before
+**1.9.2**. The latter is the base installer's pin on Linux. Unknown versions fail before
 the native VAD initialization call; check the struct/signatures and test
 inference before extending that list. Static builds or a custom install layout
 need a compatible shared library selected with `WHISPER_LIB`.

@@ -110,7 +110,15 @@ WORDLIST_FILE="${XDG_CONFIG_HOME:-$HOME/.config}/sayit/wordlist.tsv"
 # Pinned upstream revision for whisper.cpp (release tag or commit). Bump
 # deliberately when upgrading; override for rollback:
 #   WHISPER_REF=<tag|commit> ./install.sh --rebuild
-WHISPER_REF="${WHISPER_REF:-v1.9.2}"
+# macOS builds a later release than the other platforms: on Apple Silicon
+# v1.9.5 gave the same text as v1.9.2, a little faster (docs/PERFORMANCE.md).
+# Vulkan, Windows and the OpenVINO adapter's libwhisper check were not
+# measured with it, so they stay on v1.9.2.
+if [[ "$OSTYPE" == darwin* ]]; then
+    WHISPER_REF="${WHISPER_REF:-v1.9.5}"
+else
+    WHISPER_REF="${WHISPER_REF:-v1.9.2}"
+fi
 
 # Official sha256 checksums, taken from the Hugging Face LFS pointer files
 # (huggingface.co/KBLab/kb-whisper-<size>/raw/main/ggml-model-q5_0.bin and

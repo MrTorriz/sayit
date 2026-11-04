@@ -121,6 +121,15 @@ setup() {
     grep -qE 'WHISPER_REF="?\$\{WHISPER_REF:-v[0-9]+\.[0-9]+\.[0-9]+\}"?' "$INSTALL"
 }
 
+@test "Linux pins whisper.cpp v1.9.2" {
+    mkdir -p "$HOME/.local/bin"
+    printf '#!/bin/sh\n' > "$HOME/.local/bin/whisper-cli"
+    chmod +x "$HOME/.local/bin/whisper-cli"
+    run "$INSTALL" --skip-packages --skip-model -y
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"to update to v1.9.2"* ]]
+}
+
 @test "a parent Git repository is not accepted as the whisper.cpp checkout" {
     git init -q "$SANDBOX"
     export WHISPER_SRC="$SANDBOX/not-a-checkout"
