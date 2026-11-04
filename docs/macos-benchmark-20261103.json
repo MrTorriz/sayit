@@ -8113,6 +8113,21 @@
     ["vad6-t50", "noisy-babble", "babble-short-1674", 3.32, 0.3297, 0, 11, 0],
     ["vad5", "noisy-babble", "babble-short-1674", 3.32, 0.3579, 0, 11, 0]
    ]
+  },
+  "metal-residency-keep-alive": {
+   "date": "2026-11-04",
+   "method": "two whisper.cpp v1.9.5 servers (GGML_METAL_RESIDENCY_KEEP_ALIVE_S unset = 180 s, and 3600), taking turns; after each pause the measured server got a 7.2 s synthetic sentence (macOS say, voice Alva) twice, through bin/sayit-transcribe",
+   "fields": ["arm", "pause_s", "first", "warm", "running_daemon_used_during_pause"],
+   "measurements": [
+    ["ka180", 240, 0.529, 0.506, 1],
+    ["ka3600", 240, 0.513, 0.485, 0],
+    ["ka180", 240, 0.644, 0.523, 0],
+    ["ka3600", 240, 0.498, 0.504, 1],
+    ["ka180", 240, 0.666, 0.513, 1],
+    ["ka3600", 240, 0.479, 0.461, 1],
+    ["ka180", 600, 0.61, 0.476, 1],
+    ["ka3600", 600, 0.522, 0.521, 1]
+   ]
   }
  }
 }

@@ -12,7 +12,9 @@
   server's beam size and threads.
 - docs: five engine changes measured on Apple Silicon - whisper.cpp v1.9.5,
   no temperature fallback, 6 threads, Silero VAD v6.2.0 and a longer Metal
-  residency keep-alive. Only the first made a measurable difference.
+  residency keep-alive. Only the first is taken: the others changed nothing,
+  except the keep-alive, which saved about 0.1 s on the first dictation after
+  a long pause at the cost of an hour of GPU heartbeats after every dictation.
 
 - macOS: `SEGMENT_WHILE_RECORDING=1` transcribes while you speak. `sayit-rec`
   cuts the recording at pauses (0.4 s, pieces of at least 4 s) and a

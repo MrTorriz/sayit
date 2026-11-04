@@ -288,7 +288,7 @@ three other FLEURS speakers at 10 dB.
 | `temperature_inc=0` per request | 451 clean, 198 noisy | 0.577 → 0.578 s | 1.004 → 0.966 s | 1.162 → 1.153 s | the same text | No |
 | `THREADS=6` instead of 8 | 452 | 0.605 → 0.603 s | 1.021 → 1.026 s | 1.189 → 1.152 s | the same text | No |
 | Silero VAD v6.2.0 instead of v5.1.2 | 653 clean and noisy, 48 non-speech | 0.523 → 0.522 s | 0.925 → 0.958 s | 1.083 → 1.139 s | 8.30% → 8.34%; no words on non-speech either way | No |
-KEEPALIVE_ROW
+| `GGML_METAL_RESIDENCY_KEEP_ALIVE_S=3600` instead of 180 | one 7 s clip after 4-10 min pauses, 4 per arm | first after a pause 0.63 → 0.51 s | | | the same text | No |
 
 Medians of unpaired lists hide small differences; the paired differences per
 clip below are the measurement.
@@ -349,7 +349,22 @@ word through on the 48 non-speech clips. At whisper.cpp's default threshold of
 within the noise as well, and with v5.1.2 at 0.50 not measured, not even
 attributable to the model. sayit stays on v5.1.2 and its tuning.
 
-KEEPALIVE_SECTION
+#### Metal residency keep-alive
+
+ggml keeps the model's GPU memory wired for `GGML_METAL_RESIDENCY_KEEP_ALIVE_S`
+seconds after the last request, 180 by default, by asking for residency every
+5 ms. Two servers, one at 180 s and one at 3600 s, took turns: after a pause
+of 4 or 10 minutes the one whose turn it was got a 7 s synthetic sentence
+(macOS `say`, voice Alva) and then the same sentence again. The first
+request after the pause took 0.53-0.67 s (median 0.63 s) at 180 s against
+0.48-0.52 s (median 0.51 s) at 3600 s; the second, warm one 0.46-0.52 s for
+both. So a longer keep-alive saves about 0.1 s on the first dictation after
+a pause of more than three minutes, and nothing on any other. The cost is the
+5 ms heartbeat - some 200 wakeups a second - running for an hour after every
+dictation instead of three minutes, on a machine whose idle wakeups sayit
+already works to keep down. Four samples per arm, and the running daemon was
+used during six of the eight pauses, so the GPU was not idle throughout.
+sayit leaves the default.
 
 [Individual measurements](macos-benchmark-20261103.json) carry clip ids,
 sets, durations, timings and error counts, and no text.
