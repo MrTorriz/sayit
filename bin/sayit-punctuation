@@ -10,7 +10,7 @@
 #     word, and the punctuation the model put around the spoken word goes:
 #     "Hur går det, frågetecken." -> "Hur går det?".
 #   - Joining mark: "snedstreck" and "slash" become /, which joins the words
-#     on both sides: "slash Users slash martin" -> "/Users/martin", and
+#     on both sides: "slash Users slash alex" -> "/Users/alex", and
 #     "Slash commit" -> "/commit". Spaces and commas around it go; a sentence
 #     end before it keeps one space ("Klart. /help"). Text that starts with
 #     a spoken slash, a command, loses the period the model ends it with.
