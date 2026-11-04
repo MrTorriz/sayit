@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+- macOS: `install.sh` builds whisper.cpp v1.9.5; Linux and Windows stay on
+  v1.9.2. On an Apple M6 it gave the same text as v1.9.2 on 450 FLEURS clips
+  with sayit's settings, a little faster: 7 ms in the median, 7% at p95, 6-8%
+  with the full window or beam 5. Run `./install.sh --rebuild` to upgrade.
+- `tests/benchmark.sh` runs on macOS: it no longer stops at GNU `sed -i`, and
+  its warm runs no longer turn into the cold CLI by reading the running
+  daemon's private path. `BENCH_BEAM` and `BENCH_THREADS` set the test
+  server's beam size and threads.
+- docs: five engine changes measured on Apple Silicon - whisper.cpp v1.9.5,
+  no temperature fallback, 6 threads, Silero VAD v6.2.0 and a longer Metal
+  residency keep-alive. Only the first made a measurable difference.
+
 - macOS: Sayit.app has an icon - the pill, with its lit lamp and ten-bar mark,
   on a dark tile. `mac/Sources/Icon` draws it from the same geometry as the
   logo at install time, and `iconutil` packs it into the bundle.
