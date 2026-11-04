@@ -110,6 +110,7 @@ sequenceDiagram
     end
     T->>W: raw text on stdin
     W-->>T: text with wordlist replacements
+    Note over T: SPOKEN_PUNCTUATION=1: sayit-punctuation attaches spoken marks
     S->>I: final text
     I->>I: save clipboard (text only), wl-copy text, ydotool Shift+Insert, guarded restore
     S->>S: append {time, seconds, words, text} to history.jsonl
@@ -126,6 +127,7 @@ sequenceDiagram
 | `sayit-daemon` | Starts `whisper-server` from `.env` so the model stays warm in RAM |
 | `sayit-transcribe` | Model I/O: daemon first, CLI fallback on transport errors, token cleanup, optional LLM pass |
 | `sayit-wordlist` | Pure text transform: stdin to stdout, TSV rules (unit-tested) |
+| `sayit-punctuation` | Pure text transform: spoken punctuation to marks, attached to the words around them (`SPOKEN_PUNCTUATION=1`, unit-tested) |
 | `sayit-inject` | Text delivery with a fallback chain per compositor, clipboard hygiene |
 | `sayit-indicator` | Persistent recording indicator (notification-based, safe fallbacks) |
 | `sayit-meter` | Live voice meter: picks a style, owns the capture stream and its cleanup; feedback only |

@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- `SPOKEN_PUNCTUATION=1` turns spoken punctuation into marks: "frågetecken",
+  "utropstecken", "kommatecken", "kolon" and "semikolon" attach to the word
+  before them and replace the punctuation the model added, and "snedstreck"
+  or "slash" joins the words on both sides, so "slash Users slash martin"
+  becomes `/Users/martin`. A wordlist rule that maps a word to a bare mark is
+  tidied the same way. Linux and macOS, off by default; new
+  `bin/sayit-punctuation`.
 - macOS: `SEGMENT_WHILE_RECORDING=1` transcribes while you speak. `sayit-rec`
   cuts the recording at pauses (0.4 s, pieces of at least 4 s) and a
   background worker sends each piece to the warm daemon with the previous

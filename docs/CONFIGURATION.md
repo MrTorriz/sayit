@@ -12,6 +12,7 @@ a platform does not use is ignored there.
 - [Accuracy: VAD, beam search, initial prompt, suppression](#accuracy-vad-beam-search-initial-prompt-suppression)
 - [Choosing a model size](#choosing-a-model-size)
 - [Custom wordlist](#custom-wordlist)
+- [Spoken punctuation](#spoken-punctuation)
 - [How .env is read](#how-env-is-read)
 
 The base transcription tables below describe whisper.cpp. For the optional
@@ -48,6 +49,7 @@ of them empty on purpose so the code can resolve a repo-relative path.
 | `DAEMON_PORT` | `9876` | all | Port for the warm whisper-server, on `127.0.0.1` |
 | `TYPING_WPM` | `40` | all | Assumed typing speed for the time-saved statistic |
 | `WORDLIST` | platform default | all | Replacement wordlist. `~/.config/sayit/wordlist.tsv` on Linux and macOS, `%APPDATA%\sayit\wordlist.tsv` on Windows |
+| `SPOKEN_PUNCTUATION` | `0` | Linux, macOS | `1` turns spoken punctuation such as "frågetecken" and "slash" into marks. See [Spoken punctuation](#spoken-punctuation) |
 | `RECORDING_INDICATOR` | `1` | all | Linux: the persistent notification. Windows and macOS: the on-screen pill. `0` turns it off |
 | `LLM_CLEANUP` | `0` | Linux, macOS | `1` runs an LLM cleanup pass after transcription. **It sends the transcribed text to `LLM_URL`** |
 | `LLM_URL` | `http://127.0.0.1:11434/api/generate` | Linux, macOS | Endpoint for that pass. Loopback keeps the text on the machine; any other host does not |
@@ -69,10 +71,11 @@ of them empty on purpose so the code can resolve a repo-relative path.
 | `SEGMENT_WHILE_RECORDING` | `0` | macOS | `1` transcribes a long dictation piece by piece while you speak, so only the last piece is left at release. See [Transcribing while you speak](#transcribing-while-you-speak-macos) |
 
 The settings above the Windows section in `.env.example` were the Linux ones.
-`LLM_CLEANUP`, `LLM_URL`, `LLM_MODEL`, `RECORDING_METER` and
-`RECORDING_METER_STYLE` sit there because they were there first, not because
-Windows reads them: no file under `win\` does. macOS runs the Linux
-transcriber, so it reads the three `LLM_*` settings, but not the two meter
+`LLM_CLEANUP`, `LLM_URL`, `LLM_MODEL`, `SPOKEN_PUNCTUATION`, `RECORDING_METER`
+and `RECORDING_METER_STYLE` sit there because they were there first or belong
+to the shared transcriber, not because Windows reads them: no file under
+`win\` does. macOS runs the Linux transcriber, so it reads the three `LLM_*`
+settings and `SPOKEN_PUNCTUATION`, but not the two meter
 settings — `Sayit.app` draws its own pill. Conversely, macOS reads several
 settings from the Windows section, deliberately under the same names, and adds
 five of its own in a section at the end of the file.
@@ -323,6 +326,46 @@ deduplicated as it grows.
 .\win\sayit-learn.ps1 -List
 .\win\sayit-learn.ps1 -Undo "gitting nore"
 ```
+
+## Spoken punctuation
+
+With `SPOKEN_PUNCTUATION=1` (Linux and macOS) you can say the punctuation
+instead of hoping the model guesses it. It runs after the wordlist, on the
+whole dictation.
+
+| Say | Get | Placed |
+|---|---|---|
+| frågetecken | `?` | straight after the previous word |
+| utropstecken | `!` | straight after the previous word |
+| kommatecken | `,` | straight after the previous word |
+| kolon | `:` | straight after the previous word |
+| semikolon | `;` | straight after the previous word |
+| snedstreck, slash | `/` | joining the words on both sides |
+
+```text
+Hur går det, frågetecken.      ->  Hur går det?
+slash Users slash martin       ->  /Users/martin
+Slash commit.                  ->  /commit
+Klart. Slash help              ->  Klart. /help
+```
+
+- The punctuation the model put around a spoken word goes with it, so the
+  `?` replaces the period it would otherwise have written as well.
+- A dictation that starts with a spoken slash is taken as a command and loses
+  its final period.
+- Words match case-insensitively and whole: "kolonin" and "frågetecknet" are
+  left alone.
+- Marks the model writes itself, URLs, decimals and times are never touched.
+- Only words that are rare in ordinary speech are listed. "punkt" and "komma"
+  are not ("en viktig punkt", "komma hem"), and neither is a spoken new line,
+  since sayit pastes one line and a newline would press Enter in a terminal.
+
+To add a word of your own, map it to the bare mark in the wordlist, for
+example `utrop<TAB>!`. The mark then stands alone between spaces, and spoken
+punctuation attaches it like the built-in words.
+
+Off by default, because it changes words you may mean literally. Windows
+does not read the setting.
 
 ## How .env is read
 
