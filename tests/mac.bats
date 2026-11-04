@@ -10,7 +10,8 @@
 setup() {
     export OSTYPE=darwin27
     unset AUDIO_SOURCE MAX_RECORD_SECONDS INJECT_METHOD RECORDING_INDICATOR \
-          MODEL_PATH SAYIT_MODEL WORDLIST INITIAL_PROMPT SAYIT_DAEMON_LOG 2>/dev/null || true
+          MODEL_PATH SAYIT_MODEL WORDLIST INITIAL_PROMPT SAYIT_DAEMON_LOG XDG_STATE_HOME \
+          SEGMENT_WHILE_RECORDING SAYIT_SEGMENTS 2>/dev/null || true
 
     SANDBOX="$BATS_TEST_TMPDIR/repo"
     mkdir -p "$SANDBOX"
@@ -54,9 +55,14 @@ teardown() {
 #
 # sayit-rec records its PID, argv, path and environment, then exits with
 # rec.exit (default 0) — or, with rec.live, behaves like a recorder: writes
-# START, and FINAL after a short flush once SIGINT/SIGTERM arrives.
+# START, and FINAL after a short flush once SIGINT/SIGTERM arrives. With
+# SAYIT_SEGMENTS=1 and rec.pieces (one piece's content per line) it also cuts
+# like the real one: every piece but the last at once, the last at the stop,
+# each written to <wav>-part-<n>.wav and named on stdout.
 # sayit-paste stores stdin, its argument count, INJECT_METHOD and
-# PASTE_RESTORE_DELAY, and exits with paste.exit (default 0).
+# PASTE_RESTORE_DELAY, and exits with paste.exit (default 0) - or, with
+# paste.answer, says "pasted" as the real one does once Cmd+V is out, lets go
+# of stdout and stderr and writes paste.restored after paste.answer's seconds.
 install_helpers() {
     mkdir -p "$1"
     cat > "$1/sayit-rec" <<'EOF'
@@ -67,11 +73,18 @@ printf '%s\n' "$0" > "$STUB_CTL/rec.path"
 printf '[%s]' "$@" > "$STUB_CTL/rec.args"
 printf '%s\n' "${MAX_RECORD_SECONDS-unset}" > "$STUB_CTL/rec.max"
 printf '%s\n' "${XDG_RUNTIME_DIR-unset}" > "$STUB_CTL/rec.rundir"
+printf '%s\n' "${SAYIT_SEGMENTS-unset}" > "$STUB_CTL/rec.segments"
 echo start >> "$STUB_CTL/rec.log"
 [[ -f "$STUB_CTL/rec.exit" ]] && exit "$(cat "$STUB_CTL/rec.exit")"
 [[ -f "$STUB_CTL/rec.live" ]] || exit 0
-trap 'sleep 0.2; printf "FINAL" >> "$OUT"; exit 0' INT TERM
+pieces=()
+if [[ "${SAYIT_SEGMENTS:-}" == 1 && -f "$STUB_CTL/rec.pieces" ]]; then
+    mapfile -t pieces < "$STUB_CTL/rec.pieces"
+fi
+piece() { printf '%s' "${pieces[$1 - 1]}" > "${OUT%.wav}-part-$1.wav"; echo "${OUT%.wav}-part-$1.wav"; }
+trap 'sleep 0.2; printf "FINAL" >> "$OUT"; (( ${#pieces[@]} )) && piece ${#pieces[@]}; exit 0' INT TERM
 printf 'START ' > "$OUT"
+for (( i = 1; i < ${#pieces[@]}; i++ )); do piece "$i"; done
 while :; do sleep 0.05; done
 EOF
     cat > "$1/sayit-paste" <<'EOF'
@@ -81,6 +94,12 @@ cat > "$STUB_CTL/paste.stdin"
 printf '%s\n' "$#" > "$STUB_CTL/paste.argc"
 printf '%s\n' "${INJECT_METHOD-unset}" > "$STUB_CTL/paste.method"
 printf '%s\n' "${PASTE_RESTORE_DELAY-unset}" > "$STUB_CTL/paste.delay"
+if [[ -f "$STUB_CTL/paste.answer" ]]; then
+    echo pasted
+    exec 1>/dev/null 2>/dev/null
+    sleep "$(cat "$STUB_CTL/paste.answer")"
+    : > "$STUB_CTL/paste.restored"
+fi
 exit "$(cat "$STUB_CTL/paste.exit" 2>/dev/null || echo 0)"
 EOF
     chmod +x "$1/sayit-rec" "$1/sayit-paste"
@@ -214,6 +233,18 @@ EOF
     [[ "$output" != *"very private dictation"* ]]
 }
 
+@test "sayit-inject returns once sayit-paste says pasted, not after its clipboard restore" {
+    echo 3 > "$STUB_CTL/paste.answer"
+    started=$SECONDS
+    run "$SANDBOX/bin/sayit-inject" "text"
+    [ "$status" -eq 0 ]
+    (( SECONDS - started < 2 ))
+    [ ! -f "$STUB_CTL/paste.restored" ]
+    # The restore still happens, after the caller has moved on.
+    for _ in $(seq 50); do [ -f "$STUB_CTL/paste.restored" ] && break; sleep 0.1; done
+    [ -f "$STUB_CTL/paste.restored" ]
+}
+
 @test "sayit-inject takes the text on stdin when there is no argument" {
     run bash -c 'printf "from stdin åäö" | "$1"' _ "$SANDBOX/bin/sayit-inject"
     [ "$status" -eq 0 ]
@@ -294,8 +325,24 @@ EOF
 # down their macOS branches; only sayit-transcribe and the helpers are stubs.
 
 sayit_sandbox() {
+    # --part logs the piece and the previous text it was given on stdin;
+    # --join and a whole recording log themselves, so a test can tell the
+    # two paths apart.
     cat > "$SANDBOX/bin/sayit-transcribe" <<'EOF'
 #!/usr/bin/env bash
+case "${1:-}" in
+    --part)
+        printf '%s <- [%s]\n' "$(cat "$2")" "$(cat)" >> "$STUB_CTL/part.log"
+        [[ -f "$STUB_CTL/part.fail" ]] && exit 1
+        printf 'T(%s)' "$(cat "$2")"
+        exit 0 ;;
+    --join)
+        shift
+        echo join >> "$STUB_CTL/transcribe.log"
+        for f; do printf '%s ' "$(cat "$f")"; done
+        exit 0 ;;
+esac
+echo whole >> "$STUB_CTL/transcribe.log"
 if [[ -f "$STUB_CTL/transcribe.text" ]]; then cat "$STUB_CTL/transcribe.text"; exit 0; fi
 tr '\n' ' ' < "$1"
 EOF
@@ -547,6 +594,108 @@ EOF
     [ ! -f "$RUN_DIR/sayit.busy" ]
 }
 
+# --- SEGMENT_WHILE_RECORDING ---------------------------------------------------
+
+# No piece files, texts or worker state left in the run directory.
+no_pieces_left() {
+    local left
+    left=$(find "$RUN_DIR" -name 'sayit-*' \( -name '*-part-*' -o -name '*.segments*' \))
+    [ -z "$left" ]
+}
+
+@test "without SEGMENT_WHILE_RECORDING sayit-rec is not asked to cut" {
+    sayit_sandbox
+    printf 'one\ntwo\n' > "$STUB_CTL/rec.pieces"
+    "$SAYIT" start
+    "$SAYIT" stop
+    [ "$(cat "$STUB_CTL/rec.segments")" = unset ]
+    [ "$(cat "$STUB_CTL/transcribe.log")" = whole ]
+    [ "$(cat "$STUB_CTL/paste.stdin")" = "START FINAL" ]
+    [ ! -f "$STUB_CTL/part.log" ]
+    no_pieces_left
+}
+
+@test "SEGMENT_WHILE_RECORDING transcribes the pieces during the recording and joins them at the stop" {
+    sayit_sandbox
+    export SEGMENT_WHILE_RECORDING=1
+    printf 'one\ntwo\nthree\n' > "$STUB_CTL/rec.pieces"
+    "$SAYIT" start
+    [ "$(cat "$STUB_CTL/rec.segments")" = 1 ]
+    # The first two are done before the stop: only the last is left for it.
+    for _ in $(seq 1 50); do
+        [[ "$(grep -c . "$STUB_CTL/part.log" 2>/dev/null)" == 2 ]] && break
+        sleep 0.05
+    done
+    [ "$(grep -c . "$STUB_CTL/part.log")" -eq 2 ]
+    run "$SAYIT" stop
+    [ "$status" -eq 0 ]
+    # Each piece gets the text of the one before as its prompt.
+    [ "$(sed -n 1p "$STUB_CTL/part.log")" = "one <- []" ]
+    [ "$(sed -n 2p "$STUB_CTL/part.log")" = "two <- [T(one)]" ]
+    [ "$(sed -n 3p "$STUB_CTL/part.log")" = "three <- [T(two)]" ]
+    [ "$(cat "$STUB_CTL/transcribe.log")" = join ]
+    [ "$(cat "$STUB_CTL/paste.stdin")" = "T(one) T(two) T(three) " ]
+    [ "$(cat "$STATUS")" = "Done (3 words)" ]
+    grep -q '"T(one) T(two) T(three) "' "$XDG_DATA_HOME/sayit/history.jsonl"
+    no_pieces_left
+}
+
+@test "a recording that was never cut is transcribed whole, as without the setting" {
+    sayit_sandbox
+    export SEGMENT_WHILE_RECORDING=1
+    "$SAYIT" start
+    "$SAYIT" stop
+    [ "$(cat "$STUB_CTL/rec.segments")" = 1 ]
+    [ "$(cat "$STUB_CTL/transcribe.log")" = whole ]
+    [ "$(cat "$STUB_CTL/paste.stdin")" = "START FINAL" ]
+    no_pieces_left
+}
+
+@test "a piece that fails leaves the whole recording to the usual path" {
+    sayit_sandbox
+    export SEGMENT_WHILE_RECORDING=1
+    printf 'one\ntwo\n' > "$STUB_CTL/rec.pieces"
+    touch "$STUB_CTL/part.fail"
+    "$SAYIT" start
+    "$SAYIT" stop
+    [ "$(cat "$STUB_CTL/transcribe.log")" = whole ]
+    [ "$(cat "$STUB_CTL/paste.stdin")" = "START FINAL" ]
+    # After the first failure the rest are not sent at all.
+    [ "$(grep -c . "$STUB_CTL/part.log")" -eq 1 ]
+    no_pieces_left
+}
+
+@test "a worker that died leaves the whole recording to the usual path" {
+    sayit_sandbox
+    export SEGMENT_WHILE_RECORDING=1
+    printf 'one\ntwo\n' > "$STUB_CTL/rec.pieces"
+    "$SAYIT" start
+    sleep 0.3
+    state=$(find "$RUN_DIR" -name 'sayit-*.segments')
+    kill -KILL "$(cat "$state")"
+    run "$SAYIT" stop
+    [ "$status" -eq 0 ]
+    [ "$(cat "$STUB_CTL/transcribe.log")" = whole ]
+    [ "$(cat "$STUB_CTL/paste.stdin")" = "START FINAL" ]
+}
+
+@test "cancel drops the pieces: nothing is transcribed or left behind" {
+    sayit_sandbox
+    export SEGMENT_WHILE_RECORDING=1
+    printf 'one\ntwo\nthree\n' > "$STUB_CTL/rec.pieces"
+    "$SAYIT" start
+    sleep 0.3
+    run "$SAYIT" cancel
+    [ "$status" -eq 0 ]
+    [ "$(cat "$STATUS")" = "Recording cancelled — nothing injected" ]
+    sleep 0.3
+    # The last piece came after the cancel and was never sent.
+    ! grep -q '^three' "$STUB_CTL/part.log"
+    [ ! -f "$STUB_CTL/transcribe.log" ]
+    [ ! -f "$STUB_CTL/paste.stdin" ]
+    no_pieces_left
+}
+
 # --- sayit-daemon -----------------------------------------------------------
 
 daemon_sandbox() {
@@ -592,23 +741,38 @@ EOF
 
 @test "the daemon serves under a fresh private path that sayit-transcribe and only the user can read" {
     daemon_sandbox
+    # In the state directory: macOS clears the run directory of old files.
+    local file="$HOME/.local/state/sayit/sayit-daemon.path"
     run "$DAEMON"
     [ "$status" -eq 0 ]
-    prefix=$(cat "$RUN_DIR/sayit-daemon.path")
+    prefix=$(cat "$file")
     [[ "$prefix" =~ ^/[0-9a-f]{32}$ ]]
     [[ "$output" == *"--request-path $prefix"* ]]
-    [ "$(ls -l "$RUN_DIR/sayit-daemon.path" | cut -c1-10)" = "-rw-------" ]
+    [ "$(ls -l "$file" | cut -c1-10)" = "-rw-------" ]
+    [ "$(ls -ld "$HOME/.local/state/sayit" | cut -c1-10)" = "drwx------" ]
+    [ ! -e "$RUN_DIR/sayit-daemon.path" ]
     run "$DAEMON"
-    [ "$(cat "$RUN_DIR/sayit-daemon.path")" != "$prefix" ]
+    [ "$(cat "$file")" != "$prefix" ]
 
-    prefix=$(cat "$RUN_DIR/sayit-daemon.path")
+    prefix=$(cat "$file")
     run "$TRANSCRIBE" "$WAV"
     [ "$output" = "daemon text" ]
     grep -q -- "http://127.0.0.1:9876$prefix/inference" "$STUB_CTL/curl.args"
     # Anything else in the file is ignored.
-    printf '/../load\n' > "$RUN_DIR/sayit-daemon.path"
+    printf '/../load\n' > "$file"
     run "$TRANSCRIBE" "$WAV"
     grep -q -- "http://127.0.0.1:9876/inference" "$STUB_CTL/curl.args"
+}
+
+@test "XDG_STATE_HOME moves the daemon's private path for the daemon and sayit-transcribe alike" {
+    daemon_sandbox
+    export XDG_STATE_HOME="$BATS_TEST_TMPDIR/state"
+    run "$DAEMON"
+    [ "$status" -eq 0 ]
+    prefix=$(cat "$XDG_STATE_HOME/sayit/sayit-daemon.path")
+    [ ! -e "$HOME/.local/state/sayit/sayit-daemon.path" ]
+    run "$TRANSCRIBE" "$WAV"
+    grep -q -- "http://127.0.0.1:9876$prefix/inference" "$STUB_CTL/curl.args"
 }
 
 @test "a fallback to the cold CLI is announced in the status file" {

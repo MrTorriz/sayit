@@ -466,8 +466,10 @@ page (`Access-Control-Allow-Origin: *`) and has an unauthenticated `/load` that
 swaps the model, or exits when handed a file that is not one. A page in your
 browser can reach `127.0.0.1`, so `bin/sayit-daemon` starts the server under a
 random path prefix, new at every start, and writes it, readable only by you, to
-`sayit-daemon.path` in the per-user temporary directory, where
-`bin/sayit-transcribe` and the doctor read it.
+`~/.local/state/sayit/sayit-daemon.path` (`$XDG_STATE_HOME`), where
+`bin/sayit-transcribe`, Sayit's menu and the doctor read it. Not the per-user
+temporary directory: macOS clears it of files older than three days every
+night, and the server runs for weeks.
 
 `bin/sayit-transcribe` tries the daemon first and falls back to `whisper-cli`
 **only** on a transport failure, the same contract as everywhere else. A
@@ -515,8 +517,10 @@ all of them. Around the paste:
 - Pastes take turns through a lock file in the run directory, so a second
   dictation inside the first one's restore window cannot mistake the first
   dictation for your clipboard and lose the real one.
-- While Secure Input is on, the keystroke may be swallowed, so the dictation
-  stays on the clipboard instead of being restored away.
+- While the app in front has Secure Input on, the keystroke may be swallowed,
+  so the dictation stays on the clipboard instead of being restored away.
+  Secure Input left on by an app in the background does not block the paste;
+  the agent log names that app.
 - Without the Accessibility permission no keystroke can be sent at all. The
   text is left on the clipboard, the status line says `Injection failed`, and
   `Cmd+V` pastes it.

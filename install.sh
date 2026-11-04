@@ -277,12 +277,18 @@ fi
 
 # Verify a downloaded artifact against its pinned sha256 before activating it.
 verify_sha256() {  # verify_sha256 <file> <sha256>
-    # Older macOS releases ship shasum but no sha256sum.
+    # Hash the file and compare the digest rather than check a list: Apple's
+    # sha256sum reads a checklist only from a file, never from stdin, and its
+    # -c passes a malformed line unless --strict is given.
+    local out
     if command -v sha256sum >/dev/null; then
-        printf '%s  %s\n' "$2" "$1" | sha256sum -c --status
+        out=$(sha256sum -- "$1") || return 1
     else
-        printf '%s  %s\n' "$2" "$1" | shasum -a 256 -c --status
+        # Older macOS releases ship shasum but no sha256sum.
+        out=$(shasum -a 256 -- "$1") || return 1
     fi
+    out=${out#\\}   # GNU marks a file name it had to escape with a leading backslash
+    [[ "${out%%[[:space:]]*}" == "$2" ]]
 }
 
 # 3. Download the Whisper model (KB-Whisper, quantized q5_0)

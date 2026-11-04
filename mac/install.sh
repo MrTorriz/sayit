@@ -208,7 +208,7 @@ else
     mkdir -p "$STAGE/Contents/MacOS" "$STAGE/Contents/Resources"
 
     log "Compiling sayit-rec, sayit-paste and Sayit ($TARGET)"
-    "${SWIFTC[@]}" "$MAC_DIR"/Sources/Common/*.swift "$MAC_DIR/Sources/Rec/main.swift" \
+    "${SWIFTC[@]}" "$MAC_DIR"/Sources/Common/*.swift "$MAC_DIR"/Sources/Rec/*.swift \
         -o "$STAGE/Contents/MacOS/sayit-rec"
     "${SWIFTC[@]}" "$MAC_DIR/Sources/Paste/main.swift" -o "$STAGE/Contents/MacOS/sayit-paste"
     "${SWIFTC[@]}" "$MAC_DIR"/Sources/Common/*.swift "$MAC_DIR"/Sources/Agent/*.swift \

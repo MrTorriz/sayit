@@ -130,6 +130,26 @@ setup() {
     [[ "$output" == *"to update to v1.9.2"* ]]
 }
 
+@test "verify_sha256 compares the digest, so a sha256sum that takes no checklist on stdin works" {
+    # Apple's sha256sum (macOS 27) answers a checklist on stdin with its usage
+    # line and exit 1; this stand-in does the same and hashes files as usual.
+    local bin="$BATS_TEST_TMPDIR/stubbin"
+    mkdir -p "$bin"
+    cat > "$bin/sha256sum" <<'STUB'
+#!/usr/bin/env bash
+for a; do [[ "$a" == -c ]] && { echo "usage: sha256sum [-bctwz] [files ...]" >&2; exit 1; }; done
+[[ "$1" == -- ]] && shift
+python3 -c 'import hashlib, sys; print(hashlib.sha256(open(sys.argv[1], "rb").read()).hexdigest() + "  " + sys.argv[1])' "$1"
+STUB
+    chmod +x "$bin/sha256sum"
+    eval "$(sed -n '/^verify_sha256() {/,/^}/p' "$INSTALL")"
+    printf 'abc' > "$BATS_TEST_TMPDIR/model.partial"
+    local good=ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad
+    PATH="$bin:$PATH" verify_sha256 "$BATS_TEST_TMPDIR/model.partial" "$good"
+    ! PATH="$bin:$PATH" verify_sha256 "$BATS_TEST_TMPDIR/model.partial" "${good/ba78/0000}"
+    ! PATH="$bin:$PATH" verify_sha256 "$BATS_TEST_TMPDIR/missing" "$good"
+}
+
 @test "a parent Git repository is not accepted as the whisper.cpp checkout" {
     git init -q "$SANDBOX"
     export WHISPER_SRC="$SANDBOX/not-a-checkout"

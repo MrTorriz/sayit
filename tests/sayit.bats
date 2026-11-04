@@ -420,3 +420,18 @@ PYEOF
     [ -z "$(pgrep -f "$SANDBOX/bin/sayit-record" || true)" ]
     grep -q "Recording failed to start" "$STUB_CTL/notify.log"
 }
+
+@test "SEGMENT_WHILE_RECORDING changes nothing on Linux: the recording is transcribed whole" {
+    # Only macOS's sayit-rec can cut; pw-record is never asked to, and no
+    # worker or state file appears.
+    sed -i.bak 's|^OUT="\$1"$|OUT="$1"; echo "segments ${SAYIT_SEGMENTS-unset}" >> "$STUB_LOG"|' \
+        "$SANDBOX/bin/sayit-record"
+    export SEGMENT_WHILE_RECORDING=1
+    "$SAYIT" start
+    wav=$(session_wav)
+    "$SAYIT" stop
+    grep -q '^segments unset$' "$STUB_LOG"
+    grep -q "^transcribe $wav$" "$STUB_LOG"
+    [ -z "$(find "$XDG_RUNTIME_DIR" -name '*.segments*' -o -name '*-part-*')" ]
+    [ "$(cat "$STUB_CTL/inject.log")" = "START FINAL" ]
+}
