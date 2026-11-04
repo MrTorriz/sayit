@@ -3,6 +3,10 @@
 //
 // Usage:
 //   sayit-rec <outfile.wav> [source]   record until signalled
+//   sayit-rec --replay <in.wav> <outfile.wav>
+//                                      play a 16 kHz mono WAV in as if it were
+//                                      being recorded, in real time: no
+//                                      microphone, for tests and benchmarks
 //   sayit-rec --list                   list input devices: default-mark, UID, name
 //   sayit-rec --resolve <source>       print the device a source resolves to
 //
@@ -19,6 +23,12 @@
 //   MAX_RECORD_SECONDS  hard cap on one recording (default 120). It bounds how
 //                       long the microphone stays open if whatever started the
 //                       recording dies before it can stop it.
+//   SAYIT_SEGMENTS      1 = also cut the recording at pauses (Segmenter.swift)
+//                       into <outfile>-part-<n>.wav, n from 1, and print each
+//                       piece's path on stdout once it is complete. After the
+//                       first cut the rest follows as the last piece when the
+//                       recording ends; a recording that was never cut has no
+//                       pieces. bin/sayit sets it for SEGMENT_WHILE_RECORDING.
 //
 // Behavior:
 //   - The WAV header is rewritten about once a second and finalized on SIGINT,
@@ -41,6 +51,9 @@ import CoreAudio
 import Foundation
 
 setvbuf(stderr, nil, _IONBF, 0)
+// The pieces are named on stdout. A reader that went away must not take the
+// recording with it.
+signal(SIGPIPE, SIG_IGN)
 
 func fail(_ code: Int32, _ message: String) -> Never {
     FileHandle.standardError.write(Data("sayit-rec: \(message)\n".utf8))
@@ -144,13 +157,20 @@ if args.first == "--resolve" {
     exit(0)
 }
 
+var replayPath: String?
+if args.first == "--replay" {
+    guard args.count >= 3 else { fail(1, "usage: sayit-rec --replay <in.wav> <outfile.wav>") }
+    replayPath = args[1]
+    args.removeFirst(2)
+}
+
 guard let outPath = args.first, !outPath.hasPrefix("-") else {
-    fail(1, "usage: sayit-rec <outfile.wav> [source] | --list | --resolve <source>")
+    fail(1, "usage: sayit-rec <outfile.wav> [source] | --replay <in.wav> <outfile.wav> | --list | --resolve <source>")
 }
 let source = args.count > 1 ? args[1] : ""
 
 var chosenDevice: InputDevice?
-if !source.isEmpty {
+if !source.isEmpty && replayPath == nil {
     let devices = inputDevices()
     guard let d = resolve(source, among: devices) else {
         let names = devices.map { $0.name }.joined(separator: ", ")
@@ -161,7 +181,7 @@ if !source.isEmpty {
 
 // MARK: - Permission
 
-switch AVCaptureDevice.authorizationStatus(for: .audio) {
+switch replayPath == nil ? AVCaptureDevice.authorizationStatus(for: .audio) : .authorized {
 case .authorized:
     break
 case .notDetermined:
@@ -286,6 +306,34 @@ final class LevelPublisher {
 
 let levels = LevelPublisher()
 
+// MARK: - Pieces
+
+/// SAYIT_SEGMENTS=1: each piece goes next to the WAV, through a temporary
+/// name so that it is complete once it exists, then its path goes to stdout.
+/// A piece that cannot be written is skipped, numbering and all, so the
+/// reader sees the gap and falls back to the whole recording.
+func pieceWriter(stem: String) -> ([Int16]) -> Void {
+    var n = 0
+    return { samples in
+        n += 1
+        let path = "\(stem)-part-\(n).wav"
+        let tmp = path + ".tmp"
+        var data = WavWriter.header(dataBytes: UInt32(samples.count * 2))
+        samples.withUnsafeBytes { data.append(contentsOf: $0) }
+        guard FileManager.default.createFile(atPath: tmp, contents: data,
+                                             attributes: [.posixPermissions: 0o600]) else { return }
+        guard rename(tmp, path) == 0 else { unlink(tmp); return }
+        let line = Array((path + "\n").utf8)
+        _ = line.withUnsafeBytes { write(STDOUT_FILENO, $0.baseAddress, $0.count) }
+    }
+}
+
+var segmenter: Segmenter?
+if ProcessInfo.processInfo.environment["SAYIT_SEGMENTS"] == "1" {
+    let stem = outPath.hasSuffix(".wav") ? String(outPath.dropLast(4)) : outPath
+    segmenter = Segmenter(emit: pieceWriter(stem: stem))
+}
+
 // MARK: - Capture
 
 // AVCaptureSession rather than AVAudioEngine: it selects a device by its Core
@@ -297,11 +345,14 @@ final class Capture: NSObject, AVCaptureAudioDataOutputSampleBufferDelegate {
     let queue = DispatchQueue(label: "sayit-rec.capture")
     let writer: WavWriter
     let levels: LevelPublisher
+    let segmenter: Segmenter?
     var finished = false
+    private var replay: DispatchSourceTimer?
 
-    init(writer: WavWriter, levels: LevelPublisher) {
+    init(writer: WavWriter, levels: LevelPublisher, segmenter: Segmenter?) {
         self.writer = writer
         self.levels = levels
+        self.segmenter = segmenter
     }
 
     func start(device: AVCaptureDevice) throws {
@@ -344,19 +395,77 @@ final class Capture: NSObject, AVCaptureAudioDataOutputSampleBufferDelegate {
             CMBlockBufferCopyDataBytes(block, atOffset: 0, dataLength: length, destination: raw.baseAddress!)
         }
         guard status == kCMBlockBufferNoErr else { return }
+        consume(data)
+    }
+
+    /// Every captured buffer, on the capture queue.
+    func consume(_ data: Data) {
         writer.append(data)
-        data.withUnsafeBytes { raw in levels.feed(raw.bindMemory(to: Int16.self)) }
+        data.withUnsafeBytes { raw in
+            let samples = raw.bindMemory(to: Int16.self)
+            levels.feed(samples)
+            segmenter?.feed(samples)
+        }
+    }
+
+    /// --replay: the samples of a recording, handed to consume() as fast as
+    /// they were spoken, 32 ms at a time. When they run out the recording
+    /// goes on without sound, until it is stopped like any other.
+    func start(replaying samples: Data) {
+        let started = DispatchTime.now().uptimeNanoseconds
+        var offset = 0
+        let timer = DispatchSource.makeTimerSource(queue: queue)
+        timer.schedule(deadline: .now(), repeating: .milliseconds(32))
+        timer.setEventHandler { [weak self] in
+            guard let self = self, !self.finished else { return }
+            let due = Int((DispatchTime.now().uptimeNanoseconds - started) / 1_000_000) * 32  // bytes
+            let end = min(samples.count, due - due % 2)
+            if end > offset {
+                self.consume(samples.subdata(in: offset..<end))
+                offset = end
+            }
+            if offset >= samples.count { self.replay?.cancel() }
+        }
+        replay = timer
+        timer.resume()
     }
 
     /// Stops capture and finalizes the file. Runs the last write on the
-    /// capture queue, so no buffer can land after the header is written.
+    /// capture queue, so no buffer can land after the header is written;
+    /// the last piece, if any, is written there too.
     func stop() {
         session.stopRunning()
         queue.sync {
             finished = true
+            replay?.cancel()
             writer.close()
+            segmenter?.finish()
         }
     }
+}
+
+/// The samples of a 16 kHz mono 16-bit PCM WAV, or nil for anything else.
+func wavSamples(_ path: String) -> Data? {
+    guard let file = FileManager.default.contents(atPath: path), file.count >= 12,
+          file.prefix(4) == Data("RIFF".utf8), file.subdata(in: 8..<12) == Data("WAVE".utf8) else { return nil }
+    func u16(_ at: Int) -> Int { Int(file[at]) | Int(file[at + 1]) << 8 }
+    func u32(_ at: Int) -> Int { u16(at) | u16(at + 2) << 16 }
+    var at = 12
+    var pcm16kMono = false
+    while at + 8 <= file.count {
+        let id = String(decoding: file.subdata(in: at..<(at + 4)), as: UTF8.self)
+        let size = u32(at + 4)
+        let body = at + 8
+        if id == "fmt " && body + 16 <= file.count {
+            pcm16kMono = u16(body) == 1 && u16(body + 2) == 1 && u32(body + 4) == 16000 && u16(body + 14) == 16
+        } else if id == "data" {
+            guard pcm16kMono else { return nil }
+            let end = min(file.count, body + size)
+            return file.subdata(in: body..<(end - (end - body) % 2))
+        }
+        at = body + size + size % 2
+    }
+    return nil
 }
 
 func captureDevice() -> AVCaptureDevice? {
@@ -369,7 +478,7 @@ func captureDevice() -> AVCaptureDevice? {
     return found.first { $0.localizedName == wanted.name }
 }
 
-let capture = Capture(writer: writer, levels: levels)
+let capture = Capture(writer: writer, levels: levels, segmenter: segmenter)
 var activeDevice: AVCaptureDevice?
 
 func finish(_ code: Int32, _ note: String? = nil) -> Never {
@@ -393,19 +502,31 @@ for sig in [SIGINT, SIGTERM, SIGHUP] {
     signalSources.append(source)
 }
 
-do {
-    guard let device = captureDevice() else {
-        throw NSError(domain: "sayit-rec", code: 4, userInfo: [NSLocalizedDescriptionKey: "no input device"])
+func startCapture() {
+    if let path = replayPath {
+        guard let samples = wavSamples(path) else {
+            writer.close()
+            levels.remove()
+            fail(1, "cannot replay \(path): not a 16 kHz mono 16-bit PCM WAV")
+        }
+        capture.start(replaying: samples)
+        return
     }
-    activeDevice = device
-    try capture.start(device: device)
-} catch {
-    // The header-only WAV stays: a stop that arrives after bin/sayit's
-    // liveness check then reads an empty recording, not a missing file.
-    writer.close()
-    levels.remove()
-    fail(1, "could not start capture: \(error.localizedDescription)")
+    do {
+        guard let device = captureDevice() else {
+            throw NSError(domain: "sayit-rec", code: 4, userInfo: [NSLocalizedDescriptionKey: "no input device"])
+        }
+        activeDevice = device
+        try capture.start(device: device)
+    } catch {
+        // The header-only WAV stays: a stop that arrives after bin/sayit's
+        // liveness check then reads an empty recording, not a missing file.
+        writer.close()
+        levels.remove()
+        fail(1, "could not start capture: \(error.localizedDescription)")
+    }
 }
+startCapture()
 
 // A device that disappears mid-recording (unplugged, a headset leaving) ends
 // the recording with what was captured so far rather than hanging.
@@ -414,9 +535,11 @@ NotificationCenter.default.addObserver(forName: AVCaptureSession.runtimeErrorNot
     let err = note.userInfo?[AVCaptureSessionErrorKey] as? NSError
     finish(0, "capture stopped: \(err?.localizedDescription ?? "runtime error") - recording ended early")
 }
-NotificationCenter.default.addObserver(forName: AVCaptureDevice.wasDisconnectedNotification,
-                                       object: activeDevice, queue: .main) { _ in
-    finish(0, "the input device was disconnected - recording ended early")
+if let device = activeDevice {
+    NotificationCenter.default.addObserver(forName: AVCaptureDevice.wasDisconnectedNotification,
+                                           object: device, queue: .main) { _ in
+        finish(0, "the input device was disconnected - recording ended early")
+    }
 }
 
 let maxSeconds = Double(ProcessInfo.processInfo.environment["MAX_RECORD_SECONDS"] ?? "") ?? 120

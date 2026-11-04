@@ -288,11 +288,17 @@ sequenceDiagram
     Note over S: session file: pid + wav + start time
     Note over S: sayit-indicator show creates sayit.indicator.on
     R-->>A: level 0..7 in sayit.level every 125 ms, drawn by the pill
+    opt SEGMENT_WHILE_RECORDING=1
+        R-->>S: a piece cut at a pause, named on stdout (segment worker)
+        S->>T: --part piece, the previous piece's text on stdin
+        T->>D: POST /inference while the recording goes on
+    end
     U->>A: release (or the next press, when latched)
     A->>S: bin/sayit stop, once start has exited
     Note over S: claim the session (atomic — one stop wins)
     Note over S: sayit-indicator hide removes the marker
     S->>R: SIGINT, poll until the recorder has exited
+    Note over S,T: with pieces: wait for the last one, then sayit-transcribe --join
     S->>T: WAV file
     T->>D: POST /inference (warm model, Metal)
     alt transport failure (daemon down/unreachable)
@@ -310,7 +316,7 @@ sequenceDiagram
 | Component | Single responsibility |
 |---|---|
 | `Sayit.app` | The menu bar agent: the push-to-talk event tap, the pill, the menu and the permission prompts. Runs `bin/sayit start`, `stop` and `cancel`; records and pastes nothing itself |
-| `sayit-rec` | Audio capture only — `AVCaptureSession` to 16 kHz mono WAV. Also publishes the level, enforces `MAX_RECORD_SECONDS` and reports a digitally silent capture. `--list` and `--resolve` serve diagnostics |
+| `sayit-rec` | Audio capture only — `AVCaptureSession` to 16 kHz mono WAV. Also publishes the level, enforces `MAX_RECORD_SECONDS` and reports a digitally silent capture. With `SAYIT_SEGMENTS=1` it also cuts the recording at pauses into pieces of their own. `--list` and `--resolve` serve diagnostics; `--replay` plays a WAV in as if it were being recorded, for tests and benchmarks |
 | `sayit-paste` | Text delivery: clipboard plus `Cmd+V` with the whole previous clipboard restored, or Unicode typing. `--check` reports Accessibility and Secure Input |
 | `mac/install.sh` | Builds the three with `swiftc`, signs and installs the bundle, writes and loads the two LaunchAgents; `--uninstall` |
 | `mac/sayit-doctor` | Read-only diagnostics. `bin/sayit-doctor` hands over to it on macOS |
@@ -325,6 +331,7 @@ sequenceDiagram
 | `mac/Sources/Agent/Pill.swift` | The pill's two lifetimes, its position file and its animation |
 | `mac/Sources/Agent/Runner.swift` | Spawns `bin/sayit`; a stop waits for its start to have exited |
 | `mac/Sources/Rec/main.swift` | `sayit-rec` |
+| `mac/Sources/Rec/Segmenter.swift` | Where `sayit-rec` cuts a recording into pieces (`SEGMENT_WHILE_RECORDING`) |
 | `mac/Sources/Paste/main.swift` | `sayit-paste` |
 | `mac/Sources/Common/Shared.swift` | The run directory, the `.env` reader and atomic writes, shared by all three programs |
 | `mac/Sources/Common/PillGeometry.swift` | The pill's geometry, colours and level thresholds, compiled into both `Sayit` (which draws) and `sayit-rec` (which computes the level) |
@@ -348,6 +355,8 @@ directory instead, `$XDG_STATE_HOME/sayit` (by default `~/.local/state/sayit`).
 | `$RUN_DIR/sayit.session` | As on Linux: `pid<TAB>wav<TAB>start`, claimed atomically. Sayit also reads its presence to decide whether a press on a latched recording means stop or start |
 | `$RUN_DIR/sayit.starting` | Intent marker while `start` is still spawning the recorder |
 | `$RUN_DIR/sayit-<pid>.wav` | The recording in progress, mode 0600, unique per session. Deleted after transcription; stragglers older than an hour are swept when the next recording starts |
+| `$RUN_DIR/sayit-<pid>-part-<n>.wav`, `.txt` | `SEGMENT_WHILE_RECORDING`: a piece of the recording in progress, mode 0600, and its text, mode 0600. A piece is removed once transcribed, the texts once joined; stragglers are swept like the WAV |
+| `$RUN_DIR/sayit-<pid>.segments` | The segment worker's state: its pid while the recording runs, then `done<TAB>pieces<TAB>ok\|failed`. Removed by stop and cancel, which tells a worker still running to drop its pieces |
 | `$RUN_DIR/sayit.indicator.on` | Presence means the pill should show a recording. Created and removed by `bin/sayit-indicator show` and `hide` |
 | `$RUN_DIR/sayit.level` | One digit, `0`–`7`, rewritten in place by `sayit-rec` every 125 ms. Its modification time is the "audio is arriving" signal. Removed when the recording ends |
 | `$RUN_DIR/sayit.status` | The last status `bin/sayit` reported, shown as the first line of Sayit's menu. A `Done` status loses its text on the way. A second line, `warn` or `error`, marks a problem and turns the menu bar icon orange |
@@ -1078,6 +1087,37 @@ directories first, and the doctor fails loudly when Homebrew's bash is
 missing. launchd rotates no logs either, so `bin/sayit-daemon` moves a
 `daemon.log` past 1 MiB aside each time it starts, and redirects before its own
 checks, so a missing model is in the log rather than lost.
+
+#### Transcribing while recording: pieces cut at pauses
+
+whisper.cpp transcribes after the release, so the wait grows with the length
+of the dictation, and on the reference Mac long dictations are the common case.
+`SEGMENT_WHILE_RECORDING` moves most of that work into the recording itself.
+
+- **Cut at pauses, never on a timer.** A fixed-length cut lands inside words.
+  `sayit-rec` already sees every sample, so it judges 20 ms frames against a
+  threshold from the recording's own level distribution (no fixed dBFS value
+  survives the difference between microphones) and cuts 0.2 s into a pause of
+  0.4 s. A recording without contrast between speech and silence is never cut,
+  and falls back to the whole-recording path, which was the only path before.
+- **Each piece once, never a growing buffer.** Transcribing the recording so
+  far again on every pause would make each pass slower than the last.
+  Pieces are disjoint; continuity comes from the prompt instead: each piece is
+  decoded with the end of the previous piece's text after `INITIAL_PROMPT`,
+  the way whisper itself carries text from one 30 s window to the next.
+- **The worker reads the recorder's stdout.** `bin/sayit start` spawns
+  `sayit-record` with its stdout on a process substitution running
+  `segment_worker`, so `$!` stays the recorder (and the identity check
+  unchanged), end of input means the recorder is gone, and the worker needs
+  no PID file to find its recorder. `sayit-rec` ignores `SIGPIPE`, so a dead
+  worker can never take the recording with it.
+- **Failure means the old path.** A piece has no CLI fallback: a cold start
+  per piece would cost more than it saves. The first failure stops the worker
+  sending pieces; stop then finds a state that is not `ok` and transcribes the
+  whole WAV, which is still written in full.
+- **Join, then the wordlist.** `sayit-transcribe --part` returns the
+  normalized text only; `--join` runs the LLM cleanup and the wordlist on the
+  joined text, so the result is processed exactly like a whole recording's.
 
 #### The Darwin temporary directory as the run directory
 

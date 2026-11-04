@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- macOS: `SEGMENT_WHILE_RECORDING=1` transcribes while you speak. `sayit-rec`
+  cuts the recording at pauses (0.4 s, pieces of at least 4 s) and a
+  background worker sends each piece to the warm daemon with the previous
+  piece's text as its prompt, so at release only the last piece is left.
+  Short dictations, and any piece that fails, take the whole-recording path
+  as before. Off by default; `sayit-transcribe` gains `--part` and `--join`,
+  and `sayit-rec` gains `--replay` for tests and the new
+  `tests/segment-benchmark.sh`.
 - macOS: the daemon's private path moves from the per-user temporary
   directory, which macOS clears of files older than three days every night, to
   `~/.local/state/sayit/sayit-daemon.path` (`$XDG_STATE_HOME`). A server that

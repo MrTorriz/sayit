@@ -66,6 +66,7 @@ of them empty on purpose so the code can resolve a repo-relative path.
 | `INDICATOR_LOCKED` | `0` | Windows, macOS | Windows: `0` lets you drag the pill to move it and drag either end to resize it, saving where you leave it; the pill then catches clicks on its own area. `1` makes it click-through and immovable, placeable only with `.\win\sayit-indicator.ps1 place`. macOS: the same choice for the resident pill only (moving, not resizing); the transient pill is always click-through, and **Place Indicator** in Sayit's menu works either way. It never takes focus on either |
 | `INDICATOR_EXCLUDE_FROM_CAPTURE` | `1` | Windows, macOS | Keep the pill out of screen captures and screen shares. Needs Windows 10 2004 or later; older builds capture it anyway. On recent macOS it is best effort: a capture may show the pill regardless |
 | `INDICATOR_RESIDENT` | `0` | macOS | `1` keeps the pill on screen for the whole session, with the lamp, meter and wordmark, the lamp lit while audio arrives. `0` shows it only while recording |
+| `SEGMENT_WHILE_RECORDING` | `0` | macOS | `1` transcribes a long dictation piece by piece while you speak, so only the last piece is left at release. See [Transcribing while you speak](#transcribing-while-you-speak-macos) |
 
 The settings above the Windows section in `.env.example` were the Linux ones.
 `LLM_CLEANUP`, `LLM_URL`, `LLM_MODEL`, `RECORDING_METER` and
@@ -74,13 +75,14 @@ Windows reads them: no file under `win\` does. macOS runs the Linux
 transcriber, so it reads the three `LLM_*` settings, but not the two meter
 settings — `Sayit.app` draws its own pill. Conversely, macOS reads several
 settings from the Windows section, deliberately under the same names, and adds
-three of its own in a section at the end of the file.
+five of its own in a section at the end of the file.
 
 ## When a change takes effect
 
 | Setting | Effect |
 | --- | --- |
 | `SPEECH_LANGUAGE`, `INITIAL_PROMPT`, the four `VAD_*` tuning settings, `AUDIO_CTX_ADAPTIVE` | Next dictation. They are sent with each request |
+| macOS: `SEGMENT_WHILE_RECORDING` | Next dictation. Read when the recording starts |
 | `THREADS`, `BEAM`, `VAD_MODEL` | Immediately for the CLI fallback, but fixed at server start for the daemon — restart it |
 | `MODEL_PATH`, `DAEMON_PORT` | Immediately for the CLI fallback and for which port the client dials, but fixed at server start for the daemon — restart it |
 | `WHISPER_SERVER` | Restart the daemon |
@@ -204,6 +206,33 @@ stays on your machine. Worth the latency only with a GPU-accelerated Ollama:
 on CPU it is too slow (~15 s) and a small model can make technical terms
 worse, so it is off by default. See [SECURITY.md](../SECURITY.md) before
 pointing `LLM_URL` anywhere else.
+
+## Transcribing while you speak (macOS)
+
+Without it, the time from release to text grows with the length of the
+dictation: the whole recording is transcribed after the release.
+`SEGMENT_WHILE_RECORDING=1` has `sayit-rec` cut the recording at pauses while
+it goes on, and each piece is transcribed at once by the warm daemon, so at
+release only the last piece is left.
+
+- **Where it cuts.** A pause is 0.4 s below a level that follows the
+  recording's own: up to 10 dB above its quietest 5%, and only once speech
+  stands at least 15 dB above that. A piece is at least 4 s long; past 12 s a
+  0.24 s pause will do. Nothing is cut inside speech, so a dictation without a
+  pause, and any dictation under 4 s, is transcribed whole after the release,
+  exactly as with `0`.
+- **How the pieces fit together.** Each piece is sent with `INITIAL_PROMPT`
+  followed by the end of the previous piece's text as its prompt, so the
+  decoder carries on where the last piece stopped. The texts are joined before
+  the LLM cleanup and the wordlist, so a wordlist rule can match across a cut.
+- **When something goes wrong.** A piece has no cold fallback. If one fails
+  (the daemon is not answering), the whole recording goes down the usual path,
+  CLI fallback included. A cancelled recording has its pieces dropped.
+- **What it costs.** The pieces keep the GPU busy in bursts while you speak,
+  and need the warm daemon to be of any use.
+
+The measured effect is in
+[Performance](PERFORMANCE.md#transcribing-while-you-speak).
 
 ## Choosing a model size
 

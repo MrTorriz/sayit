@@ -272,3 +272,60 @@ vad_on() {
     [ "$status" -eq 0 ]
     [ -f "$STUB_CTL/curl.args" ]
 }
+
+# --- pieces of a recording (SEGMENT_WHILE_RECORDING) -------------------------
+
+@test "--part follows INITIAL_PROMPT with the previous piece's text, and leaves the wordlist to --join" {
+    WL="$BATS_TEST_TMPDIR/wl.tsv"
+    printf 'daemon\tDAEMON\n' > "$WL"
+    run bash -c 'printf "förra biten" | INITIAL_PROMPT="Namn och termer." WORDLIST="$1" "$2" --part "$3"' \
+        _ "$WL" "$TRANSCRIBE" "$WAV"
+    [ "$status" -eq 0 ]
+    [ "$output" = "daemon text from server" ]
+    grep -q -- '--form-string prompt=Namn och termer. förra biten --form-string' "$STUB_CTL/curl.args"
+}
+
+@test "--part with no previous text sends INITIAL_PROMPT alone, and no prompt at all without one" {
+    INITIAL_PROMPT="Namn." run "$TRANSCRIBE" --part "$WAV" < /dev/null
+    [ "$status" -eq 0 ]
+    grep -q -- '--form-string prompt=Namn. --form-string' "$STUB_CTL/curl.args"
+    run bash -c 'printf "bara texten" | "$1" --part "$2"' _ "$TRANSCRIBE" "$WAV"
+    grep -q -- '--form-string prompt=bara texten --form-string' "$STUB_CTL/curl.args"
+}
+
+@test "--part keeps the last 300 characters of a long previous text, from a word start" {
+    long=$(printf 'ord%03d ' $(seq 1 100))     # 700 characters
+    run bash -c 'printf "%s" "$1" | "$2" --part "$3"' _ "$long" "$TRANSCRIBE" "$WAV"
+    [ "$status" -eq 0 ]
+    prompt=$(sed -e 's/.*--form-string prompt=//' -e 's/ --form-string no_timestamps.*//' "$STUB_CTL/curl.args")
+    [ "${prompt%% *}" = ord059 ]
+    [[ "$prompt" == *"ord100"* ]]
+    (( ${#prompt} <= 300 ))
+}
+
+@test "--part has no cold fallback: a daemon failure fails the piece" {
+    CURL_MODE=fail run "$TRANSCRIBE" --part "$WAV" < /dev/null
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"piece not transcribed"* ]]
+    [ ! -f "$STUB_CTL/cli.args" ]
+}
+
+@test "--join joins the texts with spaces, skips empty ones and applies the wordlist to the whole" {
+    WL="$BATS_TEST_TMPDIR/wl.tsv"
+    printf 'slut start\tSLUTSTART\n' > "$WL"
+    printf 'början och slut' > "$BATS_TEST_TMPDIR/1.txt"
+    : > "$BATS_TEST_TMPDIR/2.txt"
+    printf 'start igen' > "$BATS_TEST_TMPDIR/3.txt"
+    WORDLIST="$WL" run "$TRANSCRIBE" --join "$BATS_TEST_TMPDIR/1.txt" "$BATS_TEST_TMPDIR/2.txt" \
+        "$BATS_TEST_TMPDIR/3.txt"
+    [ "$status" -eq 0 ]
+    [ "$output" = "början och SLUTSTART igen" ]
+    [ ! -f "$STUB_CTL/curl.args" ]
+}
+
+@test "--join without texts, or with one missing, fails with exit 1" {
+    run "$TRANSCRIBE" --join
+    [ "$status" -eq 1 ]
+    run "$TRANSCRIBE" --join "$BATS_TEST_TMPDIR/missing.txt"
+    [ "$status" -eq 1 ]
+}

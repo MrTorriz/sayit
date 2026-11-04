@@ -259,6 +259,70 @@ frames garbled 54 of the 423 clips, which is why `bin/sayit-transcribe` only
 ever sends those, with a full-window retry as a guard; see
 [Configuration](CONFIGURATION.md#accuracy-vad-beam-search-initial-prompt-suppression).
 
+### Transcribing while you speak
+
+On 2026-11-03, the same machine, KB-Whisper large q5_0 with greedy decoding
+and the window sized to each request (`BEAM=1`, `AUDIO_CTX_ADAPTIVE=1`),
+`SEGMENT_WHILE_RECORDING` off and on. `tests/segment-benchmark.sh` plays each
+clip into a real `sayit-rec` at the speed it was spoken while `bin/sayit start`
+and `stop` run as `Sayit.app` runs them, against a private server with
+`bin/sayit-daemon`'s flags. The stop comes 0.3 s after the last word, before a
+pause could cut the last piece off, so that piece is always left for after
+the release. Measured is the time from the stop to the text reaching the
+paste, the arms alternating clip by clip. Errors are word-level edit distance
+after lower-casing and stripping punctuation, with `i kväll`/`ikväll` and the
+like counted as one spelling.
+
+Two sets. **Synthetic:** 30 clips of 5-30 s, 491 s in all: forty neutral
+Swedish sentences from `say` (voice Alva, two speaking rates) joined with
+pauses of 0.2-1.2 s, under low noise at 35 or 20 dB below the speech.
+**Human:** 24 clips of 10-30 s, 459 s in all: sentences from the FLEURS sv_se
+test split joined the same way, the pauses filled with each recording's own
+noise floor.
+
+| Set | Clip | Off: median | Off: p90 | On: median | On: p90 | Pieces |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| Synthetic | 5 s | 0.73 s | 0.99 s | 0.60 s | 0.60 s | 0.7 |
+| Synthetic | 10 s | 1.21 s | 1.23 s | 0.69 s | 0.76 s | 2.0 |
+| Synthetic | 15 s | 1.70 s | 1.73 s | 0.65 s | 0.72 s | 3.0 |
+| Synthetic | 20 s | 1.70 s | 1.80 s | 0.59 s | 0.60 s | 4.3 |
+| Synthetic | 30 s | 2.77 s | 2.81 s | 0.82 s | 0.83 s | 6.3 |
+| Synthetic | all | 1.65 s | 2.74 s | 0.62 s | 0.93 s | |
+| Human | 10 s | 1.08 s | 1.39 s | 0.73 s | 0.89 s | 1.2 |
+| Human | 15 s | 1.58 s | 1.68 s | 0.76 s | 0.87 s | 1.8 |
+| Human | 20 s | 2.11 s | 2.65 s | 0.70 s | 0.86 s | 2.7 |
+| Human | 30 s | 1.88 s | 1.97 s | 0.75 s | 0.85 s | 2.8 |
+| Human | all | 1.66 s | 2.14 s | 0.72 s | 1.05 s | |
+
+Word errors, off against on: 23 against 8 of 1081 reference words on the
+synthetic set (2.1 and 0.7%), 72 against 83 of 846 on the human set (8.5 and
+9.8%). Read together: no change in accuracy that this sample can show. The
+differences sit at single words on either side of a cut (a word the next
+sentence would have disambiguated, a name spelled differently), they go both
+ways, and an earlier run of the human set, its sentences with their own
+silences left in, came out 6.1 against 5.3%. The human set's error rate is high for the model
+because FLEURS' references spell out numbers and split compounds its own way,
+equally in both arms.
+
+What it decided:
+
+- **Release to text no longer grows with the dictation.** With the setting on
+  the median stayed between 0.6 and 0.8 s at every length, against 0.7 to
+  2.8 s without; the slowest dictation went from 3.7 to 1.2 s.
+- **The release after a pause costs almost nothing.** When the last word is
+  followed by a pause of 0.4 s or more before the release, the last piece is
+  cut and usually transcribed before the button comes up. In that earlier
+  run of the human set, whose clips ended in a median 0.8 s of silence before
+  the stop, the median was 0.18 s against 1.54 s without.
+- **Short dictations stay as they were.** Under 4 s nothing is cut, and the
+  5 s clips were cut less than once on average.
+- **Off by default.** It keeps the GPU busy in bursts during the dictation,
+  and the measurement shows the accuracy as unchanged within this sample, not
+  as proven equal.
+
+During both runs another benchmark used the same GPU at times; the arms
+alternated, so both met it alike, but the absolute times are a little high.
+
 ### First run
 
 The first transcription after building took 8 s: Metal compiles its pipelines
@@ -281,10 +345,13 @@ voice Alva). Measured by hand, a few runs each.
   only, above. For the other two platforms see
   [Choosing a model size](CONFIGURATION.md#choosing-a-model-size) for the
   arithmetic, which is arithmetic and says so.
-- **Release to text on macOS.** The table above is the transcription alone;
-  stopping the recorder, the wordlist and the paste come on top. A Bluetooth
-  headset that macOS switches to its call profile when capture opens costs
-  time before recording starts as well; a USB microphone does not switch.
+- **Release to text on macOS with a microphone.** The model tables above are
+  the transcription alone. The comparison under
+  [Transcribing while you speak](#transcribing-while-you-speak) covers stopping
+  the recorder, the wordlist and handing the text to the paste, but replays
+  files instead of capturing, and stops at the paste. A Bluetooth headset that
+  macOS switches to its call profile when capture opens costs time before
+  recording starts as well; a USB microphone does not switch.
 
 ## Profiling your own dictations
 
