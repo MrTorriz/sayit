@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- macOS: about 30 ms less between the release and the text, and the
+  microphone opens about 20 ms sooner. `bin/sayit` no longer starts
+  `sayit-bt` and `sayit-indicator` there (both were one-line no-ops costing a
+  bash start each), looks for the stopped recorder every 5 ms at first
+  instead of every 20, and `SAYIT_PROFILE=1` asks for the boot time once per
+  dictation instead of at every mark.
 - `SPOKEN_PUNCTUATION=1` turns spoken punctuation into marks: "frågetecken",
   "utropstecken", "kommatecken", "kolon" and "semikolon" attach to the word
   before them and replace the punctuation the model added, and "snedstreck"

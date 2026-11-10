@@ -132,16 +132,20 @@ LLM_URL="${LLM_URL:-http://127.0.0.1:11434/api/generate}"
 
 mark() {
     [[ -n "${SAYIT_PROFILE:-}" ]] || return 0
-    local up boot now
+    local up now
     if [[ -r /proc/uptime ]]; then
         read -r up _ < /proc/uptime
     else
         # macOS: seconds since boot from kern.boottime ("{ sec = N, usec = M } ...").
-        boot=$(sysctl -n kern.boottime 2>/dev/null) || boot=""
-        boot="${boot#*sec = }"; boot="${boot%%,*}"
-        [[ "$boot" =~ ^[0-9]+$ ]] || boot=0
+        # bin/sayit hands its answer on in SAYIT_BOOT; asked here only when
+        # this script runs on its own.
+        if [[ ! "${SAYIT_BOOT:-}" =~ ^[0-9]+$ ]]; then
+            SAYIT_BOOT=$(sysctl -n kern.boottime 2>/dev/null) || SAYIT_BOOT=""
+            SAYIT_BOOT="${SAYIT_BOOT#*sec = }"; SAYIT_BOOT="${SAYIT_BOOT%%,*}"
+            [[ "$SAYIT_BOOT" =~ ^[0-9]+$ ]] || SAYIT_BOOT=0
+        fi
         now="${EPOCHREALTIME/,/.}"
-        up="$(( ${now%.*} - boot )).${now#*.}"
+        up="$(( ${now%.*} - SAYIT_BOOT )).${now#*.}"
     fi
     printf '%s,%s,%s,%s,%s\n' "${SAYIT_PROFILE_RUN:-0}" "${EPOCHREALTIME/,/.}" "$up" \
         "$1" "${2:-}" >> "${XDG_RUNTIME_DIR:-/tmp}/sayit-profile.csv"
