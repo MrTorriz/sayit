@@ -332,6 +332,8 @@ sequenceDiagram
 | `mac/Sources/Agent/Trigger.swift` | The event tap: the three modes, Escape, the modifier rule, the own-event signature |
 | `mac/Sources/Agent/Pill.swift` | The pill's two lifetimes, its position file and its animation |
 | `mac/Sources/Agent/Runner.swift` | Spawns `bin/sayit`; a stop waits for its start to have exited |
+| `mac/Sources/Agent/Stats.swift` | The Statistics window's numbers from `history.jsonl`: totals, bars per hour, day or week, streaks. Foundation only, unit-tested |
+| `mac/Sources/Agent/StatsWindow.swift` | The Statistics window itself (SwiftUI and Swift Charts): overview and searchable history. Reads the history while open, keeps nothing once closed |
 | `mac/Sources/Rec/main.swift` | `sayit-rec` |
 | `mac/Sources/Rec/Segmenter.swift` | Where `sayit-rec` cuts a recording into pieces (`SEGMENT_WHILE_RECORDING`) |
 | `mac/Sources/Paste/main.swift` | `sayit-paste` |
@@ -1143,7 +1145,8 @@ are an hour old.
   zero CPU when idle.
 - **No GUI** — everything is scriptable and composable; the recording indicator
   is the only UI, plus on macOS a menu bar item that reports state and holds a
-  few actions. Settings stay in `.env`.
+  few actions, and one read-only window, Statistics, that shows what
+  `sayit-history` prints. Settings stay in `.env`.
 - **No shared code with Windows** — the parts worth keeping identical are the
   model contract, the wordlist, the history format and the settings, and none
   of those are code. A compatibility layer over bash and PowerShell would add a

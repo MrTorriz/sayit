@@ -5,6 +5,8 @@
 // after a problem. The first menu line is the last thing bin/sayit reported -
 // notifications are deliberately not used, because Notification Center keeps
 // them, and a "Done" message would keep a snippet of every dictation there.
+// Statistics and History opens Sayit's one window (StatsWindow.swift), as does opening
+// Sayit.app again while it runs.
 
 import AppKit
 import AVFoundation
@@ -15,11 +17,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var runner: Runner!
     private var trigger: Trigger!
     private var pill: PillController!
+    private var stats: StatsWindowController!
+    /// Set by Quit Sayit, the one way to quit while the Statistics window is open.
+    private var quitting = false
     private var statusItem: NSStatusItem!
     private let statusLine = NSMenuItem(title: "", action: nil, keyEquivalent: "")
     private let hintLine = NSMenuItem(title: "", action: nil, keyEquivalent: "")
     private let serverLine = NSMenuItem(title: "Transcription server: checking…", action: nil, keyEquivalent: "")
     private let pasteLastItem = NSMenuItem(title: "Paste Last Dictation", action: #selector(pasteLast), keyEquivalent: "")
+    private let statsItem = NSMenuItem(title: "Statistics and History…", action: #selector(showStatistics), keyEquivalent: "")
     private let settingsItem = NSMenuItem(title: "Open Settings…", action: #selector(openSettings), keyEquivalent: "")
     private let restartItem = NSMenuItem(title: "Restart Transcription Server", action: #selector(restartServer),
                                          keyEquivalent: "")
@@ -53,6 +59,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         config = AgentConfig(repository: repo)
         runner = Runner(repository: repo)
         pill = PillController(config: config)
+        stats = StatsWindowController(repository: repo)
         trigger = Trigger(config: config, runner: runner)
         trigger.onState = { [weak self] in self?.pill.wake(); self?.refresh() }
         trigger.onProbe = { [weak self] line in self?.probed(line) }
@@ -79,6 +86,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         unlink(agentPath)
+    }
+
+    /// Opening Sayit.app again - from Finder, Spotlight or the Dock - while it
+    /// runs in the menu bar opens the Statistics window: the one window it has.
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        showStatistics()
+        return false
+    }
+
+    /// With the Statistics window open Sayit sits in the Dock like any app,
+    /// and the Dock's Quit would take the push-to-talk trigger down with the
+    /// window - the LaunchAgent restarts Sayit only after a crash. So that
+    /// closes the window instead. Quit Sayit in the menu bar item still quits,
+    /// and so does a logout, restart or shutdown, whose quit event says why.
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        let quitReason: AEKeyword = 0x7768_793F  // 'why?', kAEQuitReason
+        if quitting || !stats.isVisible { return .terminateNow }
+        if NSAppleEventManager.shared().currentAppleEvent?.attributeDescriptor(forKeyword: quitReason) != nil {
+            return .terminateNow
+        }
+        stats.close()
+        return .terminateCancel
     }
 
     // MARK: - Permissions
@@ -136,6 +165,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.addItem(accessibilityItem)
         menu.addItem(microphoneItem)
         menu.addItem(.separator())
+        menu.addItem(statsItem)
         menu.addItem(pasteLastItem)
         menu.addItem(.separator())
         menu.addItem(placeItem)
@@ -206,6 +236,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     // MARK: - History and settings
 
     @objc private func pasteLast() { runner.pasteLast() }
+
+    @objc private func showStatistics() {
+        var hint = ""
+        if let spec = trigger.spec {
+            switch config.mode {
+            case .auto: hint = "Hold or tap \(spec.label) and speak"
+            case .hold: hint = "Hold \(spec.label) and speak"
+            case .toggle: hint = "Tap \(spec.label) and speak"
+            }
+        }
+        stats.show(hint: hint)
+    }
 
     /// .env in the default text editor; Reload Settings applies what the app
     /// reads, and the scripts read it on their next run anyway.
@@ -352,6 +394,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     @objc private func quit() {
         // A clean exit: the LaunchAgent restarts Sayit only after a crash.
+        quitting = true
         NSApp.terminate(nil)
     }
 }
