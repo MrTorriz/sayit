@@ -416,6 +416,11 @@ The menu itself:
 - **Paste Last Dictation** — pastes the newest history entry again into the
   window in front (`sayit-history --inject last`), for a paste that went to the
   wrong place.
+- **Statistics and History…** — a window with what you have dictated: words, speaking
+  time, pace and time saved against typing at `TYPING_WPM`, for today, 7 days,
+  30 days or all time, and the history to search and copy from. Opening
+  Sayit.app again while it runs opens it too. Sayit has a Dock icon while the
+  window is open; Cmd+Q closes the window and leaves the trigger running.
 - **Place Indicator** / **Done Placing**.
 - **Probe Trigger**, checked while the probe runs.
 - **Open Settings…** — opens `.env` in your default text editor.

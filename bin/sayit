@@ -74,16 +74,21 @@ MODE="${1:-toggle}"
 # monotonic uptime, stage and a numeric extra as CSV. Never any dictated text.
 mark() {
     [[ -n "${SAYIT_PROFILE:-}" ]] || return 0
-    local up boot now
+    local up now
     if [[ -r /proc/uptime ]]; then
         read -r up _ < /proc/uptime
     else
         # macOS: seconds since boot from kern.boottime ("{ sec = N, usec = M } ...").
-        boot=$(sysctl -n kern.boottime 2>/dev/null) || boot=""
-        boot="${boot#*sec = }"; boot="${boot%%,*}"
-        [[ "$boot" =~ ^[0-9]+$ ]] || boot=0
+        # Asked once and handed on to sayit-transcribe: a sysctl per mark
+        # cost more than most of the stages being timed.
+        if [[ ! "${SAYIT_BOOT:-}" =~ ^[0-9]+$ ]]; then
+            SAYIT_BOOT=$(sysctl -n kern.boottime 2>/dev/null) || SAYIT_BOOT=""
+            SAYIT_BOOT="${SAYIT_BOOT#*sec = }"; SAYIT_BOOT="${SAYIT_BOOT%%,*}"
+            [[ "$SAYIT_BOOT" =~ ^[0-9]+$ ]] || SAYIT_BOOT=0
+            export SAYIT_BOOT
+        fi
         now="${EPOCHREALTIME/,/.}"
-        up="$(( ${now%.*} - boot )).${now#*.}"
+        up="$(( ${now%.*} - SAYIT_BOOT )).${now#*.}"
     fi
     printf '%s,%s,%s,%s,%s\n' "${SAYIT_PROFILE_RUN:-0}" "${EPOCHREALTIME/,/.}" "$up" \
         "$1" "${2:-}" >> "$RUN_DIR/sayit-profile.csv"
@@ -145,7 +150,25 @@ notify() {
 # RECORDING_METER for the OSD meter) live inside sayit-indicator itself, so
 # the two stay independent and hide always reaches a running meter.
 indicator() {
+    # macOS: the indicator is a marker file Sayit.app watches. The two lines
+    # of bin/sayit-indicator's Darwin branch are repeated here, because
+    # starting that script cost 11 ms between the release and the paste.
+    if [[ "$OSTYPE" == darwin* ]]; then
+        case "${1:-}" in
+            show) [[ "${RECORDING_INDICATOR:-1}" == "0" ]] || : > "$RUN_DIR/sayit.indicator.on" ;;
+            hide) rm -f "$RUN_DIR/sayit.indicator.on" ;;
+        esac 2>/dev/null || true
+        return 0
+    fi
     "$REPO_ROOT/bin/sayit-indicator" "$@" 2>/dev/null || true
+}
+
+# Restore the headset's previous profile. macOS switches a headset by itself
+# when capture opens and closes it, so sayit-bt has nothing to do there and
+# is not started at all: it would only stand between the release and the text.
+bt_down() {
+    [[ "$OSTYPE" == darwin* ]] && return 0
+    "$REPO_ROOT/bin/sayit-bt" down 2>/dev/null || true
 }
 
 # macOS keeps only the last status. A stop or cancel that finds no session
@@ -212,9 +235,12 @@ stop_recorder() {
     kill -INT "$REC_PID" 2>/dev/null || true
     # Generous SIGINT window (~2 s): a recorder that received the signal and
     # is flushing must never be interrupted mid-finalization by the fallback.
-    for _ in $(seq 1 100); do
+    # The first looks come quickly: a recorder is normally gone within a few
+    # milliseconds, and a whole 20 ms sleep there was time before the text.
+    local i
+    for i in $(seq 1 120); do
         kill -0 "$REC_PID" 2>/dev/null || return 0
-        sleep 0.02
+        if (( i <= 20 )); then sleep 0.005; else sleep 0.02; fi
     done
     kill -TERM "$REC_PID" 2>/dev/null || true
     for _ in $(seq 1 50); do
@@ -345,6 +371,10 @@ start_recording() {
     # available — empty when no Bluetooth headset is connected.
     if [[ -n "${AUDIO_SOURCE:-}" ]]; then
         SOURCE="$AUDIO_SOURCE"
+    elif [[ "$OSTYPE" == darwin* ]]; then
+        # Nothing to switch on macOS (see bt_down), and here the script would
+        # delay the recorder itself: the microphone opens that much sooner.
+        SOURCE=""
     else
         # stderr to the error log, not /dev/null: a switch that keeps failing
         # would otherwise be invisible — recording silently falls back to the
@@ -400,7 +430,7 @@ start_recording() {
         printf '%s start: could not commit the session file\n' \
             "$(date -Iseconds)" >> "$ERROR_LOG" 2>/dev/null || true
         indicator hide
-        "$REPO_ROOT/bin/sayit-bt" down 2>/dev/null || true
+        bt_down
         notify "Recording failed to start — check the microphone" error
         return 1
     fi
@@ -417,7 +447,7 @@ start_recording() {
             && mv "$SESSION_FILE" "$SESSION_FILE.claimed.$$" 2>/dev/null; then
             rm -f "$SESSION_FILE.claimed.$$" "$wav" "${wav%.wav}.segments"
             indicator hide
-            "$REPO_ROOT/bin/sayit-bt" down 2>/dev/null || true
+            bt_down
             start_failed "$errmark"
             return 1
         fi
@@ -444,7 +474,7 @@ stop_and_inject() {
     # narrow on purpose — it never hides the indicator (a newer session may
     # own it by then) and is dropped as soon as the recorder is down.
     trap 'stop_recorder 2>/dev/null || true;
-          "$REPO_ROOT/bin/sayit-bt" down 2>/dev/null || true; exit 130' INT TERM HUP
+          bt_down; exit 130' INT TERM HUP
     await_session
     if ! claim_session; then
         trap - INT TERM HUP
@@ -467,7 +497,7 @@ stop_and_inject() {
     END="${EPOCHREALTIME/,/.}"
 
     # Restore the headset's previous profile (A2DP) once recording is done.
-    "$REPO_ROOT/bin/sayit-bt" down 2>/dev/null || true
+    bt_down
     mark bt_down.end
     # Recorder stopped and profile restored — nothing hot remains to protect.
     trap - INT TERM HUP
@@ -547,7 +577,7 @@ print(json.dumps({
 
 cancel_recording() {
     trap 'stop_recorder 2>/dev/null || true;
-          "$REPO_ROOT/bin/sayit-bt" down 2>/dev/null || true; exit 130' INT TERM HUP
+          bt_down; exit 130' INT TERM HUP
     await_session
     if ! claim_session; then
         trap - INT TERM HUP
@@ -560,7 +590,7 @@ cancel_recording() {
     rm -f "${REC_WAV%.wav}.segments"
     stop_recorder
     rm -f "$REC_WAV" "${REC_WAV%.wav}-part-"*
-    "$REPO_ROOT/bin/sayit-bt" down 2>/dev/null || true
+    bt_down
     trap - INT TERM HUP
     notify "Recording cancelled — nothing injected"
 }

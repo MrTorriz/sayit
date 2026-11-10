@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+- macOS: a Statistics window. **Statistics and History…** in the menu bar item, or
+  opening Sayit.app again while it runs, shows words, speaking time, pace and
+  time saved against typing (`TYPING_WPM`) for today, 7 days, 30 days or all
+  time, with words per hour, day or week, the time of day you dictate, day
+  streaks, and the history to search and copy from. It reads `history.jsonl`
+  and writes nothing. While it is open Sayit has a Dock icon; Cmd+Q and the
+  Dock's Quit close the window, and the trigger keeps running.
+- macOS: about 30 ms less between the release and the text, and the
+  microphone opens about 20 ms sooner. `bin/sayit` no longer starts
+  `sayit-bt` and `sayit-indicator` there (both were one-line no-ops costing a
+  bash start each), looks for the stopped recorder every 5 ms at first
+  instead of every 20, and `SAYIT_PROFILE=1` asks for the boot time once per
+  dictation instead of at every mark.
 - `SPOKEN_PUNCTUATION=1` turns spoken punctuation into marks: "frågetecken",
   "utropstecken", "kommatecken", "kolon" and "semikolon" attach to the word
   before them and replace the punctuation the model added, and "snedstreck"

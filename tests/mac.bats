@@ -321,8 +321,9 @@ EOF
 }
 
 # --- bin/sayit --------------------------------------------------------------
-# The real sayit-bt, sayit-record, sayit-inject and sayit-indicator run here,
-# down their macOS branches; only sayit-transcribe and the helpers are stubs.
+# The real sayit-record and sayit-inject run here, down their macOS branches;
+# only sayit-transcribe and the helpers are stubs. sayit-bt and sayit-indicator
+# are not started at all on macOS: bin/sayit keeps the marker itself.
 
 sayit_sandbox() {
     # --part logs the piece and the previous text it was given on stdin;
@@ -371,6 +372,33 @@ EOF
         "$XDG_DATA_HOME/sayit/history.jsonl"
     # notify-send is never used on macOS, even where one is installed.
     [ ! -f "$STUB_CTL/linux.log" ]
+}
+
+@test "a dictation starts neither sayit-bt nor sayit-indicator: nothing stands before the paste" {
+    sayit_sandbox
+    for tool in sayit-bt sayit-indicator; do
+        printf '#!/usr/bin/env bash\necho "%s $*" >> "$STUB_CTL/spawned.log"\n' "$tool" > "$SANDBOX/bin/$tool"
+        chmod +x "$SANDBOX/bin/$tool"
+    done
+    run "$SAYIT" start
+    [ "$status" -eq 0 ]
+    [ -f "$MARKER" ]
+    run "$SAYIT" stop
+    [ "$status" -eq 0 ]
+    [ ! -f "$MARKER" ]
+    [ "$(cat "$STUB_CTL/paste.stdin")" = "START FINAL" ]
+    [ ! -f "$STUB_CTL/spawned.log" ]
+}
+
+@test "RECORDING_INDICATOR=0 keeps the marker away for a whole dictation" {
+    sayit_sandbox
+    RECORDING_INDICATOR=0 run "$SAYIT" start
+    [ "$status" -eq 0 ]
+    [ -f "$SESSION" ]
+    [ ! -f "$MARKER" ]
+    run "$SAYIT" stop
+    [ "$status" -eq 0 ]
+    [ ! -f "$MARKER" ]
 }
 
 @test "a Done status never carries the dictated text, while history keeps it" {
