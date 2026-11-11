@@ -98,11 +98,11 @@ final class PillView: NSView {
         let G = PillGeometry.self
         let lit = G.lampLit
         let width = G.pillWidth - x
+        let red = NSColor(srgbRed: lit[0], green: lit[1], blue: lit[2], alpha: 1)
         func text(_ points: CGFloat) -> NSAttributedString {
-            NSAttributedString(string: "No sound from the mic", attributes: [
-                .font: NSFont.systemFont(ofSize: points, weight: .semibold),
-                .foregroundColor: NSColor(srgbRed: lit[0], green: lit[1], blue: lit[2], alpha: 1),
-            ])
+            let font = NSFont.systemFont(ofSize: points, weight: .semibold)
+            let attributes: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: red]
+            return NSAttributedString(string: "No sound from the mic", attributes: attributes)
         }
         // 11.5 points across the transient pill; smaller beside the lamp, so
         // that it keeps 6 points from the edge.

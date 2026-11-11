@@ -293,6 +293,9 @@ private extension View {
                                                   startPoint: .top, endPoint: .bottom), lineWidth: 0.75)
                     .allowsHitTesting(false)
             }
+        // Liquid Glass needs the macOS 26 SDK to build (Swift 6.2 and later)
+        // and macOS 26 to run; anything older gets the lift and the hairline.
+        #if compiler(>=6.2)
         if #available(macOS 26.0, *) {
             // Behind the content rather than around it: glass gives what it
             // holds a vibrant treatment that greys the lockup's outlines.
@@ -302,6 +305,9 @@ private extension View {
         } else {
             body
         }
+        #else
+        body
+        #endif
     }
 
     func card() -> some View {
@@ -555,14 +561,16 @@ private struct OverviewView: View {
 
     /// The left panel's width in the wide layout.
     private static let panelWidth: CGFloat = 380
+    /// The narrowest window for the wide layout: the panel, the calendar and
+    /// two 170-point columns of tiles, the gaps and the margins.
+    private static let wideWidth: CGFloat = panelWidth + YearView.cardWidth + 340 + 24 + 40
 
     var body: some View {
         GeometryReader { geo in
             // Wide and tall enough for the panel beside the charts, with the
             // calendar and two columns of tiles under them, as a quarter of
             // an ultrawide screen is: everything at once, nothing to scroll.
-            if geo.size.width >= Self.panelWidth + YearView.cardWidth + 2 * 170 + 2 * 12 + 40,
-               geo.size.height >= 520 {
+            if geo.size.width >= Self.wideWidth && geo.size.height >= 520 {
                 wide
             } else {
                 narrow
@@ -827,7 +835,7 @@ private struct WordsChart: View {
                             let h = max(3, bottom - y(b.words))
                             let rect = CGRect(x: cx - w / 2, y: bottom - h, width: w, height: h)
                             let now = i == current
-                            let alpha = dim ? 0.28 : now ? 1 : 0.72
+                            let alpha: Double = dim ? 0.28 : (now ? 1 : 0.72)
                             ctx.fill(Path(roundedRect: rect, cornerRadius: min(w / 2, 6, h / 2)),
                                      with: .color(StatsTheme.red.opacity(alpha)))
                         } else {
@@ -907,8 +915,12 @@ private struct YearView: View {
             + (n > 0 ? " · \(n.grouped) \(n == 1 ? "word" : "words")" : " · nothing dictated")
     }
 
+    /// The red's opacity per level, 1 to 4.
+    private static let shades: [Double] = [0, 0.3, 0.52, 0.76, 1]
+
     private static func fill(_ level: Int) -> Color {
-        level == 0 ? Color.primary.opacity(0.07) : StatsTheme.red.opacity([0, 0.3, 0.52, 0.76, 1][min(level, 4)])
+        if level <= 0 { return Color.primary.opacity(0.07) }
+        return StatsTheme.red.opacity(shades[min(level, 4)])
     }
 
     var body: some View {
@@ -930,10 +942,11 @@ private struct YearView: View {
                                 if hovered != nil { onHover(nil) }
                                 return
                             }
-                            let c = Int((p.x - Self.labelWidth) / step), r = Int((p.y - Self.monthHeight) / step)
+                            let c = Int((p.x - Self.labelWidth) / step)
+                            let r = Int((p.y - Self.monthHeight) / step)
                             let i = c * 7 + r
-                            let found = p.x >= Self.labelWidth && p.y >= Self.monthHeight && (0..<7).contains(r)
-                                && year.words.indices.contains(i) ? i : nil
+                            let inside = p.x >= Self.labelWidth && p.y >= Self.monthHeight && r < 7
+                            let found: Int? = inside && year.words.indices.contains(i) ? i : nil
                             if found != hovered { onHover(found) }
                         }
                 }
