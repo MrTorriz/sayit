@@ -123,6 +123,30 @@ $script:LampUnlit = @(0.42, 0.13, 0.15)
 $script:InkRgb    = @(1, 1, 1)
 $script:PillRgb   = @(0, 0, 0)
 
+# --- a microphone that hears nothing ----------------------------------------
+# The recorder writes "s" instead of a level while every sample of the
+# recording so far has been exactly zero: muted, the wrong device, or no
+# permission. After SilentAfterS of it the meter gives way to WarningText in
+# the lamp's red. A working microphone is never exactly zero, even in a silent
+# room, and the wait passes the zeros a Bluetooth headset hands over while it
+# wakes up.
+$script:SilentAfterS = 1.5
+$script:WarningText = 'No sound from the mic'
+$script:WarningSize = 11.5   # pixels across the pill; smaller beside the lamp
+
+# The level file's text as a level 0..7 and whether it is the silent mark.
+# Anything unreadable is level 0, not silent.
+function ConvertFrom-SayitLevelText {
+    param([string]$Text)
+    $t = if ($Text) { $Text.Trim() } else { '' }
+    if ($t -eq 's') { return @{ Level = 0.0; Silent = $true } }
+    $n = 0
+    if ([int]::TryParse($t, [ref]$n) -and $n -ge 0 -and $n -le 7) {
+        return @{ Level = [double]$n; Silent = $false }
+    }
+    return @{ Level = 0.0; Silent = $false }
+}
+
 # --- the wordmark -----------------------------------------------------------
 # "sayit" as outlines rather than as text, so the pill draws identically on a
 # machine that has never heard of the font. Nothing at runtime asks for a font

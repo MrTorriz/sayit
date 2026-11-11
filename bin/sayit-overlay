@@ -37,7 +37,12 @@
 #     retain lamp, ten-bar meter and wordmark; those bars follow the level
 #     alone. Both meters grow symmetrically about the pill's centre line and
 #     stand still when nothing drives them. The wordmark is stored as
-#     outlines, so no font is needed at runtime.
+#     outlines, so no font is needed for it.
+#   - A microphone that delivers nothing but zeros for SILENT_AFTER_S -- muted,
+#     the wrong source, or no permission -- turns the meter into the words
+#     "No sound from the mic" in the lamp's red, while the trigger is still
+#     held. A working microphone is never exactly zero, even in a silent
+#     room, so a pause never sets it off. The one text drawn with a font.
 #   - In resident mode the lamp distinguishes three states. Microphone closed:
 #     a dark lamp. Open but silent: a steady lamp, the meter at rest.
 #     Open and speaking: the same steady lamp, and the meter is the ONLY
@@ -92,7 +97,13 @@ FPS_MS = 33                         # ~30 fps redraw, independent of audio rate
 # that audio has started. A resident pill runs for the whole session.
 IDLE_FPS_MS = 250
 AUDIO_IDLE_S = 0.4                  # no audio for this long = mic closed
+RATE = 8000                         # samples a second from sayit-meter
 CHUNK = 2000                        # 125 ms of 8 kHz s16 mono
+# Nothing but zeros for this long = a microphone that hears nothing at all.
+# Long enough to pass the zeros a Bluetooth headset can deliver as it wakes.
+SILENT_AFTER_S = 1.5
+WARNING = "No sound from the mic"
+WARNING_PT = 11.5                   # its size across the pill, smaller beside the lamp
 EASE = 0.35                         # level smoothing per frame
 PLACE_TIMEOUT_FRAMES = 180 * 1000 // FPS_MS   # --place gives up after 3 min
 # RMS thresholds (s16 samples) -> level 0..7, matching bin/sayit-meter.
@@ -523,6 +534,51 @@ def _test_state(active, level=0.0, place_mode=False):
     }
 
 
+class SilenceWatch:
+    """Is this recording digital silence? Counts the samples until one of
+    them is not zero; from then on the answer is no for the whole recording."""
+
+    def __init__(self, rate=RATE):
+        self.rate = rate
+        self.reset()
+
+    def reset(self):
+        self.heard = False
+        self.zeros = 0
+
+    def feed(self, samples):
+        if self.heard:
+            return
+        if any(samples):
+            self.heard = True
+        else:
+            self.zeros += len(samples)
+
+    @property
+    def silent(self):
+        return not self.heard and self.zeros >= SILENT_AFTER_S * self.rate
+
+
+def draw_warning(cr, x0):
+    """WARNING in the lamp's red, centred in the pill from x0 on, at
+    WARNING_PT or as much smaller as keeps it 6 px from the edge."""
+    import cairo
+    cr.select_font_face("sans-serif", cairo.FONT_SLANT_NORMAL, cairo.FONT_WEIGHT_BOLD)
+    width = WIDTH - x0
+    size = WARNING_PT
+    cr.set_font_size(size)
+    ext = cr.text_extents(WARNING)
+    room = width - 12
+    if ext.width > room:
+        size = max(8.0, size * room / ext.width)
+        cr.set_font_size(size)
+        ext = cr.text_extents(WARNING)
+    cr.set_source_rgb(*LAMP_LIT)
+    cr.move_to(x0 + (width - ext.width) / 2 - ext.x_bearing,
+               HEIGHT / 2.0 - (ext.height / 2 + ext.y_bearing))
+    cr.show_text(WARNING)
+
+
 def rounded_rect(cr, x, y, w, h, r):
     r = min(r, w / 2, h / 2)
     cr.new_sub_path()
@@ -555,6 +611,7 @@ class Overlay:
         self.shown = 0.0             # eased value actually drawn
         self.phase = 0.0             # seconds of audio, drives the voice wave
         self.phase_at = None         # monotonic time of the last phase step
+        self.silence = SilenceWatch()  # this recording's audio, zeros so far
         self.frame = 0
         self.drag = None
 
@@ -722,7 +779,9 @@ class Overlay:
         if active == self.active:
             return
         self.active = active
-        if not active:
+        if active:
+            self.silence.reset()        # a new recording
+        else:
             self.level = 0.0
         # No apply_layer here: the layer no longer follows the state.
         self.win.queue_draw()
@@ -782,7 +841,13 @@ class Overlay:
         cr.stroke()
 
         cy = HEIGHT / 2.0
-        if self.resident or self.place_mode:
+        if self.mic_open() and not self.place_mode and self.silence.silent:
+            x = 0.0
+            if self.resident:
+                draw_lamp(cr, CONTENT_X, cy, True)
+                x = CONTENT_X + LAMP_W + LAMP_GAP
+            draw_warning(cr, x)
+        elif self.resident or self.place_mode:
             x = CONTENT_X
             draw_lamp(cr, x, cy, self.mic_open())
             x += LAMP_W + LAMP_GAP
@@ -864,6 +929,7 @@ class Overlay:
             block, self.buf = self.buf[:CHUNK], self.buf[CHUNK:]
             count = len(block) // 2
             samples = struct.unpack("<%dh" % count, block[:count * 2])
+            self.silence.feed(samples)
             rms = math.sqrt(sum(s * s for s in samples) / count)
             self.level = float(sum(1 for t in LEVELS if rms >= t))
         return True

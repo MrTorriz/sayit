@@ -66,6 +66,7 @@ enum PillGeometry {
     static let levels: [Double] = [90, 200, 450, 900, 1800, 3500, 7000]
     static let ease: CGFloat = 0.35        // level smoothing per frame
     static let audioIdleS: Double = 0.4   // no level update for this long = mic closed
+    static let silentAfterS: Double = 1.5 // nothing but zeros this long = "No sound from the mic"
 
     // --- the wordmark -----------------------------------------------------
     // "sayit" as outlines, normalised to height 1.0 with the origin at the

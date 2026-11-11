@@ -126,9 +126,74 @@ struct Summary: Equatable {
     }
 }
 
+/// The calendar: words per day over the last `Stats.yearWeeks` weeks, one
+/// column a week from the calendar's first weekday, whatever the range.
+struct YearMap: Equatable {
+    /// The first day of the first column.
+    var start = Date.distantPast
+    /// Words per day from `start` to today, in order; the days after today in
+    /// the last column are not there.
+    var words: [Int] = []
+    /// Per day: 0 for no words, else 1 to 4, how dark the day is drawn.
+    var levels: [Int] = []
+    var total: Int { words.reduce(0, +) }
+}
+
 enum Stats {
     /// More days than this in "All time" and the chart goes by week.
     static let dailyBarLimit = 92
+    /// Columns in the calendar: a year, and the week it is in.
+    static let yearWeeks = 53
+
+    static func year(_ entries: [Dictation], now: Date = Date(), calendar: Calendar = .current) -> YearMap {
+        let today = calendar.startOfDay(for: now)
+        let thisWeek = calendar.dateInterval(of: .weekOfYear, for: today)?.start ?? today
+        let start = calendar.date(byAdding: .weekOfYear, value: -(yearWeeks - 1), to: thisWeek) ?? thisWeek
+        let count = (calendar.dateComponents([.day], from: start, to: today).day ?? 0) + 1
+        var out = YearMap(start: start, words: Array(repeating: 0, count: max(count, 0)))
+        let end = calendar.date(byAdding: .day, value: 1, to: today) ?? today
+        for entry in entries where entry.time >= start && entry.time < end {
+            // Whole calendar days, so a daylight saving change moves nothing.
+            guard let i = calendar.dateComponents([.day], from: start, to: calendar.startOfDay(for: entry.time)).day,
+                  out.words.indices.contains(i) else { continue }
+            out.words[i] += entry.words
+        }
+        out.levels = levels(out.words)
+        return out
+    }
+
+    /// The chart's scale for a busiest period of `peak` words: a round step,
+    /// 1, 2, 2.5 or 5 times a power of ten, that gives about four lines, and
+    /// the line at or above the peak. No words, no scale: (0, 0).
+    static func scale(_ peak: Int) -> (step: Int, top: Int) {
+        guard peak > 0 else { return (0, 0) }
+        let raw = Double(peak) / 4
+        let magnitude: Double = pow(10, floor(log10(raw)))
+        // A loop, not a chain of closures: older compilers give up on
+        // type-checking the one-liner.
+        var step: Double = 10 * magnitude
+        for factor: Double in [1, 2, 2.5, 5, 10] {
+            let candidate = factor * magnitude
+            if candidate >= raw && candidate >= 1 && candidate.rounded() == candidate {
+                step = candidate
+                break
+            }
+        }
+        let s = max(1, Int(step))
+        return (s, (peak + s - 1) / s * s)
+    }
+
+    /// How dark each day is: 1 to 4 by its share of a busy day, the 90th
+    /// percentile of the days with words, so one marathon does not leave
+    /// every other day pale. No words is 0.
+    static func levels(_ words: [Int]) -> [Int] {
+        let active = words.filter { $0 > 0 }.sorted()
+        guard !active.isEmpty else { return words.map { _ in 0 } }
+        let busy = Double(active[Int(Double(active.count - 1) * 0.9)])
+        return words.map { w in
+            w <= 0 ? 0 : min(4, max(1, Int((4 * Double(w) / busy).rounded(.up))))
+        }
+    }
 
     static func summarize(_ entries: [Dictation], range: StatsRange, now: Date = Date(),
                           calendar: Calendar = .current) -> Summary {

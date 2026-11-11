@@ -2,13 +2,31 @@
 
 ## Unreleased
 
+- The pill says **No sound from the mic** in red while you still hold the
+  trigger, when the microphone has delivered nothing but digital silence for
+  1.5 s: permission denied, input muted or the wrong device. A quiet room
+  never sets it off; a working microphone is never exactly zero. Before, only
+  the error log said so, after the release. Linux (overlay style), Windows
+  and macOS, from one `SILENT_AFTER_S` that `docs/check-geometry.py` keeps
+  equal on all three.
+- Snippets: say a cue on its own, "min signatur" or "my address", and the
+  text saved for it is pasted instead, line breaks included. One TSV line per
+  snippet in `~/.config/sayit/snippets.tsv` (or `SNIPPETS` in `.env`), cue and
+  text; `config/snippets.example.tsv` shows the format. The whole dictation
+  must be the cue, ignoring case and the punctuation at its ends. Linux and
+  macOS; new `bin/sayit-snippets`.
 - macOS: a Statistics window. **Statistics and History…** in the menu bar item, or
-  opening Sayit.app again while it runs, shows words, speaking time, pace and
-  time saved against typing (`TYPING_WPM`) for today, 7 days, 30 days or all
-  time, with words per hour, day or week, the time of day you dictate, day
-  streaks, and the history to search and copy from. It reads `history.jsonl`
-  and writes nothing. While it is open Sayit has a Dock icon; Cmd+Q and the
-  Dock's Quit close the window, and the trigger keeps running.
+  opening Sayit.app again while it runs, opens it on the top left quarter of
+  the screen. It shows the words dictated today, in 7 days, 30 days or all
+  time as one large number, the pace against typing (`TYPING_WPM`) and the
+  time saved, words per hour, day or week as bars against a scale that
+  follows the busiest period, a year of days as a calendar, the streak, peak
+  hour, best day and words per dictation, and the history to search and copy
+  from. It carries the README's lockup and red, on black glass (Liquid Glass
+  from macOS 26), and puts the panel beside the charts when the window is
+  wide. It reads `history.jsonl` and writes nothing. While it is open Sayit
+  has a Dock icon; Cmd+Q and the Dock's Quit close the window, and the
+  trigger keeps running.
 - macOS: about 30 ms less between the release and the text, and the
   microphone opens about 20 ms sooner. `bin/sayit` no longer starts
   `sayit-bt` and `sayit-indicator` there (both were one-line no-ops costing a
@@ -59,9 +77,10 @@
 - `install.sh` verifies a download by comparing its digest instead of piping
   a checklist to `sha256sum -c`, which Apple's `sha256sum` (macOS 27) rejects:
   the model download no longer fails with a false checksum mismatch there.
-- macOS: Sayit.app has an icon - the pill, with its lit lamp and ten-bar mark,
-  on a dark tile. `mac/Sources/Icon` draws it from the same geometry as the
-  logo at install time, and `iconutil` packs it into the bundle.
+- macOS: Sayit.app has an icon - the pill, with its lit lamp and the voice
+  wave it draws while you speak, on a dark tile. `mac/Sources/Icon` draws it
+  from the pill's own geometry at install time, and `iconutil` packs it into
+  the bundle.
 - Linux: the clipboard paste names its type (UTF-8 text) and retries a
   transient `wl-copy` failure once; `wl-copy` keeps its payload in the private
   runtime directory instead of `/tmp`; and the keycode-typing fallback is used

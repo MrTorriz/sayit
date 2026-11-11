@@ -284,6 +284,11 @@ $script:level = 0.0
 $script:voiceClock = New-Object System.Diagnostics.Stopwatch
 if ($script:micOpen) { $script:voiceClock.Start() }
 
+# How long the recorder has reported nothing but zeros, and whether that is
+# long enough to say so (SilentAfterS, lib\indicator-geometry.ps1).
+$script:silentClock = New-Object System.Diagnostics.Stopwatch
+$script:silent = $false
+
 function New-RgbColor {
     param([double[]]$Rgb)
     return [System.Drawing.Color]::FromArgb(255,
@@ -334,6 +339,39 @@ $form.Add_Paint({
     # the lamp, and speaking opens it out in both directions. The recording-only
     # pill draws the voice wave instead: 21 thin bars that rise in the middle
     # with the level and keep moving on their own while the microphone is open.
+    # --- the no-sound warning: the one text on the pill drawn with a font ---
+    if ($script:micOpen -and $script:silent) {
+    # A microphone that hears nothing at all: words in place of the meter and
+    # the wordmark, in the lamp's red, so the user can let go and fix it.
+    $x0 = 0.0
+    if ($Resident) {
+        $lampAt = Get-SayitLampRect
+        $x0 = $lampAt.X + $lampAt.Diameter + $script:LampGap
+    }
+    $width = $script:PillWidth - $x0
+    $typo = [System.Drawing.StringFormat]::GenericTypographic
+    $size = $script:WarningSize
+    $font = New-Object System.Drawing.Font('Segoe UI Semibold', [float]$size,
+        [System.Drawing.FontStyle]::Regular, [System.Drawing.GraphicsUnit]::Pixel)
+    $measured = $g.MeasureString($script:WarningText, $font, [int]1000, $typo)
+    if ($measured.Width -gt $width - 12) {
+        $size = [math]::Max(8.0, $size * ($width - 12) / $measured.Width)
+        $font.Dispose()
+        $font = New-Object System.Drawing.Font('Segoe UI Semibold', [float]$size,
+            [System.Drawing.FontStyle]::Regular, [System.Drawing.GraphicsUnit]::Pixel)
+        $measured = $g.MeasureString($script:WarningText, $font, [int]1000, $typo)
+    }
+    $g.TextRenderingHint = [System.Drawing.Text.TextRenderingHint]::AntiAliasGridFit
+    $warnBrush = New-Object System.Drawing.SolidBrush((New-RgbColor -Rgb $script:LampLit))
+    $g.DrawString($script:WarningText, $font, $warnBrush,
+                  [float]($x0 + ($width - $measured.Width) / 2.0),
+                  [float](($script:PillHeight - $measured.Height) / 2.0), $typo)
+    $warnBrush.Dispose()
+    $font.Dispose()
+    return
+    }
+    # --- end of the no-sound warning ---
+
     $barBrush = New-Object System.Drawing.SolidBrush($ink)
     $bars = if ($Resident) { Get-SayitBarRects -Level $script:level }
             else { Get-SayitVoiceBarRects -Level $script:level -Phase $script:voiceClock.Elapsed.TotalSeconds }
@@ -540,9 +578,16 @@ $timer.Add_Tick({
         if ($open) { $script:voiceClock.Start() } else { $script:voiceClock.Stop() }
 
         $targetLevel = 0.0
+        $silentNow = $false
         if ($open) {
-            try { $targetLevel = [double][int]([System.IO.File]::ReadAllText($levelFile)) } catch { }
+            $reading = @{ Level = 0.0; Silent = $false }
+            try { $reading = ConvertFrom-SayitLevelText -Text ([System.IO.File]::ReadAllText($levelFile)) } catch { }
+            $targetLevel = $reading.Level
+            $silentNow = $reading.Silent
         }
+        # Reset stops and zeroes the clock; Start is a no-op while it runs.
+        if ($silentNow) { $script:silentClock.Start() } else { $script:silentClock.Reset() }
+        $script:silent = $script:silentClock.Elapsed.TotalSeconds -ge $script:SilentAfterS
         $script:level += ($targetLevel - $script:level) * 0.35
         $visible = $Resident -or $open
         if ($visible) {

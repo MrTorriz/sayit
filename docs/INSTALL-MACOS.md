@@ -126,10 +126,10 @@ large:
 launchctl kickstart -k gui/$(id -u)/io.github.mrtorriz.sayit.daemon   # after editing an existing .env
 ```
 
-The app's icon is the pill itself, with its lit lamp and ten-bar mark, on a
-dark tile. `mac/install.sh` draws it at install time from the same geometry as
-the logo (`mac/Sources/Icon`), so it shows in Finder, Launchpad and System
-Settings.
+The app's icon is the pill itself, with its lit lamp and the voice wave it
+draws while you speak, on a dark tile. `mac/install.sh` draws it at install
+time from the pill's own geometry (`mac/Sources/Icon`), so it shows in Finder,
+Launchpad and System Settings.
 
 ## Granting Microphone and Accessibility
 
@@ -159,7 +159,12 @@ on first use.
 checks the authorization before it opens anything and exits with code 2 when
 it is denied. If a capture nonetheless comes back with a loudest sample of
 zero, it writes `digitally silent capture (peak 0)` to the error log rather
-than letting the empty transcription look like quiet speech.
+than letting the empty transcription look like quiet speech. It does not wait
+for the release to say so: after 1.5 s in which every sample was exactly zero
+the pill reads **No sound from the mic** in red instead of showing its bars,
+while there is still time to let go, fix the input and try again. A working
+microphone is never exactly zero, even in a silent room, so a quiet pause
+does not set it off.
 
 If either permission is missing, Sayit's menu shows **Allow Accessibility…** or
 **Allow Microphone…**, which open the right pane of System Settings.
@@ -357,7 +362,9 @@ windows. It is the pill the Linux overlay draws, with the same two lifetimes:
 
 The pill is 160x40 points, scaled by `INDICATOR_SCALE` (0.5 to 4.0). It never
 takes focus and never activates, and it is set to join every Space, full-screen
-ones included. The bars rest as a row of dots and move only with your voice;
+ones included. The bars rest as a row of dots and move only with your voice
+(a microphone that hears nothing at all turns them into **No sound from the
+mic**);
 the level comes from `sayit-rec`, which has already computed it, so the
 microphone is opened exactly once. The Linux meter opens a second capture
 stream for the same job.
@@ -418,7 +425,8 @@ The menu itself:
   wrong place.
 - **Statistics and History…** — a window with what you have dictated: words, speaking
   time, pace and time saved against typing at `TYPING_WPM`, for today, 7 days,
-  30 days or all time, and the history to search and copy from. Opening
+  30 days or all time, a year of days as a calendar, and the history to search
+  and copy from. It opens on the top left quarter of the screen. Opening
   Sayit.app again while it runs opens it too. Sayit has a Dock icon while the
   window is open; Cmd+Q closes the window and leaves the trigger running.
 - **Place Indicator** / **Done Placing**.

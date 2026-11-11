@@ -72,6 +72,7 @@ EOF
     unset WORDLIST 2>/dev/null || true
     unset INITIAL_PROMPT 2>/dev/null || true
     unset SPOKEN_PUNCTUATION 2>/dev/null || true
+    unset SNIPPETS 2>/dev/null || true
 
     TRANSCRIBE="$SANDBOX/bin/sayit-transcribe"
     WAV="$BATS_TEST_TMPDIR/test.wav"
@@ -217,6 +218,18 @@ EOF
     [ "$output" = "daemon slash from server frågetecken" ]
     WORDLIST="$WL" SPOKEN_PUNCTUATION=1 run "$TRANSCRIBE" "$WAV"
     [ "$output" = "daemon/from server?" ]
+}
+
+@test "a dictation that is a snippet cue becomes its text, after the wordlist" {
+    WL="$BATS_TEST_TMPDIR/wl.tsv"
+    printf 'daemon text\tmin\nfrom server\tsignatur\n' > "$WL"
+    SN="$BATS_TEST_TMPDIR/snippets.tsv"
+    printf 'min signatur\tMed vänliga hälsningar\\nAlex\n' > "$SN"
+    WORDLIST="$WL" SNIPPETS="$SN" run "$TRANSCRIBE" "$WAV"
+    [ "$status" -eq 0 ]
+    [ "$output" = $'Med vänliga hälsningar\nAlex' ]
+    SNIPPETS="$SN" run "$TRANSCRIBE" "$WAV"
+    [ "$output" = "daemon text from server" ]
 }
 
 @test "missing WAV argument fails with exit 1" {

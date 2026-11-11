@@ -194,7 +194,10 @@ notification.
 showing the `sayit` wordmark, a row of bars and a recording lamp. The bars follow
 your voice level and the lamp burns red while the microphone is open, so you can
 see that dictation hears you. It exists only while a recording does, and clicks
-pass straight through it, so it can never be in the way.
+pass straight through it, so it can never be in the way. If the microphone
+delivers nothing but digital silence for 1.5 s (muted, the wrong source), the
+bars give way to **No sound from the mic** in red while you still hold the
+trigger; a silent room never sets it off.
 
 ```bash
 ./bin/sayit-overlay --place            # drag the pill, Enter or Escape saves

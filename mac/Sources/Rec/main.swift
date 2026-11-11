@@ -35,6 +35,10 @@
 //     SIGTERM or SIGHUP, so even an abrupt end leaves a readable file.
 //   - The level (0..7, the overlay's RMS thresholds) is published every 125 ms
 //     to $RUN_DIR/sayit.level for Sayit's pill; the file is removed on exit.
+//     After PillGeometry.silentAfterS (1.5 s) in which every sample was
+//     exactly zero it is "s" instead:
+//     the input is muted, unpermitted or the wrong device, and the pill says
+//     so while there is still time to fix it.
 //     The microphone is opened exactly once - the pill needs no second stream.
 //   - A capture whose loudest sample is 0 is reported on stderr: on macOS that
 //     is what a denied microphone permission looks like, not an error.
@@ -264,7 +268,13 @@ final class LevelPublisher {
     private var fd: Int32 = -1
     private var inode: ino_t = 0
     private var block: [Int16] = []
+    private var blocks = 0
     private(set) var peak: Int32 = 0
+    /// Blocks of nothing but zeros before the level becomes "s":
+    /// PillGeometry.silentAfterS, past the zeros a Bluetooth microphone can
+    /// hand over while it wakes up. A working microphone is never exactly
+    /// zero, even in a silent room.
+    private static let silentBlocks = Int((PillGeometry.silentAfterS * 16000 / 2000).rounded())
 
     init() {
         fd = open(path, O_WRONLY | O_CREAT | O_TRUNC, 0o600)
@@ -287,8 +297,10 @@ final class LevelPublisher {
         for s in block { let v = Double(s); sum += v * v }
         let rms = (sum / Double(block.count)).squareRoot()
         block.removeAll(keepingCapacity: true)
+        blocks += 1
         guard fd >= 0 else { return }
-        var digit = UInt8(ascii: "0") + UInt8(PillGeometry.level(rms: rms))
+        var digit = peak == 0 && blocks >= Self.silentBlocks
+            ? UInt8(ascii: "s") : UInt8(ascii: "0") + UInt8(PillGeometry.level(rms: rms))
         _ = pwrite(fd, &digit, 1, 0)
     }
 
