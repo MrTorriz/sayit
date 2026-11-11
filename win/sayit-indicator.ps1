@@ -339,6 +339,7 @@ $form.Add_Paint({
     # the lamp, and speaking opens it out in both directions. The recording-only
     # pill draws the voice wave instead: 21 thin bars that rise in the middle
     # with the level and keep moving on their own while the microphone is open.
+    # --- the no-sound warning: the one text on the pill drawn with a font ---
     if ($script:micOpen -and $script:silent) {
     # A microphone that hears nothing at all: words in place of the meter and
     # the wordmark, in the lamp's red, so the user can let go and fix it.
@@ -369,6 +370,7 @@ $form.Add_Paint({
     $font.Dispose()
     return
     }
+    # --- end of the no-sound warning ---
 
     $barBrush = New-Object System.Drawing.SolidBrush($ink)
     $bars = if ($Resident) { Get-SayitBarRects -Level $script:level }

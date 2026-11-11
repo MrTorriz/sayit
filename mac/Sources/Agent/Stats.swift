@@ -168,9 +168,17 @@ enum Stats {
     static func scale(_ peak: Int) -> (step: Int, top: Int) {
         guard peak > 0 else { return (0, 0) }
         let raw = Double(peak) / 4
-        let magnitude = pow(10, floor(log10(raw)))
-        let step = [1, 2, 2.5, 5, 10].map { $0 * magnitude }.first { $0 >= raw && $0.rounded() == $0 && $0 >= 1 }
-            ?? 10 * magnitude
+        let magnitude: Double = pow(10, floor(log10(raw)))
+        // A loop, not a chain of closures: older compilers give up on
+        // type-checking the one-liner.
+        var step: Double = 10 * magnitude
+        for factor: Double in [1, 2, 2.5, 5, 10] {
+            let candidate = factor * magnitude
+            if candidate >= raw && candidate >= 1 && candidate.rounded() == candidate {
+                step = candidate
+                break
+            }
+        }
         let s = max(1, Int(step))
         return (s, (peak + s - 1) / s * s)
     }

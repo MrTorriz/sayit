@@ -171,11 +171,16 @@ Describe 'the wordmark' {
     It 'is drawn from stored outlines, with no font asked for at runtime' {
         $script:Wordmark.Count | Should -Be 123
         # Nothing may construct a Font or name a family: the repository is
-        # public and the pill must not change with the machine's fonts.
-        $script:IndicatorSource | Should -Not -Match 'System\.Drawing\.Font'
-        $script:IndicatorSource | Should -Not -Match 'FontFamily'
-        $script:IndicatorSource | Should -Not -Match 'DrawString'
-        $script:IndicatorSource | Should -Not -Match 'Libre Franklin'
+        # public and the pill must not change with the machine's fonts. The
+        # one exception is the no-sound warning, which is words by nature and
+        # appears only when something is wrong.
+        $marked = '(?s)# --- the no-sound warning:.*?# --- end of the no-sound warning ---'
+        $script:IndicatorSource | Should -Match $marked
+        $pill = [regex]::Replace($script:IndicatorSource, $marked, '')
+        $pill | Should -Not -Match 'System\.Drawing\.Font'
+        $pill | Should -Not -Match 'FontFamily'
+        $pill | Should -Not -Match 'DrawString'
+        $pill | Should -Not -Match 'Libre Franklin'
     }
 
     It 'keeps the proportions bin/sayit-overlay stores' {
