@@ -111,6 +111,7 @@ sequenceDiagram
     T->>W: raw text on stdin
     W-->>T: text with wordlist replacements
     Note over T: SPOKEN_PUNCTUATION=1: sayit-punctuation attaches spoken marks
+    Note over T: a dictation that is a snippet cue: sayit-snippets pastes its text
     S->>I: final text
     I->>I: save clipboard (text only), wl-copy text, ydotool Shift+Insert, guarded restore
     S->>S: append {time, seconds, words, text} to history.jsonl
@@ -128,6 +129,7 @@ sequenceDiagram
 | `sayit-transcribe` | Model I/O: daemon first, CLI fallback on transport errors, token cleanup, optional LLM pass |
 | `sayit-wordlist` | Pure text transform: stdin to stdout, TSV rules (unit-tested) |
 | `sayit-punctuation` | Pure text transform: spoken punctuation to marks, attached to the words around them (`SPOKEN_PUNCTUATION=1`, unit-tested) |
+| `sayit-snippets` | Pure text transform: a dictation that is a cue becomes its saved text (`SNIPPETS`, unit-tested) |
 | `sayit-inject` | Text delivery with a fallback chain per compositor, clipboard hygiene |
 | `sayit-indicator` | Persistent recording indicator (notification-based, safe fallbacks) |
 | `sayit-meter` | Live voice meter: picks a style, owns the capture stream and its cleanup; feedback only |
@@ -332,8 +334,9 @@ sequenceDiagram
 | `mac/Sources/Agent/Trigger.swift` | The event tap: the three modes, Escape, the modifier rule, the own-event signature |
 | `mac/Sources/Agent/Pill.swift` | The pill's two lifetimes, its position file and its animation |
 | `mac/Sources/Agent/Runner.swift` | Spawns `bin/sayit`; a stop waits for its start to have exited |
-| `mac/Sources/Agent/Stats.swift` | The Statistics window's numbers from `history.jsonl`: totals, bars per hour, day or week, streaks. Foundation only, unit-tested |
-| `mac/Sources/Agent/StatsWindow.swift` | The Statistics window itself (SwiftUI and Swift Charts): overview and searchable history. Reads the history while open, keeps nothing once closed |
+| `mac/Sources/Agent/Stats.swift` | The Statistics window's numbers from `history.jsonl`: totals, bars per hour, day or week, streaks, the year calendar. Foundation only, unit-tested |
+| `mac/Sources/Agent/StatsWindow.swift` | The Statistics window itself (SwiftUI): overview and searchable history. Reads the history while open, keeps nothing once closed |
+| `mac/Sources/Agent/Wordmark.swift` | The README's lockup for the window: the paths of `docs/logo-wordmark.svg` and a reader for them; `docs/check-geometry.py` keeps the two equal |
 | `mac/Sources/Rec/main.swift` | `sayit-rec` |
 | `mac/Sources/Rec/Segmenter.swift` | Where `sayit-rec` cuts a recording into pieces (`SEGMENT_WHILE_RECORDING`) |
 | `mac/Sources/Paste/main.swift` | `sayit-paste` |

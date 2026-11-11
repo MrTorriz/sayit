@@ -1,0 +1,57 @@
+#!/usr/bin/env bash
+# sayit-snippets — expand a spoken shortcut into its saved text
+#
+# Usage:
+#   sayit-snippets <snippets.tsv> < input > output
+#
+# Arguments:
+#   snippets.tsv  TSV file: cue<TAB>text, # starts a comment line
+#
+# Behavior:
+#   - When the whole dictation is a cue, the output is that cue's text;
+#     otherwise the input passes through unchanged. A cue inside a longer
+#     dictation is left alone (the wordlist is for replacements in running
+#     text).
+#   - The comparison ignores case, the punctuation and spaces at either end,
+#     and runs of spaces inside, so "Min signatur." matches the cue
+#     "min signatur".
+#   - In the text, \n is a line break, \t a tab and \\ a backslash, so one
+#     line of the file can hold a signature or an address.
+#   - The first matching line wins. A missing or unreadable file passes the
+#     input through unchanged.
+#   - UTF-8 aware: å, ä and ö compare without regard to case as well.
+#
+# Exit codes:
+#   0  Success (including passthrough)
+
+set -euo pipefail
+
+TSV="${1:?Usage: sayit-snippets <snippets.tsv> < input}"
+
+exec perl -CSD -e '
+    my $tsv = shift;
+    my $text = do { local $/; <STDIN> };
+    sub norm {
+        my $s = lc shift;
+        $s =~ s/^[\s\p{P}]+//;
+        $s =~ s/[\s\p{P}]+$//;
+        $s =~ s/\s+/ /g;
+        return $s;
+    }
+    my $said = norm($text);
+    open my $fh, "<:encoding(UTF-8)", $tsv or do { print $text; exit 0 };
+    if (length $said) {
+        while (<$fh>) {
+            chomp;
+            s/\r$//;
+            next if /^\s*#/ || /^\s*$/;
+            my ($cue, $out) = split /\t/, $_, 2;
+            next unless defined $out && length($out) && length(norm($cue));
+            next unless norm($cue) eq $said;
+            $out =~ s/\\(n|t|\\)/$1 eq "n" ? "\n" : $1 eq "t" ? "\t" : "\\"/ge;
+            print $out;
+            exit 0;
+        }
+    }
+    print $text;
+' "$TSV"

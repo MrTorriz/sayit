@@ -32,6 +32,10 @@ MinScale and MaxScale are deliberately absent from the Windows check: the pill
 can be resized on Windows and cannot on Linux, so they answer to nothing in
 the overlay. The macOS scale limits live in the agent's settings, not here.
 
+The README's lockup in the macOS Statistics window
+(mac/Sources/Agent/Wordmark.swift) is a copy of docs/logo-wordmark.svg's
+paths, and is checked against them the same way.
+
 Runs anywhere Python does, PowerShell and Swift not required: the .ps1 and the
 .swift are read as text.
 
@@ -54,6 +58,8 @@ ROOT = pathlib.Path(__file__).resolve().parent.parent
 OVERLAY = ROOT / "bin" / "sayit-overlay"
 PS1 = ROOT / "win" / "lib" / "indicator-geometry.ps1"
 SWIFT = ROOT / "mac" / "Sources" / "Common" / "PillGeometry.swift"
+WORDMARK_SVG = ROOT / "docs" / "logo-wordmark.svg"
+WORDMARK_SWIFT = ROOT / "mac" / "Sources" / "Agent" / "Wordmark.swift"
 
 # PowerShell name, overlay name. Every plain number in the .ps1 that is not
 # derived and not Windows-only appears here; a new constant on either side
@@ -83,6 +89,7 @@ SCALARS = [
     ("LayoutGap", "LAYOUT_GAP"),
     ("WordmarkHeight", "WORDMARK_H"),
     ("WordmarkAspect", "WORDMARK_ASPECT"),
+    ("SilentAfterS", "SILENT_AFTER_S"),
 ] + [(camel("VOICE_" + n, True), "VOICE_" + n) for n in VOICE]
 
 VECTORS = [
@@ -112,6 +119,7 @@ SWIFT_SCALARS = [
     ("layoutGap", "LAYOUT_GAP"),
     ("ease", "EASE"),
     ("audioIdleS", "AUDIO_IDLE_S"),
+    ("silentAfterS", "SILENT_AFTER_S"),
     ("wordmarkHeight", "WORDMARK_H"),
     ("wordmarkAspect", "WORDMARK_ASPECT"),
 ] + [(camel("VOICE_" + n, False), "VOICE_" + n) for n in VOICE]
@@ -260,6 +268,24 @@ def compare(side, ov, state, py_marks):
     return faults
 
 
+def wordmark_faults():
+    """The Statistics window's lockup against the README's. The four paths
+    of docs/logo-wordmark.svg are, in order, SAY, IT, DON'T TYPE IT. and
+    SAY IT."""
+    svg = re.findall(r'<path class="\w" d="([^"]+)"', WORDMARK_SVG.read_text(encoding="utf-8"))
+    src = WORDMARK_SWIFT.read_text(encoding="utf-8")
+    faults = []
+    if len(svg) != 4:
+        return ["docs/logo-wordmark.svg has %d paths, not the four of the lockup" % len(svg)]
+    for name, d in zip(("say", "it", "dontTypeIt", "sayIt"), svg):
+        ours = re.search(r'static let %s = "([^"]+)"' % name, src)
+        if not ours:
+            faults.append("%s: not found in %s" % (name, WORDMARK_SWIFT.relative_to(ROOT).as_posix()))
+        elif d.split() != ours.group(1).split():
+            faults.append("%s differs from docs/logo-wordmark.svg" % name)
+    return faults
+
+
 def main():
     ov = load_overlay()
     state = ov._test_state(True)
@@ -281,6 +307,16 @@ def main():
                   "%d wordmark segments"
                   % (side.name, len(side.scalars), len(side.vectors) + len(side.colours),
                      len(py_marks)))
+
+    faults = wordmark_faults()
+    if faults:
+        print("the Statistics window's lockup has drifted from docs/logo-wordmark.svg:",
+              file=sys.stderr)
+        for f in faults:
+            print("  " + f, file=sys.stderr)
+        status = 1
+    else:
+        print("the Statistics window's lockup matches docs/logo-wordmark.svg: 4 paths")
     return status
 
 

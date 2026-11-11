@@ -415,3 +415,30 @@ Describe 'recording-only waveform' {
         $script:IndicatorSource | Should -Not -Match 'Write-Utf8Text -Path \$stateFile'
     }
 }
+
+Describe 'a microphone that hears nothing' {
+    It 'reads the level file as a level, or as the silent mark' {
+        $r = ConvertFrom-SayitLevelText -Text 's'
+        $r.Silent | Should -BeTrue
+        $r.Level | Should -Be 0
+        $r = ConvertFrom-SayitLevelText -Text "5`r`n"
+        $r.Silent | Should -BeFalse
+        $r.Level | Should -Be 5
+        foreach ($bad in @('', 'x', '9', '-1')) {
+            $r = ConvertFrom-SayitLevelText -Text $bad
+            $r.Silent | Should -BeFalse
+            $r.Level | Should -Be 0
+        }
+    }
+
+    It 'waits the same 1.5 s as the overlay and says the same words' {
+        $script:SilentAfterS | Should -Be 1.5
+        $script:WarningText | Should -Be 'No sound from the mic'
+    }
+
+    It 'shows the warning only while the microphone is open, after SilentAfterS of silence' {
+        $script:IndicatorSource | Should -Match 'if \(\$script:micOpen -and \$script:silent\)'
+        $script:IndicatorSource | Should -Match '\$script:silent = \$script:silentClock\.Elapsed\.TotalSeconds -ge \$script:SilentAfterS'
+        $script:IndicatorSource | Should -Match 'if \(\$silentNow\) \{ \$script:silentClock\.Start\(\) \} else \{ \$script:silentClock\.Reset\(\) \}'
+    }
+}

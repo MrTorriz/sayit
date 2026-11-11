@@ -13,7 +13,10 @@
 //   sayit.indicator.on   presence = recording; bin/sayit-indicator show/hide
 //   sayit.level          one digit 0..7 from sayit-rec, every 125 ms. Its
 //                        modification time is the "audio is arriving" signal,
-//                        which is also what sets the voice wave moving.
+//                        which is also what sets the voice wave moving. "s"
+//                        instead of a digit is a microphone that delivers
+//                        nothing but zeros: the pill then says "No sound from
+//                        the mic" in place of its meter.
 //   sayit.busy           presence = transcribing (bin/sayit); read only for
 //                        the menu bar icon - the pill itself goes at release.
 //
@@ -27,6 +30,8 @@ final class PillView: NSView {
     var residentStyle = false
     var lit = false
     var level: CGFloat = 0
+    /// The microphone delivers digital silence: say so instead of metering.
+    var silent = false
     var scale: CGFloat = 1
     /// The voice wave's motion, in seconds; it advances while audio arrives.
     var phase: CGFloat = 0
@@ -63,7 +68,15 @@ final class PillView: NSView {
         cg.strokePath()
 
         let cy = G.pillHeight / 2
-        if residentStyle {
+        if silent {
+            if residentStyle {
+                let r = G.lampWidth / 2
+                cg.addEllipse(in: CGRect(x: G.contentX, y: cy - r, width: 2 * r, height: 2 * r))
+                cg.setFillColor(color(G.lampLit))
+                cg.fillPath()
+            }
+            drawWarning(cy: cy, from: residentStyle ? G.contentX + G.lampWidth + G.lampGap : 0)
+        } else if residentStyle {
             var x = G.contentX
             let r = G.lampWidth / 2
             cg.addEllipse(in: CGRect(x: x, y: cy - r, width: 2 * r, height: 2 * r))
@@ -77,6 +90,27 @@ final class PillView: NSView {
             drawVoiceWave(cg, cy: cy)
         }
         cg.restoreGState()
+    }
+
+    /// "No sound from the mic", in the lamp's red, centred in the pill from x
+    /// on: the microphone is open but hears nothing at all.
+    private func drawWarning(cy: CGFloat, from x: CGFloat) {
+        let G = PillGeometry.self
+        let lit = G.lampLit
+        let width = G.pillWidth - x
+        func text(_ points: CGFloat) -> NSAttributedString {
+            NSAttributedString(string: "No sound from the mic", attributes: [
+                .font: NSFont.systemFont(ofSize: points, weight: .semibold),
+                .foregroundColor: NSColor(srgbRed: lit[0], green: lit[1], blue: lit[2], alpha: 1),
+            ])
+        }
+        // 11.5 points across the transient pill; smaller beside the lamp, so
+        // that it keeps 6 points from the edge.
+        var line = text(11.5)
+        let room = width - 12
+        if line.size().width > room { line = text(max(8, 11.5 * room / line.size().width)) }
+        let size = line.size()
+        line.draw(at: NSPoint(x: x + (width - size.width) / 2, y: cy - size.height / 2))
     }
 
     /// The meter, grown symmetrically about cy - a line of dots at rest.
@@ -269,18 +303,21 @@ final class PillController {
         timer?.tolerance = seconds / 5
     }
 
-    /// The level and how old it is, read without allocating.
-    private func readLevel() -> (CGFloat, Bool) {
+    /// The level, how old it is, and whether sayit-rec hears digital
+    /// silence ("s"), read without allocating.
+    private func readLevel() -> (level: CGFloat, fresh: Bool, silent: Bool) {
         var st = stat()
-        guard stat(levelPath, &st) == 0 else { return (0, false) }
+        guard stat(levelPath, &st) == 0 else { return (0, false, false) }
         let modified = Double(st.st_mtimespec.tv_sec) + Double(st.st_mtimespec.tv_nsec) / 1e9
         let fresh = Date().timeIntervalSince1970 - modified < PillGeometry.audioIdleS
         let fd = open(levelPath, O_RDONLY)
-        guard fd >= 0 else { return (0, fresh) }
+        guard fd >= 0 else { return (0, fresh, false) }
         defer { close(fd) }
         var byte: UInt8 = 0
-        guard read(fd, &byte, 1) == 1, byte >= UInt8(ascii: "0"), byte <= UInt8(ascii: "7") else { return (0, fresh) }
-        return (CGFloat(byte - UInt8(ascii: "0")), fresh)
+        guard read(fd, &byte, 1) == 1 else { return (0, fresh, false) }
+        if byte == UInt8(ascii: "s") { return (0, fresh, true) }
+        guard byte >= UInt8(ascii: "0"), byte <= UInt8(ascii: "7") else { return (0, fresh, false) }
+        return (CGFloat(byte - UInt8(ascii: "0")), fresh, false)
     }
 
     /// A marker file that exists and was written less than maxAge ago - a
@@ -292,13 +329,14 @@ final class PillController {
     }
 
     private func tick() {
-        let wasRecording = recording, wasOpen = micOpen, wasBusy = busy
+        let wasRecording = recording, wasOpen = micOpen, wasBusy = busy, wasSilent = view.silent
         let now = ProcessInfo.processInfo.systemUptime
         recording = FileManager.default.fileExists(atPath: markerPath)
         busy = !recording && isFresh(busyPath, maxAge: 120)
-        let (level, fresh) = readLevel()
+        let (level, fresh, silent) = readLevel()
         micOpen = fresh
         target = fresh ? level : 0
+        view.silent = fresh && silent
 
         if let p = panel, config.indicator, !config.resident, !placing {
             if recording && !p.isVisible {
@@ -312,7 +350,8 @@ final class PillController {
         if micOpen { view.phase += CGFloat(interval) }
         let before = view.level
         view.level += (target - view.level) * PillGeometry.ease
-        if abs(view.level - before) > 0.001 || micOpen != wasOpen || placing || (micOpen && view.level > 0.01) {
+        if abs(view.level - before) > 0.001 || micOpen != wasOpen || view.silent != wasSilent || placing
+            || (micOpen && view.level > 0.01) {
             view.needsDisplay = true
         }
         if recording != wasRecording || micOpen != wasOpen || busy != wasBusy { onChange?() }

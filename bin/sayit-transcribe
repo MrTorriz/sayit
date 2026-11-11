@@ -42,7 +42,11 @@
 #   - SPOKEN_PUNCTUATION=1: then turns spoken punctuation ("frågetecken",
 #     "slash") into marks, attached to the words around them
 #     (bin/sayit-punctuation)
-#   - Prints normalized text on stdout (no newlines, tabs or status lines).
+#   - Last, a dictation that is a cue in the snippets file (SNIPPETS, default
+#     ~/.config/sayit/snippets.tsv) becomes that cue's text
+#     (bin/sayit-snippets)
+#   - Prints normalized text on stdout (no status lines; newlines and tabs
+#     only where a snippet's text has them).
 #     stderr carries error classes only — never transcribed text.
 #
 # Exit codes:
@@ -272,7 +276,8 @@ except Exception:
 PYEOF
 }
 
-# LLM cleanup, the wordlist, spoken punctuation, then the text on stdout.
+# LLM cleanup, the wordlist, spoken punctuation, snippets, then the text on
+# stdout.
 finish() {
     # Optional LLM cleanup (contextual). Runs before the wordlist so that exact
     # replacements always get the final say on domain terms.
@@ -292,6 +297,13 @@ finish() {
     # a mark gets its spacing right as well.
     if [[ "$SPOKEN_PUNCTUATION" == "1" && -n "${RAW// }" ]]; then
         RAW=$(printf '%s' "$RAW" | "$REPO_ROOT/bin/sayit-punctuation")
+    fi
+
+    # Snippets last: the cue is matched against the text as it would
+    # otherwise have been pasted, corrections and marks included.
+    SNIPPETS="${SNIPPETS:-${XDG_CONFIG_HOME:-$HOME/.config}/sayit/snippets.tsv}"
+    if [[ -f "$SNIPPETS" && -n "${RAW// }" ]]; then
+        RAW=$(printf '%s' "$RAW" | "$REPO_ROOT/bin/sayit-snippets" "$SNIPPETS")
     fi
 
     printf '%s' "$RAW"

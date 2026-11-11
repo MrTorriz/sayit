@@ -205,11 +205,19 @@ namespace Sayit
         /// been computed for the silence check.
         public static string LevelFile = null;
 
-        private static void PublishLevel(int peakInBuffer)
+        /// silentSoFar: every sample of this recording so far was exactly zero.
+        /// The level is then "s", which the indicator turns into "No sound from
+        /// the mic" once it has lasted long enough to rule out a waking headset.
+        private static void PublishLevel(int peakInBuffer, bool silentSoFar)
         {
             if (LevelFile == null) { return; }
             try
             {
+                if (silentSoFar)
+                {
+                    File.WriteAllText(LevelFile, "s");
+                    return;
+                }
                 // 0..7, matching the eight level frames of the sayit mark.
                 int level = 0;
                 if (peakInBuffer > 0)
@@ -333,7 +341,7 @@ namespace Sayit
 
                                 int bufferPeak = 0;
                                 TrackPeak(scratch, hdr.dwBytesRecorded, ref bufferPeak);
-                                PublishLevel(bufferPeak);
+                                PublishLevel(bufferPeak, peakAmplitude == 0);
                             }
                             if (stopping)
                             {

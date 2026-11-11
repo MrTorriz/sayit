@@ -50,6 +50,7 @@ of them empty on purpose so the code can resolve a repo-relative path.
 | `TYPING_WPM` | `40` | all | Assumed typing speed for the time-saved statistic |
 | `WORDLIST` | platform default | all | Replacement wordlist. `~/.config/sayit/wordlist.tsv` on Linux and macOS, `%APPDATA%\sayit\wordlist.tsv` on Windows |
 | `SPOKEN_PUNCTUATION` | `0` | Linux, macOS | `1` turns spoken punctuation such as "frågetecken" and "slash" into marks. See [Spoken punctuation](#spoken-punctuation) |
+| `SNIPPETS` | `~/.config/sayit/snippets.tsv` | Linux, macOS | Spoken shortcuts: a dictation that is a cue becomes its saved text. No file, no snippets. See [Snippets](#snippets) |
 | `RECORDING_INDICATOR` | `1` | all | Linux: the persistent notification. Windows and macOS: the on-screen pill. `0` turns it off |
 | `LLM_CLEANUP` | `0` | Linux, macOS | `1` runs an LLM cleanup pass after transcription. **It sends the transcribed text to `LLM_URL`** |
 | `LLM_URL` | `http://127.0.0.1:11434/api/generate` | Linux, macOS | Endpoint for that pass. Loopback keeps the text on the machine; any other host does not |
@@ -71,11 +72,12 @@ of them empty on purpose so the code can resolve a repo-relative path.
 | `SEGMENT_WHILE_RECORDING` | `0` | macOS | `1` transcribes a long dictation piece by piece while you speak, so only the last piece is left at release. See [Transcribing while you speak](#transcribing-while-you-speak-macos) |
 
 The settings above the Windows section in `.env.example` were the Linux ones.
-`LLM_CLEANUP`, `LLM_URL`, `LLM_MODEL`, `SPOKEN_PUNCTUATION`, `RECORDING_METER`
-and `RECORDING_METER_STYLE` sit there because they were there first or belong
-to the shared transcriber, not because Windows reads them: no file under
-`win\` does. macOS runs the Linux transcriber, so it reads the three `LLM_*`
-settings and `SPOKEN_PUNCTUATION`, but not the two meter
+`LLM_CLEANUP`, `LLM_URL`, `LLM_MODEL`, `SPOKEN_PUNCTUATION`, `SNIPPETS`,
+`RECORDING_METER` and `RECORDING_METER_STYLE` sit there because they were
+there first or belong to the shared transcriber, not because Windows reads
+them: no file under `win\` does. macOS runs the Linux transcriber, so it
+reads the three `LLM_*` settings, `SPOKEN_PUNCTUATION` and `SNIPPETS`, but not
+the two meter
 settings — `Sayit.app` draws its own pill. Conversely, macOS reads several
 settings from the Windows section, deliberately under the same names, and adds
 five of its own in a section at the end of the file.
@@ -366,6 +368,35 @@ punctuation attaches it like the built-in words.
 
 Off by default, because it changes words you may mean literally. Windows
 does not read the setting.
+
+## Snippets
+
+Text you would otherwise type again and again, a signature, an address, a
+template, can be saved under a spoken cue (Linux and macOS). Say the cue on
+its own and the saved text is pasted instead of the words.
+
+Create `~/.config/sayit/snippets.tsv`, or point `SNIPPETS` in `.env` at
+another file. `config/snippets.example.tsv` has examples to start from. One
+snippet per line, the cue and the text separated by a TAB; `\n` in the text is
+a line break, `\t` a tab and `\\` a backslash:
+
+```text
+min signatur	Med vänliga hälsningar\nAlex
+my address	Example Street 1\n123 45 Exampletown
+```
+
+- The whole dictation must be the cue. "Min signatur." matches, "lägg till
+  min signatur" does not: a phrase inside running text is the wordlist's job.
+- Case, the punctuation at either end and extra spaces are ignored, so the
+  model's capital letter and final period do not stop a match.
+- Snippets run last, after the wordlist and spoken punctuation, so a cue is
+  matched against the text that would otherwise have been pasted.
+- The first line with a matching cue wins. Without the file nothing changes.
+- A line break is pasted as a line break. In a terminal without bracketed
+  paste that runs the line, so keep multi-line snippets for editors, mail and
+  chat. With `INJECT_METHOD=type` on macOS it is typed as Return.
+
+Windows does not read the setting.
 
 ## How .env is read
 

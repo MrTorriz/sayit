@@ -215,11 +215,13 @@ PY
 
 @test "the wordmark is stored as outlines, needing no font at runtime" {
     # A font that is missing, or simply different, must not change the pill.
+    # The one text drawn with a font is the no-sound warning, which is words
+    # by nature and appears only when something is wrong.
     run load_overlay "len(ov.WORDMARK) > 50"
     [ "$output" = "True" ]
     run load_overlay "sorted({s[0] for s in ov.WORDMARK}) == ['c', 'l', 'm', 'z']"
     [ "$output" = "True" ]
-    run bash -c "grep -cE 'show_text|text_path|Pango|toy_font|select_font_face' '$OVERLAY'"
+    run bash -c "sed '/^def draw_warning/,/^def rounded_rect/d' '$OVERLAY' | grep -cE 'show_text|text_path|Pango|toy_font|select_font_face'"
     [ "$output" = "0" ]
 }
 
@@ -341,4 +343,32 @@ PY
     WAYLAND_DISPLAY= run "$OVERLAY" --place
     [ "$status" -eq 0 ]
     [ -z "$output" ]
+}
+
+# --- a microphone that hears nothing --------------------------------------
+# Nothing but zeros for SILENT_AFTER_S turns the meter into WARNING; one
+# sample that is not zero settles it for the rest of the recording.
+
+@test "digital silence is reported after SILENT_AFTER_S, and not before" {
+    run load_overlay "(ov.SILENT_AFTER_S, ov.WARNING)"
+    [ "$output" = "(1.5, 'No sound from the mic')" ]
+    run load_overlay "[(w.feed([0] * 2000), w.silent)[1] for w in [ov.SilenceWatch()] for _ in range(6)]"
+    [ "$output" = "[False, False, False, False, False, True]" ]
+}
+
+@test "one sample that is not zero means a working microphone for the whole recording" {
+    run load_overlay "[(w.feed([0] * 2000), w.feed([0] * 1999 + [1]), [w.feed([0] * 2000) for _ in range(9)], w.silent)[3] for w in [ov.SilenceWatch()]]"
+    [ "$output" = "[False]" ]
+}
+
+@test "a new recording starts the count again" {
+    run load_overlay "[(w.feed([0] * 12000), w.silent, w.reset(), w.silent, w.feed([0] * 12000), w.silent) for w in [ov.SilenceWatch()]][0][1::2]"
+    [ "$output" = "(True, False, True)" ]
+}
+
+@test "the warning replaces the meter only while the microphone is open, never while placing" {
+    run bash -c "sed -n '/def on_draw/,/return False/p' '$OVERLAY' | grep -c 'self.mic_open() and not self.place_mode and self.silence.silent'"
+    [ "$output" = "1" ]
+    run bash -c "sed -n '/def set_active/,/queue_draw/p' '$OVERLAY' | grep -c 'self.silence.reset()'"
+    [ "$output" = "1" ]
 }

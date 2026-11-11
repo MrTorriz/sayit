@@ -48,6 +48,9 @@ details in the issue.
   [Linux guide](docs/INSTALL-LINUX.md#history-and-statistics) and
   [Windows guide](docs/INSTALL-WINDOWS.md#history-and-statistics) for usage,
   and [runtime state](docs/ARCHITECTURE.md#runtime-state) for storage paths.
+- Snippets (`~/.config/sayit/snippets.tsv`, Linux and macOS) are plain text
+  you wrote yourself, often an address or a signature. They stay in that file
+  and are pasted like any dictation, through the clipboard.
 - Diagnostics record error *classes* only — never dictated text, never audio.
   Profiling records stage names and timings, never text.
 

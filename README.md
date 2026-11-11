@@ -20,9 +20,9 @@
 
 Speech is recognised on your own machine by [whisper.cpp](https://github.com/ggml-org/whisper.cpp),
 on the GPU through Vulkan or Metal. The default model is
-[KB-Whisper](https://huggingface.co/KBLab/kb-whisper-medium), the National
-Library of Sweden's Swedish Whisper; any GGML Whisper model and language can
-be configured instead. No account, no subscription, no telemetry.
+[KB-Whisper](https://huggingface.co/KBLab), the National Library of Sweden's
+Swedish Whisper, medium or large on Apple Silicon; any GGML Whisper model and
+language can be configured instead. No account, no subscription, no telemetry.
 
 ## Highlights
 
@@ -34,11 +34,18 @@ be configured instead. No account, no subscription, no telemetry.
   microphone stays closed. On an Apple M6, KB-Whisper large returns a typical
   sentence in about a second.
 - **Clear feedback.** A small pill shows a live waveform while the microphone
-  is open, and only then.
-  All three platforms draw it from the same geometry.
+  is open, and only then. A microphone that hears nothing at all, muted or the
+  wrong one, is named in the pill while you still hold the button. All three
+  platforms draw it from the same geometry.
 - **Learns your vocabulary.** A wordlist fixes recurring mistakes
   (`sayit-learn "get hub" "GitHub"`), and a local history keeps what you
-  dictated, with speaking-speed statistics.
+  dictated.
+- **Shortcuts by voice.** Say a snippet's cue, "my signature", and its saved
+  text is pasted, line breaks included. Say "frågetecken" or "slash" and get
+  `?` or `/` in place. Linux and macOS.
+- **See how much you talk.** Words, speaking time, pace against typing, the
+  time saved and a year of days at a glance: in a Statistics window on macOS,
+  and from `sayit-history --stat` everywhere.
 - **Optional Turbo engine.** On Intel graphics, Linux and Windows can switch to
   Whisper large-v3-turbo on OpenVINO with one command, and back again.
 
@@ -54,6 +61,19 @@ and three small Swift programs for the parts macOS insists on doing natively.
 A warm local server answers each dictation, and a one-shot `whisper-cli` run
 takes over if it ever stops responding. The [architecture guide](docs/ARCHITECTURE.md)
 covers the design decisions in depth.
+
+## Statistics on macOS
+
+<p align="center">
+  <img src="docs/statistics-window.png" alt="The Statistics window with example data: the SAYIT lockup above 12,729 words in the last 30 days and speaking at 3.1 times the speed of typing; words per day as bars against a scale; a year of days as a red calendar; tiles for the streak, peak hour, best day and words per dictation" width="880">
+</p>
+
+**Statistics and History…** in the menu bar opens it on the top left quarter
+of the screen. Today, 7 days, 30 days or all time: the words and how long they
+took to say, your pace against typing at `TYPING_WPM`, words per hour, day or
+week against a scale that follows the busiest one, a year of days as a
+calendar, and the history to search and copy from. It reads the local history
+and writes nothing; the picture shows example data.
 
 ## Installation
 
@@ -133,6 +153,8 @@ promise which one recognises a given sentence best.
 | Optional Turbo | OpenVINO on Intel graphics | OpenVINO on Intel graphics | Not offered; large is fast on Metal |
 | Trigger | A mouse button via Solaar, or a global shortcut | Mouse 5, or another button or key | F18, or any key or mouse button |
 | Text delivery | `ydotool`, `wtype` or `xdotool` | Typing for short text, paste for long | `Cmd+V`, previous clipboard restored |
+| Snippets, spoken punctuation | Yes | Not yet | Yes |
+| Statistics | `sayit-history --stat` | `sayit-history.ps1 -Stat` | Statistics window, and `sayit-history --stat` |
 | Starts at login | systemd user services | Logon task | LaunchAgents |
 
 ## Everyday commands
@@ -145,10 +167,13 @@ promise which one recognises a given sentence best.
 | Show history | `./bin/sayit-history` | `.\win\sayit-history.ps1` |
 | Show statistics | `./bin/sayit-history --stat` | `.\win\sayit-history.ps1 -Stat` |
 | Teach a replacement | `./bin/sayit-learn "get hub" "GitHub"` | `.\win\sayit-learn.ps1 "get hub" "GitHub"` |
+| Save a snippet | a line in `~/.config/sayit/snippets.tsv` | — |
 
 The installation guides cover manual start and stop and indicator placement;
-[Configuration](docs/CONFIGURATION.md#custom-wordlist) explains the wordlist
-rules, models, languages and accuracy settings.
+[Configuration](docs/CONFIGURATION.md#custom-wordlist) explains the wordlist,
+[snippets](docs/CONFIGURATION.md#snippets),
+[spoken punctuation](docs/CONFIGURATION.md#spoken-punctuation), models,
+languages and accuracy settings.
 
 ## Performance
 
@@ -206,7 +231,7 @@ Pointing it at a remote HTTP address sends text to that host unencrypted.
 | [Windows installation](docs/INSTALL-WINDOWS.md) | Setup and everyday use on Windows 11 |
 | [macOS installation](docs/INSTALL-MACOS.md) | Setup, permissions and everyday use on macOS |
 | [Optional Turbo engine](docs/OPENVINO.md) | OpenVINO installation, switching and recovery |
-| [Configuration](docs/CONFIGURATION.md) | Settings, models, languages and wordlists |
+| [Configuration](docs/CONFIGURATION.md) | Settings, models, languages, wordlists and snippets |
 | [Troubleshooting](docs/TROUBLESHOOTING.md) | Symptoms, checks and fixes |
 | [Performance](docs/PERFORMANCE.md) | Measurements and their limits |
 | [Architecture](docs/ARCHITECTURE.md) | Pipelines, components and design decisions |

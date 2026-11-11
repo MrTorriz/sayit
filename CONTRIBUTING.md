@@ -255,8 +255,8 @@ which machine and desktop you exercised it on.
   one file: `bin/sayit-overlay` is Python because the pill is drawn through
   GTK and layer-shell bindings. Its `gi` imports are deliberately inside
   functions, so the file compiles and its tests run without GTK installed.
-  `bin/sayit-wordlist` and `bin/sayit-punctuation` shell out to perl for its
-  regex engine but are themselves bash scripts.
+  `bin/sayit-wordlist`, `bin/sayit-punctuation` and `bin/sayit-snippets` shell
+  out to perl for its regex engine but are themselves bash scripts.
 - CI dispatches on the shebang, so a new Python file goes through
   `py_compile` and a new shell file through `shellcheck` with no workflow
   change — as long as it lands inside one of the four globs above.
@@ -308,4 +308,4 @@ dictation locking and rollback. CI runs them in a separate Python job.
 For inference changes, also run `./bin/sayit-openvino --check` and speech/silence
 requests on supported hardware. A passing protocol suite does not establish
 GPU compatibility or transcription quality. Keep model files, personal audio,
-transcripts, `.env` and wordlists outside commits.
+transcripts, `.env`, wordlists and snippets outside commits.

@@ -263,9 +263,12 @@ daemon means "no speech" and is final. Same contract as the Linux side.
 ## Recording indicator
 
 `RECORDING_INDICATOR=1`, the default, shows a black rounded rectangle with
-26 white waveform bars while recording. There is no outline, red lamp or wordmark.
+21 white waveform bars while recording. There is no outline, red lamp or wordmark.
 The background process stays warm after login, but the window is hidden
-between recordings. The waveform matches the Linux transient overlay.
+between recordings. The waveform matches the Linux transient overlay. A
+microphone that delivers nothing but digital silence for 1.5 s (muted, the
+wrong device, or no permission) turns the bars into **No sound from the mic**
+in red while you still hold the trigger.
 
 ```powershell
 .\win\sayit-indicator.ps1 place   # preview, move and resize; records nothing

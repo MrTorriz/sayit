@@ -1,0 +1,13 @@
+# Snippets: say the cue on its own and the text is pasted instead.
+# Copy this file to ~/.config/sayit/snippets.tsv (or point SNIPPETS in .env at
+# another file) and replace the examples with your own.
+#
+# One snippet per line: the cue, a TAB, the text. The whole dictation must be
+# the cue; case and the punctuation at either end do not matter. In the text,
+# \n is a line break, \t a tab and \\ a backslash.
+#
+# cue	text
+my signature	Best regards,\nAlex
+min signatur	Med vänliga hälsningar\nAlex
+my address	Example Street 1\n123 45 Exampletown
+standup notes	Yesterday:\n-\nToday:\n-\nBlockers:\n-
