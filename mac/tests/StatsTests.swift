@@ -46,6 +46,7 @@ enum StatsTests {
         buckets()
         streaks()
         derived()
+        latencyAndApps()
         durations()
         year()
         levels()
@@ -190,6 +191,33 @@ enum StatsTests {
         check(s.savedSeconds(typingWPM: 200) == -30, "a fast typist loses time, and the number says so")
         check(s.typingSeconds(typingWPM: 0) == 0, "a typing speed of zero divides nothing")
         check(Summary().pace == 0, "no speech, no pace")
+    }
+
+    static func latencyAndApps() {
+        let text = """
+            {"time": "2026-11-12T09:00:00", "seconds": 4, "words": 30, "latency": 0.5, "app": " Terminal ", "text": "a"}
+            {"time": "2026-11-12T10:00:00", "seconds": 4, "words": 10, "latency": 0.75, "app": "Safari", "text": "b"}
+            {"time": "2026-11-11T10:00:00", "seconds": 4, "words": 20, "latency": 1.5, "app": "Safari", "text": "c"}
+            {"time": "2026-11-10T10:00:00", "seconds": 4, "words": 7, "latency": -1, "app": "", "text": "d"}
+            {"time": "2026-11-12T11:00:00", "seconds": 4, "words": 5, "latency": 0.25, "app": "Mail", "text": "e"}
+            """
+        let entries = History.parse(Data(text.utf8), calendar: calendar).entries
+        check(entries[0].app == "Terminal" && entries[0].latency == 0.5, "app is trimmed, latency read")
+        check(entries[3].latency == nil && entries[3].app == nil, "a negative latency and an empty app are nil")
+        let now = at("2026-11-12T12:00:00")
+        let week = Stats.summarize(entries, range: .week, now: now, calendar: calendar)
+        check(week.latencyCount == 4, "four latencies in the week, got \(week.latencyCount)")
+        check(week.latencyMedian == 0.625, "the median of an even count is the middle pair's mean, got \(String(describing: week.latencyMedian))")
+        check(week.latencySlowest == 1.5, "the slowest is the largest")
+        check(week.apps == [AppShare(name: "Safari", words: 30), AppShare(name: "Terminal", words: 30),
+                            AppShare(name: "Mail", words: 5)], "apps most words first, ties by name, got \(week.apps)")
+        check(week.appWords == 65, "only words with an app are shared out, got \(week.appWords)")
+        check(week.todayWords == 45 && week.todayDictations == 3, "today is today, got \(week.todayWords)")
+        let today = Stats.summarize(entries, range: .today, now: now, calendar: calendar)
+        check(today.latencyMedian == 0.5, "an odd count's median is the middle one, got \(String(describing: today.latencyMedian))")
+        check(today.todayWords == week.todayWords, "today does not depend on the range")
+        let old = Stats.summarize([entry("2026-11-12T09:00:00")], range: .week, now: now, calendar: calendar)
+        check(old.latencyMedian == nil && old.apps.isEmpty && old.latencyCount == 0, "older entries have neither")
     }
 
     static func durations() {

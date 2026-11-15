@@ -6,6 +6,13 @@ Everything lives in `.env`, created from [`.env.example`](../.env.example) by
 whichever installer you ran. All three platforms read the same file; a setting
 a platform does not use is ignored there.
 
+On macOS, **Settings…** in Sayit's menu edits the same file: every change is
+written to `.env` at once, keeping its comments, and the settings below can be
+changed either way. An app can also have its own `SPEECH_LANGUAGE`,
+`INITIAL_PROMPT` and `SPOKEN_PUNCTUATION` (Settings > Apps), kept in
+`~/.config/sayit/apps/<bundle id>.env` and read after `.env` when that app is
+in front as a recording starts.
+
 - [Settings](#settings)
 - [When a change takes effect](#when-a-change-takes-effect)
 - [Environment overrides that are not in .env](#environment-overrides-that-are-not-in-env)
@@ -61,6 +68,9 @@ of them empty on purpose so the code can resolve a repo-relative path.
 | `TRIGGER_SUPPRESS` | `1` | Windows, macOS | Swallow the trigger so the focused application never sees it; `0` lets it through. On macOS a modifier key used alone as the trigger is never swallowed |
 | `TRIGGER_LABEL` | (empty) | macOS | The trigger's name in Sayit's menu, for when the system sees something other than what is under your thumb: `the thumb button` for a mouse button a vendor utility sends as button 5. Empty = the button's own name |
 | `TRIGGER_MODE` | `auto` | macOS | `auto`: held 0.4 s or longer, release stops; a shorter tap latches and the next press stops. `hold`: release always stops. `toggle`: each press starts or stops. Escape cancels in every mode |
+| `TRIGGER_BUTTON2` | (empty) | macOS | A second trigger that does the same as `TRIGGER_BUTTON`, with the same names: a key on the keyboard beside a mouse button, say. Either starts a recording and the one that started it ends it; `TRIGGER_MODE` and `TRIGGER_SUPPRESS` apply to both. Empty means none |
+| `TRIGGER_LABEL2` | (empty) | macOS | The second trigger's name in Sayit's menu, as `TRIGGER_LABEL` |
+| `MEDIA_WHILE_RECORDING` | (empty) | macOS | `lower` turns Music and Spotify down to a tenth while recording, `pause` pauses them; afterwards Sayit puts back what it changed. Only a player that was playing is touched. Empty or `off` leaves them alone. macOS asks once for permission (Privacy & Security > Automation) |
 | `INJECT_METHOD` | `auto` | Windows, macOS | Windows: `auto` types short text and pastes longer text; `type` always types; `clipboard` always pastes. macOS: `auto` and `clipboard` both paste with `Cmd+V` and restore the previous clipboard; `type` sends Unicode key events and never touches the clipboard |
 | `INJECT_CLIPBOARD_THRESHOLD` | `100` | Windows | Length in characters above which `auto` switches from typing to pasting |
 | `PASTE_RESTORE_DELAY` | `1.0` | macOS | Seconds between the paste and putting the previous clipboard back. Needs a decimal point |
@@ -80,7 +90,7 @@ reads the three `LLM_*` settings, `SPOKEN_PUNCTUATION` and `SNIPPETS`, but not
 the two meter
 settings — `Sayit.app` draws its own pill. Conversely, macOS reads several
 settings from the Windows section, deliberately under the same names, and adds
-five of its own in a section at the end of the file.
+its own in a section at the end of the file.
 
 ## When a change takes effect
 
@@ -91,7 +101,7 @@ five of its own in a section at the end of the file.
 | `THREADS`, `BEAM`, `VAD_MODEL` | Immediately for the CLI fallback, but fixed at server start for the daemon — restart it |
 | `MODEL_PATH`, `DAEMON_PORT` | Immediately for the CLI fallback and for which port the client dials, but fixed at server start for the daemon — restart it |
 | `WHISPER_SERVER` | Restart the daemon |
-| macOS: `TRIGGER_BUTTON`, `TRIGGER_LABEL`, `TRIGGER_SUPPRESS`, `TRIGGER_MODE`, `RECORDING_INDICATOR`, `INDICATOR_RESIDENT`, `INDICATOR_LOCKED`, `INDICATOR_SCALE`, `INDICATOR_EXCLUDE_FROM_CAPTURE` | **Reload Settings** in Sayit's menu, or a restart of `Sayit.app`. These are read by the app, not by the scripts |
+| macOS: `TRIGGER_BUTTON`, `TRIGGER_BUTTON2`, `TRIGGER_LABEL`, `TRIGGER_LABEL2`, `TRIGGER_SUPPRESS`, `TRIGGER_MODE`, `MEDIA_WHILE_RECORDING`, `RECORDING_INDICATOR`, `INDICATOR_RESIDENT`, `INDICATOR_LOCKED`, `INDICATOR_SCALE`, `INDICATOR_EXCLUDE_FROM_CAPTURE` | Within a couple of seconds: `Sayit.app` reads them, and notices when `.env` changes, whether its Settings window or a text editor changed it |
 | Everything else | Next invocation of the command that reads it |
 
 Restarting the daemon:

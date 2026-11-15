@@ -205,6 +205,24 @@ d = json.loads(open(sys.argv[1]).readline())
 assert isinstance(d["seconds"], (int, float)) and d["seconds"] >= 0, d
 assert d["words"] >= 1
 assert "START" in d["text"]
+assert isinstance(d["latency"], (int, float)) and d["latency"] >= 0, d
+assert "app" not in d, d
+PYEOF
+}
+
+@test "history names the app from SAYIT_APP, on one line and without a failed paste's latency" {
+    "$SAYIT" start
+    SAYIT_APP=$'Text\n  Edit' "$SAYIT" stop
+    : > "$STUB_CTL/inject.fail"
+    "$SAYIT" start
+    "$SAYIT" stop || true
+    python3 - "$HIST_FILE" <<'PYEOF'
+import json, sys
+lines = [json.loads(l) for l in open(sys.argv[1])]
+assert lines[0]["app"] == "Text Edit", lines[0]
+assert "latency" in lines[0], lines[0]
+assert len(lines) == 2, lines
+assert "latency" not in lines[1], lines[1]
 PYEOF
 }
 

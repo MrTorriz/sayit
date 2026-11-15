@@ -2,6 +2,34 @@
 
 ## Unreleased
 
+- macOS: a Settings window. **Settings…** (⌘,) in the menu shows every
+  setting in six tabs (General, Dictation, Text, Apps, Appearance, Advanced)
+  and writes each change to `.env` in place, keeping its comments; Sayit
+  notices any change to `.env` within a couple of seconds, so **Open
+  Settings…** and **Reload Settings** are gone. **Record…** sets the trigger
+  by pressing it.
+- macOS: a second trigger, `TRIGGER_BUTTON2` and `TRIGGER_LABEL2`: a mouse
+  button and a key, say. Either starts a recording and the one that started
+  it ends it.
+- macOS: per-app settings. An app can have its own language, words to expect
+  and spoken punctuation (Settings > Apps), kept in
+  `~/.config/sayit/apps/<bundle id>.env`.
+- macOS: `MEDIA_WHILE_RECORDING` turns Music and Spotify down to a tenth
+  (`lower`) or pauses them (`pause`) while you dictate, and puts them back.
+- macOS: **Learn From Selection…** in the menu. Correct a dictation where it
+  landed, select it, and Sayit proposes the replaced words as wordlist rules
+  to tick.
+- macOS: KB-Whisper models can be downloaded from Settings > Dictation,
+  checked against the same sha256 as `install.sh`.
+- macOS: the interface follows the system language: English, or Swedish.
+- macOS: the Statistics window puts the year calendar across the window and
+  the tiles in a row under it, adds the time from release to text and the
+  apps you dictate in, and follows the text size, accent colour, theme and
+  layout chosen under Settings > Appearance (⌘+ and ⌘− change the size).
+  `history.jsonl` gains `latency` and `app` on macOS.
+- The logo shows the pill as it looks while you speak: the voice wave.
+- The README leads with macOS, with a new demo and pictures of the Mac app.
+
 - The pill says **No sound from the mic** in red while you still hold the
   trigger, when the microphone has delivered nothing but digital silence for
   1.5 s: permission denied, input muted or the wrong device. A quiet room

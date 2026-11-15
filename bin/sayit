@@ -20,7 +20,9 @@
 #     so a recycled PID is never signalled.
 #   - Transcribed text is injected into the focused window via sayit-inject
 #   - Every successful transcription is logged to
-#     $XDG_DATA_HOME/sayit/history.jsonl
+#     $XDG_DATA_HOME/sayit/history.jsonl: time, seconds, words and text, plus
+#     latency (release to pasted text, when the paste went out) and app (the
+#     name in SAYIT_APP, which Sayit.app sets on macOS)
 #   - Status notifications via notify-send (when available); on macOS the
 #     last status goes to $XDG_RUNTIME_DIR/sayit.status for Sayit.app's menu
 #     instead (a second line, warn or error, marks a problem), and
@@ -469,6 +471,8 @@ start_recording() {
 
 stop_and_inject() {
     mark stop.enter
+    # The release, for the history's latency: release to pasted text.
+    local released="${EPOCHREALTIME/,/.}"
     # Arm the crash guard before touching the session: from here on a signal
     # must not leave a hot microphone or a stuck audio profile. The trap is
     # narrow on purpose — it never hides the indicator (a newer session may
@@ -522,8 +526,9 @@ stop_and_inject() {
 
     if [[ -n "${TEXT// }" ]]; then
         # The text goes on stdin: argv shows in every user's process listing.
-        local irc=0
+        local irc=0 pasted
         printf '%s' "$TEXT" | "$REPO_ROOT/bin/sayit-inject" || irc=$?
+        pasted="${EPOCHREALTIME/,/.}"
         rm -f "$RUN_DIR/sayit.busy"
         # Arithmetic drops the padding BSD wc puts before the count.
         WORDS=$(( $(printf '%s\n' "$TEXT" | wc -w) ))
@@ -538,23 +543,32 @@ stop_and_inject() {
         # Append to history. The text goes via stdin (not argv) and the
         # duration is computed in python: float() always parses the period
         # decimal both timestamps carry (EPOCHREALTIME with any locale comma
-        # replaced), regardless of locale.
+        # replaced), regardless of locale. Two optional fields: latency,
+        # seconds from the release to the pasted text, only when the paste
+        # went out; app, the app the text went to, which Sayit.app passes
+        # as SAYIT_APP (its name only, never a window title).
         mkdir -p "$(dirname "$HIST")"
         if ! printf '%s' "$TEXT" | python3 -c "
-import json, sys, datetime
-try:
-    seconds = round(float(sys.argv[2]) - float(sys.argv[1]), 2)
-    if seconds < 0:
-        seconds = 0.0
-except ValueError:
-    seconds = 0.0
-print(json.dumps({
+import json, os, sys, datetime
+def span(a, b):
+    try:
+        return max(0.0, round(float(b) - float(a), 2))
+    except ValueError:
+        return None
+entry = {
     'time': datetime.datetime.now().isoformat(timespec='seconds'),
-    'seconds': seconds,
+    'seconds': span(sys.argv[1], sys.argv[2]) or 0.0,
     'words': int(sys.argv[3]),
-    'text': sys.stdin.read()
-}, ensure_ascii=False))
-" "${REC_START:-0}" "$END" "$WORDS" >> "$HIST"; then
+}
+latency = span(sys.argv[4], sys.argv[5])
+if sys.argv[6] == '0' and latency is not None and float(sys.argv[4]) > 0:
+    entry['latency'] = latency
+app = ' '.join(os.environ.get('SAYIT_APP', '').split())[:80]
+if app:
+    entry['app'] = app
+entry['text'] = sys.stdin.read()
+print(json.dumps(entry, ensure_ascii=False))
+" "${REC_START:-0}" "$END" "$WORDS" "$released" "$pasted" "$irc" >> "$HIST"; then
             notify "History write failed" warn
         fi
         mark history.done

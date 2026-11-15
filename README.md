@@ -3,7 +3,7 @@
 </p>
 
 <p align="center">
-  <b>Local push-to-talk dictation for Linux, Windows 11 and macOS.</b><br>
+  <b>Local push-to-talk dictation for macOS, Linux and Windows 11.</b><br>
   Hold a button, speak, release. Your words land in whichever text field has focus.
 </p>
 
@@ -11,11 +11,11 @@
   <a href="https://github.com/MrTorriz/sayit/actions/workflows/ci.yml"><img src="https://github.com/MrTorriz/sayit/actions/workflows/ci.yml/badge.svg" alt="ci"></a>
   <a href="https://github.com/MrTorriz/sayit/releases/latest"><img src="https://img.shields.io/github/v/release/MrTorriz/sayit?label=release&color=da4453" alt="latest release"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="license: MIT"></a>
-  <a href="#installation"><img src="https://img.shields.io/badge/platform-Linux%20%7C%20Windows%2011%20%7C%20macOS-informational" alt="platform: Linux, Windows 11 and macOS"></a>
+  <a href="#installation"><img src="https://img.shields.io/badge/platform-macOS%20%7C%20Linux%20%7C%20Windows%2011-informational" alt="platform: macOS, Linux and Windows 11"></a>
 </p>
 
 <p align="center">
-  <img src="docs/demo.gif" alt="Animated illustration: the thumb button of a mouse is held, a black waveform pill appears and follows the voice, and after release three sentences land in the text field in one paste" width="800">
+  <img src="docs/sayit-demo.gif" alt="Demo: the thumb button of a mouse is held, a black pill with a voice wave follows the voice, and after release the sentence lands in a note in one paste; then a Swedish sentence, the Statistics window, the history and the Settings window" width="800">
 </p>
 
 Speech is recognised on your own machine by [whisper.cpp](https://github.com/ggml-org/whisper.cpp),
@@ -23,6 +23,10 @@ on the GPU through Vulkan or Metal. The default model is
 [KB-Whisper](https://huggingface.co/KBLab), the National Library of Sweden's
 Swedish Whisper, medium or large on Apple Silicon; any GGML Whisper model and
 language can be configured instead. No account, no subscription, no telemetry.
+
+macOS is where sayit is developed most actively: it has a menu bar app with a
+Settings window and a Statistics window, and new features land there first.
+Linux and Windows 11 remain fully supported for dictation.
 
 ## Highlights
 
@@ -39,13 +43,19 @@ language can be configured instead. No account, no subscription, no telemetry.
   platforms draw it from the same geometry.
 - **Learns your vocabulary.** A wordlist fixes recurring mistakes
   (`sayit-learn "get hub" "GitHub"`), and a local history keeps what you
-  dictated.
+  dictated. On macOS, correct the text where it landed, select it and choose
+  **Learn From Selection…**: sayit finds the dictation and proposes the rules.
 - **Shortcuts by voice.** Say a snippet's cue, "my signature", and its saved
   text is pasted, line breaks included. Say "frågetecken" or "slash" and get
   `?` or `/` in place. Linux and macOS.
 - **See how much you talk.** Words, speaking time, pace against typing, the
   time saved and a year of days at a glance: in a Statistics window on macOS,
   and from `sayit-history --stat` everywhere.
+- **A real Mac app.** Settings for everything, in English or Swedish: record
+  any mouse button, key or combination as the trigger, add a second one (a
+  mouse button and a key, say), give each app its own language and words,
+  turn Music and Spotify down while you speak, download models, and choose
+  the text size, accent colour and layout.
 - **Optional Turbo engine.** On Intel graphics, Linux and Windows can switch to
   Whisper large-v3-turbo on OpenVINO with one command, and back again.
 
@@ -62,23 +72,55 @@ A warm local server answers each dictation, and a one-shot `whisper-cli` run
 takes over if it ever stops responding. The [architecture guide](docs/ARCHITECTURE.md)
 covers the design decisions in depth.
 
-## Statistics on macOS
+## The Mac app
 
 <p align="center">
-  <img src="docs/statistics-window.png" alt="The Statistics window with example data: the SAYIT lockup above 12,729 words in the last 30 days and speaking at 3.1 times the speed of typing; words per day as bars against a scale; a year of days as a red calendar; tiles for the streak, peak hour, best day and words per dictation" width="880">
+  <img src="docs/statistics-window.png" alt="The Statistics window with example data: the SAYIT lockup above the words of the last 30 days and the speed of speaking against typing; words per day as bars; a year of days as a red calendar across the window; a row of tiles for the streak, peak hour, best day, words per dictation, time from release to text and the apps you dictate in" width="880">
 </p>
 
-**Statistics and History…** in the menu bar opens it on the top left quarter
-of the screen. Today, 7 days, 30 days or all time: the words and how long they
-took to say, your pace against typing at `TYPING_WPM`, words per hour, day or
-week against a scale that follows the busiest one, a year of days as a
-calendar, and the history to search and copy from. It reads the local history
-and writes nothing; the picture shows example data.
+**Statistics and History…** in the menu bar opens the Statistics window. Today,
+7 days, 30 days or all time: the words and how long they took to say, your
+pace against typing, words per hour or day, a year of days as a calendar, how
+long the text takes to arrive after release, and where you dictate. It reads
+the local history and writes nothing. The pictures show example data.
+
+<p align="center">
+  <img src="docs/settings-window.png" alt="Three tabs of the Settings window side by side. General: the trigger with a Record button, the mode Hold or Tap, and a second trigger, right Command. Dictation: microphone, music while recording, model, language, search width, spoken punctuation and the words to expect. Appearance: text size, accent colour, light or dark, glass or solid cards, and the layout of the Statistics window" width="880">
+</p>
+
+**Settings…** (⌘,) holds every setting in six tabs: General, Dictation, Text,
+Apps, Appearance and Advanced. Changes apply at once; they are written to
+`.env`, which stays the one place every setting lives, so editing it by hand
+works too.
+
+<p align="center">
+  <img src="docs/statistics-history.png" alt="The history with example data: every dictation with its time, words and length, searchable, with a Copy button" width="880">
+</p>
 
 ## Installation
 
 sayit installs from source: you need a terminal, native build tools and room
 for the model files. Each platform has a full guide; the short version follows.
+
+### macOS
+
+```bash
+git clone https://github.com/MrTorriz/sayit.git
+cd sayit
+./install.sh
+./bin/test-pipeline
+```
+
+The installer uses Homebrew, builds whisper.cpp with Metal, downloads the
+large model on Apple Silicon, builds the `Sayit.app` menu bar agent and loads
+its LaunchAgents. Allow Microphone and Accessibility when macOS asks. F18 is
+the default trigger: hold it to talk, or tap to start and tap again to stop.
+Pick another in **Settings… > General > Record…** by pressing it; **Probe
+Trigger** under Advanced shows what any key or mouse button sends. A Logitech
+button needs a plain mouse-button action in Logi Options+, which the guide
+explains. Requires macOS 14 or later; Apple Silicon is recommended.
+**[macOS guide](docs/INSTALL-MACOS.md)**: permissions, triggers, the
+indicator, the LaunchAgents and platform limits.
 
 ### Linux
 
@@ -111,25 +153,6 @@ their thumb button mapped in the vendor's utility before Windows can see it.
 **[Windows guide](docs/INSTALL-WINDOWS.md)**: prerequisites, model links,
 microphone selection, autostart and platform limits.
 
-### macOS
-
-```bash
-git clone https://github.com/MrTorriz/sayit.git
-cd sayit
-./install.sh
-./bin/test-pipeline
-```
-
-The installer uses Homebrew, builds whisper.cpp with Metal, downloads the
-large model on Apple Silicon, builds the `Sayit.app` menu bar agent and loads
-its LaunchAgents. Allow Microphone and Accessibility when macOS asks. F18 is
-the default trigger: hold it to talk, or tap to start and tap again to stop.
-**Probe Trigger** in the menu shows what any key or mouse button sends; a
-Logitech button needs a plain mouse-button action in Logi Options+, which the
-guide explains. Requires macOS 14 or later; Apple Silicon is recommended.
-**[macOS guide](docs/INSTALL-MACOS.md)**: permissions, triggers, the
-indicator, the LaunchAgents and platform limits.
-
 ### Optional Turbo engine
 
 Linux and Windows only. Complete the base installation first, then follow the
@@ -146,16 +169,18 @@ promise which one recognises a given sentence best.
 
 ## Platform overview
 
-| | Linux | Windows 11 | macOS |
+| | macOS | Linux | Windows 11 |
 | --- | --- | --- | --- |
-| Engine | whisper.cpp, Vulkan | whisper.cpp, Vulkan | whisper.cpp, Metal |
-| Default model | KB-Whisper medium | KB-Whisper medium | KB-Whisper large on Apple Silicon |
-| Optional Turbo | OpenVINO on Intel graphics | OpenVINO on Intel graphics | Not offered; large is fast on Metal |
-| Trigger | A mouse button via Solaar, or a global shortcut | Mouse 5, or another button or key | F18, or any key or mouse button |
-| Text delivery | `ydotool`, `wtype` or `xdotool` | Typing for short text, paste for long | `Cmd+V`, previous clipboard restored |
-| Snippets, spoken punctuation | Yes | Not yet | Yes |
-| Statistics | `sayit-history --stat` | `sayit-history.ps1 -Stat` | Statistics window, and `sayit-history --stat` |
-| Starts at login | systemd user services | Logon task | LaunchAgents |
+| Engine | whisper.cpp, Metal | whisper.cpp, Vulkan | whisper.cpp, Vulkan |
+| Default model | KB-Whisper large on Apple Silicon | KB-Whisper medium | KB-Whisper medium |
+| Optional Turbo | Not offered; large is fast on Metal | OpenVINO on Intel graphics | OpenVINO on Intel graphics |
+| Trigger | F18, or any key, mouse button or combination; a second one too | A mouse button via Solaar, or a global shortcut | Mouse 5, or another button or key |
+| Text delivery | `Cmd+V`, previous clipboard restored | `ydotool`, `wtype` or `xdotool` | Typing for short text, paste for long |
+| Snippets, spoken punctuation | Yes | Yes | Not yet |
+| Settings | Settings window, or `.env` | `.env` | `.env` |
+| Per-app language and words | Yes | No | No |
+| Statistics | Statistics window, and `sayit-history --stat` | `sayit-history --stat` | `sayit-history.ps1 -Stat` |
+| Starts at login | LaunchAgents | systemd user services | Logon task |
 
 ## Everyday commands
 
@@ -227,9 +252,9 @@ Pointing it at a remote HTTP address sends text to that host unencrypted.
 
 | Guide | Contents |
 | --- | --- |
+| [macOS installation](docs/INSTALL-MACOS.md) | Setup, permissions and everyday use on macOS |
 | [Linux installation](docs/INSTALL-LINUX.md) | Setup and everyday use on Linux |
 | [Windows installation](docs/INSTALL-WINDOWS.md) | Setup and everyday use on Windows 11 |
-| [macOS installation](docs/INSTALL-MACOS.md) | Setup, permissions and everyday use on macOS |
 | [Optional Turbo engine](docs/OPENVINO.md) | OpenVINO installation, switching and recovery |
 | [Configuration](docs/CONFIGURATION.md) | Settings, models, languages, wordlists and snippets |
 | [Troubleshooting](docs/TROUBLESHOOTING.md) | Symptoms, checks and fixes |

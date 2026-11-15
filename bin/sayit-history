@@ -16,7 +16,8 @@
 #
 # Data source:
 #   $XDG_DATA_HOME/sayit/history.jsonl (default ~/.local/share/...)
-#   One JSON line per entry: {time, seconds, words, text}
+#   One JSON line per entry: {time, seconds, words, text}, and on macOS
+#   latency and app as well (unused here)
 #
 # Exit codes:
 #   0  Success (including "Empty history")

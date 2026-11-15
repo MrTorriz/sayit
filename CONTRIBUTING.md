@@ -102,12 +102,12 @@ the wordmark outlines and the check fails; rerun the script without `--check`
 and commit what it writes. The two were maintained separately once, and the
 README ended up showing a mark the product had stopped drawing.
 
-The README's artwork follows the same rule. `docs/make-demo.swift` draws the
-animation (`docs/demo.gif`) with Sayit's own `PillView` and its meter (build
-and run it on macOS as its header shows),
-and `docs/make-social-preview.py` renders the social card from the lockup.
-Rerun them after changing the pill or the logo, look at the result, and
-commit it.
+The README's artwork follows the same rule where it can.
+`docs/make-social-preview.py` renders the social card from the lockup; rerun
+it after changing the logo, look at the result, and commit it. The demo
+(`docs/sayit-demo.gif`) and the pictures of the Mac app are taken from the
+running app with example data, never a real history: redo them when what
+they show changes.
 
 The shebang filter in steps 1 and 2 is not decoration. `bin/sayit-overlay` is
 Python, and a plain `shellcheck bin/*` fails on it with `SC1071` before it has

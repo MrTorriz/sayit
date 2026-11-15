@@ -1,10 +1,10 @@
 // ConfigTests.swift - unit tests for the agent's trigger parser and settings,
-// the .env reader and the pill's level rule.
+// the .env reader and writer, and the pill's level rule.
 //
 // Plain checks with a failure counter rather than XCTest, which needs a full
 // Xcode: the Command Line Tools are enough. check() is used instead of assert(),
 // which -O compiles away. Built and run by mac/tests/run.sh together with
-// mac/Sources/Common/*.swift and mac/Sources/Agent/Config.swift.
+// mac/Sources/Common/*.swift, mac/Sources/Agent/Config.swift and EnvFile.swift.
 
 import CoreGraphics
 import Foundation
@@ -36,6 +36,8 @@ enum ConfigTests {
     static func main() {
         triggerSpec()
         readEnv()
+        recordedNames()
+        envFile()
         agentConfig()
         pillGeometry()
         if failures > 0 {
@@ -149,6 +151,74 @@ enum ConfigTests {
 
     // --- AgentConfig ------------------------------------------------------
 
+    /// What Record in Settings writes parses back to the same trigger.
+    static func recordedNames() {
+        for b: Int64 in [2, 3, 4, 7] {
+            check(kind(TriggerSpec.name(mouse: b)) == .mouse(button: b), "mouse \(b) round-trips")
+        }
+        check(TriggerSpec.name(mouse: 4) == "XBUTTON2", "button 4 is XBUTTON2")
+        check(TriggerSpec.name(modifier: 61) == "RIGHTOPTION", "61 is the right Option key")
+        check(kind(TriggerSpec.name(modifier: 61)!) == .modifier(code: 61, deviceMask: 0x40), "and parses back")
+        check(TriggerSpec.name(modifier: 0) == nil, "A is no modifier")
+        check(TriggerSpec.deviceMask(modifier: 54) == 0x10, "the right Command key's bit")
+        check(TriggerSpec.name(key: 79, modifiers: 0) == "F18", "F18 by name")
+        let ctrlOpt = CGEventFlags.maskControl.rawValue | CGEventFlags.maskAlternate.rawValue
+        let combo = TriggerSpec.name(key: 79, modifiers: ctrlOpt)
+        check(combo == "CTRL+OPTION+F18", "a combination, got \(combo)")
+        check(kind(combo) == .key(code: 79, modifiers: ctrlOpt), "parses back")
+        check(TriggerSpec.name(key: 50, modifiers: 0) == "KEY50", "an unnamed key by code")
+        check(kind("KEY50") == .key(code: 50, modifiers: 0), "and parses back")
+    }
+
+    static func envFile() {
+        check(EnvFile.render("1", plain: true) == "1", "a bare number stays bare")
+        check(EnvFile.render("XBUTTON2", plain: true) == "XBUTTON2", "and so does a name")
+        check(EnvFile.render("auto") == "\"auto\"", "a word in double quotes unless plain")
+        check(EnvFile.render("", plain: true) == "\"\"", "empty is two quotes")
+        check(EnvFile.render("it's") == "\"it's\"", "an apostrophe is fine in double quotes")
+        check(EnvFile.render("cost $5") == "'cost $5'", "a dollar goes in single quotes, never expanded")
+        check(EnvFile.render("say \"hi\"") == "'say \"hi\"'", "a double quote too")
+        check(EnvFile.render("it's \"x\"") == "\"it's \u{201D}x\u{201D}\"", "both quotes: the double ones turn curly")
+        check(EnvFile.render("a\nb") == "\"a b\"", "a line break becomes a space")
+        check(EnvFile.renderPath("/Users/alex/m/x.bin", home: "/Users/alex") == "\"$HOME/m/x.bin\"", "a home path keeps $HOME")
+        check(EnvFile.renderPath("/opt/m.bin", home: "/Users/alex") == "\"/opt/m.bin\"", "another path as it is")
+
+        let text = """
+            # Beam search size
+            # BEAM=5
+            BEAM=1  # measured
+            TRIGGER_MODE="auto" # how
+            export SAYIT_PROFILE=1
+
+            """
+        var out = EnvFile.set("BEAM", rendered: "3", in: text)
+        check(out.contains("\nBEAM=3  # measured\n") && out.contains("# BEAM=5"), "the active line changes, comments stay")
+        out = EnvFile.set("TRIGGER_MODE", rendered: "\"hold\"", in: out)
+        check(out.contains("TRIGGER_MODE=\"hold\" # how"), "a quoted value keeps its comment, got \(out)")
+        out = EnvFile.set("SAYIT_PROFILE", rendered: "\"\"", in: out)
+        check(out.contains("export SAYIT_PROFILE=\"\""), "export stays")
+        out = EnvFile.set("TYPING_WPM", rendered: "50", in: out)
+        check(out.hasSuffix("export SAYIT_PROFILE=\"\"\nTYPING_WPM=50\n"), "a new key goes last, got \(out)")
+        check(EnvFile.remove("BEAM", in: "# BEAM=5\nBEAM=1\nexport BEAM=2\nX=1\n") == "# BEAM=5\nX=1\n",
+              "remove drops active lines only")
+        let twice = EnvFile.set("A", rendered: "2", in: "A=0\nA=1\n")
+        check(twice == "A=0\nA=2\n", "the last assignment is the one that counts, got \(twice)")
+
+        let path = tempFile("env-write", "# c\nBEAM=1\n")
+        chmod(path, 0o600)
+        do {
+            try EnvFile.write([(key: "BEAM", rendered: "5"), (key: "SPOKEN_PUNCTUATION", rendered: "1")], path: path)
+            let back = Shared.readEnv(path)
+            check(back["BEAM"] == "5" && back["SPOKEN_PUNCTUATION"] == "1", "written and read back, got \(back)")
+            let mode = (try? FileManager.default.attributesOfItem(atPath: path)[.posixPermissions] as? NSNumber)?.intValue
+            check(mode == 0o600, "the file keeps its permissions")
+            try EnvFile.write([(key: "INITIAL_PROMPT", rendered: EnvFile.render("Hej $USER, \"du\""))], path: path)
+            check(Shared.readEnv(path)["INITIAL_PROMPT"] == "Hej $USER, \"du\"", "a tricky value reads back literally")
+        } catch {
+            check(false, "write failed: \(error)")
+        }
+    }
+
     static func agentConfig() {
         let fm = FileManager.default
         let repo = (NSTemporaryDirectory() as NSString).appendingPathComponent("sayit-tests-repo")
@@ -162,6 +232,8 @@ enum ConfigTests {
         check(c.suppress && c.indicator && c.excludeFromCapture, "flags default on")
         check(!c.resident && !c.locked, "resident and locked default off")
         check(c.mode == .auto && c.scale == 1.0, "auto mode at scale 1.0")
+        check(c.trigger2 == nil && c.trigger2Raw.isEmpty && c.triggers.count == 1, "no second trigger by default")
+        check(c.media == .off, "music is left alone by default")
 
         try? """
             TRIGGER_BUTTON="XBUTTON2"
@@ -185,6 +257,25 @@ enum ConfigTests {
         c = AgentConfig(repository: repo)
         check(c.trigger?.kind == .mouse(button: 4) && c.trigger?.label == "the thumb button",
               "TRIGGER_LABEL renames the button and keeps what it listens for")
+
+        try? """
+            TRIGGER_BUTTON="XBUTTON2"
+            TRIGGER_BUTTON2="FN"
+            TRIGGER_LABEL2="fn"
+            """.write(toFile: envPath, atomically: true, encoding: .utf8)
+        c = AgentConfig(repository: repo)
+        check(c.triggers.map(\.kind) == [.mouse(button: 4), .modifier(code: 63, deviceMask: CGEventFlags.maskSecondaryFn.rawValue)],
+              "TRIGGER_BUTTON2 adds a second trigger after the first")
+        check(c.trigger2?.label == "fn", "TRIGGER_LABEL2 names the second")
+
+        try? """
+            TRIGGER_BUTTON2="nonsense"
+            MEDIA_WHILE_RECORDING=Lower
+            """.write(toFile: envPath, atomically: true, encoding: .utf8)
+        c = AgentConfig(repository: repo)
+        check(c.trigger2 == nil && c.trigger2Raw == "nonsense" && c.triggers.count == 1,
+              "an unknown second trigger is kept for the hint and leaves the first alone")
+        check(c.media == .lower, "MEDIA_WHILE_RECORDING is read, case aside")
 
         try? """
             TRIGGER_BUTTON="nonsense"
