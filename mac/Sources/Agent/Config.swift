@@ -50,6 +50,40 @@ struct TriggerSpec: Equatable {
         "SHIFT": CGEventFlags.maskShift.rawValue,
     ]
 
+    /// The TRIGGER_BUTTON name for a mouse button as the event tap numbers
+    /// it: the Windows names for the three that have one.
+    static func name(mouse button: Int64) -> String {
+        switch button {
+        case 2: return "MIDDLE"
+        case 3: return "XBUTTON1"
+        case 4: return "XBUTTON2"
+        default: return "MOUSE\(button)"
+        }
+    }
+
+    /// The name of a modifier key used on its own, nil for any other key.
+    static func name(modifier code: Int64) -> String? {
+        modifierKeys.first { $0.value.0 == code }?.key
+    }
+
+    /// The device-dependent bit that is set while that modifier key is down.
+    static func deviceMask(modifier code: Int64) -> UInt64? {
+        modifierKeys.first { $0.value.0 == code }?.value.1
+    }
+
+    /// A key and the modifiers held with it, CTRL+OPTION+F12: by name where
+    /// it has one, else KEY<code>.
+    static func name(key code: Int64, modifiers: UInt64) -> String {
+        var parts: [String] = []
+        if modifiers & CGEventFlags.maskControl.rawValue != 0 { parts.append("CTRL") }
+        if modifiers & CGEventFlags.maskAlternate.rawValue != 0 { parts.append("OPTION") }
+        if modifiers & CGEventFlags.maskShift.rawValue != 0 { parts.append("SHIFT") }
+        if modifiers & CGEventFlags.maskCommand.rawValue != 0 { parts.append("CMD") }
+        let key = functionKeys.first { $0.value == code }?.key
+            ?? namedKeys.first { $0.value == code }?.key ?? "KEY\(code)"
+        return (parts + [key]).joined(separator: "+")
+    }
+
     /// Parses TRIGGER_BUTTON. Accepts the Windows mouse names (MIDDLE,
     /// XBUTTON1, XBUTTON2) and VK124..VK131 (F13..F20) as they are, plus
     /// MOUSE<n>, key names, KEY<code> and combinations such as CTRL+OPTION+F12.
@@ -97,6 +131,11 @@ struct TriggerSpec: Equatable {
     }
 }
 
+/// MEDIA_WHILE_RECORDING: what Music and Spotify do while you dictate.
+enum MediaMode: String {
+    case off, lower, pause
+}
+
 enum TriggerMode: String {
     /// Held at least holdThreshold: release stops (push-to-talk). A shorter
     /// tap latches, and the next press stops - so a button whose vendor
@@ -110,6 +149,10 @@ struct AgentConfig {
     let repository: String
     let trigger: TriggerSpec?
     let triggerRaw: String
+    /// TRIGGER_BUTTON2: a second button or key that does the same, a key on
+    /// the keyboard beside the mouse button, say. Empty for none.
+    let trigger2: TriggerSpec?
+    let trigger2Raw: String
     let suppress: Bool
     let mode: TriggerMode
     let indicator: Bool
@@ -117,6 +160,12 @@ struct AgentConfig {
     let locked: Bool
     let scale: CGFloat
     let excludeFromCapture: Bool
+    /// MEDIA_WHILE_RECORDING: Music and Spotify turned down or paused while
+    /// recording (MediaPause.swift).
+    let media: MediaMode
+
+    /// The triggers in effect, the first first.
+    var triggers: [TriggerSpec] { [trigger, trigger2].compactMap { $0 } }
 
     static let defaultTrigger = "F18"
     static let holdThreshold: TimeInterval = 0.4
@@ -134,6 +183,9 @@ struct AgentConfig {
         // send a mouse's thumb button as button 5, say).
         let label = (env["TRIGGER_LABEL"] ?? "").trimmingCharacters(in: .whitespaces)
         trigger = TriggerSpec.parse(triggerRaw).map { label.isEmpty ? $0 : TriggerSpec(kind: $0.kind, label: label) }
+        trigger2Raw = (env["TRIGGER_BUTTON2"] ?? "").trimmingCharacters(in: .whitespaces)
+        let label2 = (env["TRIGGER_LABEL2"] ?? "").trimmingCharacters(in: .whitespaces)
+        trigger2 = TriggerSpec.parse(trigger2Raw).map { label2.isEmpty ? $0 : TriggerSpec(kind: $0.kind, label: label2) }
         suppress = flag("TRIGGER_SUPPRESS", true)
         mode = TriggerMode(rawValue: (env["TRIGGER_MODE"] ?? "").lowercased()) ?? .auto
         indicator = flag("RECORDING_INDICATOR", true)
@@ -142,6 +194,7 @@ struct AgentConfig {
         let s = Double(env["INDICATOR_SCALE"] ?? "") ?? 1.0
         scale = CGFloat((0.5...4.0).contains(s) ? s : 1.0)
         excludeFromCapture = flag("INDICATOR_EXCLUDE_FROM_CAPTURE", true)
+        media = MediaMode(rawValue: (env["MEDIA_WHILE_RECORDING"] ?? "").lowercased()) ?? .off
     }
 
     /// The repository holding bin/sayit: SAYIT_REPO (set by the LaunchAgent),

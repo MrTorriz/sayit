@@ -141,10 +141,13 @@ if [[ "$agent_pid" =~ ^[0-9]+$ ]] && ps -o command= -p "$agent_pid" 2>/dev/null 
         *) fail "Microphone $(field microphone) — System Settings > Privacy & Security > Microphone: turn on Sayit" ;;
     esac
     trig=$(field trigger)
+    trig2=$(field trigger2)
     if [[ "$trig" == *"(invalid)"* ]]; then
         fail "TRIGGER_BUTTON=${trig% (invalid)} is not understood — see docs/CONFIGURATION.md"
+    elif [[ "$trig2" == *"(invalid)"* ]]; then
+        fail "TRIGGER_BUTTON2=${trig2% (invalid)} is not understood — see docs/CONFIGURATION.md"
     else
-        ok "trigger $trig, mode $(field mode), indicator $(field indicator)"
+        ok "trigger $trig${trig2:+ and $trig2}, mode $(field mode), indicator $(field indicator)"
     fi
 else
     warn "Sayit is not running, so its permissions cannot be read"

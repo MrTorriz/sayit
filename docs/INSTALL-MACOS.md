@@ -9,6 +9,8 @@
 - [Choosing a microphone](#choosing-a-microphone)
 - [Recording indicator](#recording-indicator)
 - [The menu bar item](#the-menu-bar-item)
+- [The Settings window](#the-settings-window)
+- [Learning from your corrections](#learning-from-your-corrections)
 - [The daemon and the LaunchAgents](#the-daemon-and-the-launchagents)
 - [Text injection](#text-injection)
 - [History and statistics](#history-and-statistics)
@@ -173,16 +175,23 @@ the app's grants, not those of the terminal you run the doctor in.
 
 ## Choosing the trigger
 
-`Sayit.app` listens for one key, modifier key or mouse button through a
-session-wide event tap, and runs `bin/sayit start` and `stop` around it.
-`TRIGGER_BUTTON` in `.env` names it, using the same setting name as Windows.
+`Sayit.app` listens for a key, modifier key, key combination or mouse button
+through a session-wide event tap, and runs `bin/sayit start` and `stop` around
+it. `TRIGGER_BUTTON` in `.env` names it, using the same setting name as
+Windows.
+
+The quickest way to set it: **Settings… > General > Record…**, then press the
+button, key or combination you want, once. Sayit writes its name into `.env`
+and listens for it at once. Escape gives up. A key that types a character
+counts only with Cmd, Ctrl or Option held, so recording never takes a letter.
 
 **The macOS default is `F18`**: Sayit uses it when `TRIGGER_BUTTON` is empty
 or absent, and `install.sh` writes it into a `.env` it creates on a Mac (the
 template's `XBUTTON2` is the Windows default, which a Mac would read as mouse
 button 5, the forward button). A `.env` copied from another machine keeps
-whatever it says. Set the value you want, then choose **Reload Settings** in
-Sayit's menu. The menu's second line names the button Sayit is listening for.
+whatever it says. Sayit notices a change to `.env` within a couple of seconds,
+whether Settings or a text editor made it. The menu's second line names the
+button Sayit is listening for.
 
 | `TRIGGER_BUTTON` | Meaning |
 | --- | --- |
@@ -198,6 +207,20 @@ Sayit's menu. The menu's second line names the button Sayit is listening for.
 Values are case-insensitive. A value Sayit cannot parse binds nothing; the menu
 says `TRIGGER_BUTTON="…" is not understood` and the doctor reports it as a
 failure.
+
+### A second trigger
+
+`TRIGGER_BUTTON2` adds another button or key that does the same thing, say a
+key on the keyboard beside the mouse button: **Settings… > General > Second
+trigger > Record…**. Either one starts a recording, and the one that started
+it ends it; `TRIGGER_MODE` and `TRIGGER_SUPPRESS` apply to both.
+`TRIGGER_LABEL2` names it in the menu. A modifier on its own, such as
+`RIGHTCOMMAND`, works well: a shortcut pressed while it is held (`Cmd+C`)
+cancels the recording instead of transcribing it.
+
+Some keys never reach the Mac. On many third-party keyboards `fn` is handled
+inside the keyboard and sends nothing, so neither Sayit nor any other program
+can see it; the probe below shows whether a key arrives.
 
 `TRIGGER_SUPPRESS=1`, the default, swallows the trigger so the focused
 application never sees it — without it, a forward button would also navigate
@@ -266,8 +289,9 @@ profiles (Safari has one by default) that override the default one. Resetting
 the button in Options+, or an Options+ update, can put the preset back; the
 probe then shows nothing again and the step has to be repeated.
 
-Set `TRIGGER_LABEL="the thumb button"` as well, so Sayit's menu names the
-button you press rather than the button 5 it receives.
+Set `TRIGGER_LABEL="the thumb button"` as well (**Name in the menu** under
+Settings > General), so Sayit's menu names the button you press rather than
+the button 5 it receives.
 
 A **keystroke** assignment that matches `TRIGGER_BUTTON`, such as `F18`, works
 without touching the database, but Options+ sends it as a tap: `TRIGGER_MODE=auto`
@@ -280,11 +304,12 @@ or Terminal's Secure Keyboard Entry — and mouse buttons are not.
 
 ### Finding out what a button sends
 
-Choose **Probe Trigger** in Sayit's menu and press the button. The last three
-transitions appear in the menu's second line, and all of them are appended to
-`trigger-probe.log` in the run directory, the per-user temporary directory
-that `getconf DARWIN_USER_TEMP_DIR` names. The trigger keeps working
-while the probe runs. Choose the item again to stop.
+Choose **Start Probe** under **Settings… > Advanced** and press the button. The
+last transitions appear there and in the menu's second line, and all of them
+are appended to `trigger-probe.log` in the run directory, the per-user
+temporary directory that `getconf DARWIN_USER_TEMP_DIR` names. The trigger
+keeps working while the probe runs. **Stop Probe**, in Settings or the menu,
+ends it.
 
 From a terminal, the same for 30 seconds, swallowing nothing:
 
@@ -378,7 +403,7 @@ arrives, which, with a Bluetooth headset that macOS is still switching, can be
 a moment later — speak when the bars respond.
 
 **Placing it.** A resident, unlocked pill can be dragged at any time and saves
-its position when you drag it. Otherwise choose **Place Indicator** in Sayit's menu,
+its position when you drag it. Otherwise choose **Place Indicator…** under Settings > Dictation,
 drag the pill, and choose **Done Placing**. The position is kept in
 `~/.config/sayit/overlay-position`, the same file and format as on Linux:
 points from the top-left corner of the main screen. A position on a screen that
@@ -416,27 +441,26 @@ The menu itself:
   permission`, an unparsable `TRIGGER_BUTTON`. While probing, the last three
   transitions. `TRIGGER_LABEL` renames the button here, say `the thumb button`
   when a vendor utility sends it as mouse button 5.
-- **The server line** — whether the transcription server answers, checked
-  each time the menu opens: `ready`, `loading the model…`, or `not answering —
-  dictation is slower` (the cold fallback is then used).
+- **Today** — the words and dictations so far today.
+- **The server line** — shown only while the transcription server is loading
+  or not answering (the cold fallback is then used), checked each time the
+  menu opens; **Restart Transcription Server** appears with it.
 - **Allow Accessibility…** and **Allow Microphone…**, shown only when needed.
+- **Done Placing** and **Stop Probe**, shown only while you place the
+  indicator or probe the trigger.
+- **Statistics and History…** — a window with what you have dictated: words,
+  speaking time, pace and time saved against typing at `TYPING_WPM`, for
+  today, 7 days, 30 days or all time, words per hour or day, a year of days as
+  a calendar, how long the text took to arrive after release, the apps you
+  dictate in, and the history to search and copy from. Opening Sayit.app again
+  while it runs opens it too. Sayit has a Dock icon and a menu bar while a
+  window is open; Cmd+Q closes the windows and leaves the trigger running.
+  ⌘+ and ⌘− change the text size.
 - **Paste Last Dictation** — pastes the newest history entry again into the
   window in front (`sayit-history --inject last`), for a paste that went to the
   wrong place.
-- **Statistics and History…** — a window with what you have dictated: words, speaking
-  time, pace and time saved against typing at `TYPING_WPM`, for today, 7 days,
-  30 days or all time, a year of days as a calendar, and the history to search
-  and copy from. It opens on the top left quarter of the screen. Opening
-  Sayit.app again while it runs opens it too. Sayit has a Dock icon while the
-  window is open; Cmd+Q closes the window and leaves the trigger running.
-- **Place Indicator** / **Done Placing**.
-- **Probe Trigger**, checked while the probe runs.
-- **Open Settings…** — opens `.env` in your default text editor.
-- **Reload Settings** — re-reads `.env`: the trigger, its mode and
-  suppression, and the indicator settings. The `bin/` scripts read `.env` on
-  every run and need no reload.
-- **Restart Transcription Server** — restarts the daemon's LaunchAgent and
-  shows when the model has loaded again.
+- **Learn From Selection…** — see [Learning from your corrections](#learning-from-your-corrections).
+- **Settings…** (⌘,) — see [The Settings window](#the-settings-window).
 - **Quit Sayit** — a clean exit, after which launchd leaves Sayit stopped until
   your next login. Start it again with
   `launchctl kickstart gui/$(id -u)/io.github.mrtorriz.sayit.agent`.
@@ -445,6 +469,50 @@ The menu itself:
 notification, and a "Done" message carrying the start of the dictation would
 leave a snippet of each one there. The status line is the replacement, and it
 shows `Done (12 words)` without the text.
+
+## The Settings window
+
+**Settings…** in the menu (⌘,) shows every setting in six tabs. A change
+applies at once and is written to `.env`, line by line, keeping its comments,
+so `.env` stays the one place every setting lives and editing it by hand works
+too. Sayit follows the language of macOS: English, or Swedish when Swedish
+comes first in **System Settings > General > Language & Region**.
+
+| Tab | What it holds |
+| --- | --- |
+| General | The trigger and a second trigger, each with **Record…**, the mode, keeping the button from other apps, the typing speed to compare with and a daily word goal |
+| Dictation | The microphone, music while recording, the model, language, search width, spoken punctuation, transcribing while recording, quicker short dictations and the words to expect (`INITIAL_PROMPT`); under **Models**, the KB-Whisper models to download and use; the indicator |
+| Text | The wordlist and snippets, and how long the previous clipboard waits before it is put back |
+| Apps | A language, words to expect and spoken punctuation of its own for an app |
+| Appearance | Text size, accent colour, light or dark, glass or solid cards, the glow, and which parts and tiles the Statistics window shows, in which order |
+| Advanced | The transcription server, the trigger probe, the permissions, **Edit .env…** and **Show History in Finder** |
+
+**Music while recording** (`MEDIA_WHILE_RECORDING`) turns Music and Spotify
+down to a tenth while you speak (`lower`), or pauses them (`pause`), and puts
+back what it changed afterwards. Only a player that was playing is touched,
+and nothing is launched. The first time, macOS asks whether Sayit may control
+the player; the answer is kept under **System Settings > Privacy & Security >
+Automation > Sayit**. Players in a browser are left alone: macOS gives an app
+no way to reach them.
+
+**Apps** gives an app its own settings: add it from the apps that are running,
+then set its language, words to expect or spoken punctuation. They are kept in
+`~/.config/sayit/apps/<bundle id>.env` and apply when that app is in front as
+the recording starts. Anything left empty follows `.env`.
+
+**Models** downloads KB-Whisper small, medium or large from Hugging Face into
+`models/`, checks it against the same sha256 that `install.sh` pins, and keeps
+it only if it matches. **Use** makes it the model and restarts the server.
+
+## Learning from your corrections
+
+When a word comes out wrong, correct it where Sayit pasted it, select the
+corrected text and choose **Learn From Selection…** in the menu. Sayit copies
+the selection, finds the dictation it came from among the last day's history,
+and lists each replaced word or phrase (up to three words) as a rule to tick.
+The ticked ones go into the wordlist through `bin/sayit-learn` and fix the
+same words from the next dictation on. Numbers, changes of case only and single
+common words are left out. Nothing is read unless you choose the item.
 
 ## The daemon and the LaunchAgents
 

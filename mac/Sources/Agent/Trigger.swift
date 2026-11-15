@@ -1,7 +1,8 @@
 // Trigger.swift - the push-to-talk event tap.
 //
 // One session-level CGEventTap for keys, modifier changes and the extra mouse
-// buttons. It needs the Accessibility permission (an active tap can swallow
+// buttons, for the trigger and the optional second one (TRIGGER_BUTTON2):
+// either starts a recording, and the one that started it ends it. It needs the Accessibility permission (an active tap can swallow
 // events; a listen-only one cannot), and it is the only part of sayit that
 // does: everything else is spawned from here and inherits the grant.
 //
@@ -23,19 +24,31 @@ let sayitEventSignature: Int64 = 0x5341_5949_54   // "SAYIT"
 final class Trigger {
     enum State { case idle, holding(since: TimeInterval), latched, spoiled }
 
-    private(set) var spec: TriggerSpec?
+    private(set) var specs: [TriggerSpec]
     private var suppress: Bool
     private var mode: TriggerMode
     private let runner: Runner
     private var tap: CFMachPort?
     private var state = State.idle
-    private var keyHeld = false
+    /// The triggers (indices into `specs`) whose key is down.
+    private var keysHeld: Set<Int> = []
+    /// The trigger whose press started the recording being held.
+    private var holder: Int?
     private var lastPress: TimeInterval = 0
     /// How long a press may go without bin/sayit having claimed its start
     /// before the trigger stops believing a recording exists.
     private let startGrace: TimeInterval = 1.5
     var probing = false
     var onProbe: ((String) -> Void)?
+    /// Set by Record in Settings: the next mouse button, modifier key or key
+    /// combination becomes the trigger, by its TRIGGER_BUTTON name, and is
+    /// not passed on. Escape gives up (nil). A key that types a character
+    /// counts only with Cmd, Ctrl or Option held: it would stop typing. One
+    /// that types nothing, a menu key say, counts on its own.
+    var capture: ((String?) -> Void)?
+    /// A modifier pressed while recording: it is the trigger itself if it is
+    /// let go with nothing pressed in between, else part of a combination.
+    private var captureModifier: Int64?
     var onState: (() -> Void)?
 
     var isInstalled: Bool { tap != nil }
@@ -90,14 +103,18 @@ final class Trigger {
     }
 
     init(config: AgentConfig, runner: Runner) {
-        spec = config.trigger
+        specs = config.triggers
         suppress = config.suppress
         mode = config.mode
         self.runner = runner
     }
 
     func update(config: AgentConfig) {
-        spec = config.trigger
+        if specs != config.triggers {
+            keysHeld.removeAll()
+            holder = nil
+        }
+        specs = config.triggers
         suppress = config.suppress
         mode = config.mode
     }
@@ -136,60 +153,68 @@ final class Trigger {
             return pass
         }
         if event.getIntegerValueField(.eventSourceUserData) == sayitEventSignature { return pass }
+        if capture != nil { return record(type, event) }
         if probing { onProbe?(describe(type, event)) }
-        guard let spec = spec else { return pass }
+        guard !specs.isEmpty else { return pass }
 
         let now = ProcessInfo.processInfo.systemUptime
         let flags = event.flags.rawValue
-        switch (spec.kind, type) {
-        case let (.key(code, mods), .keyDown):
+        switch type {
+        case .keyDown:
             let keycode = event.getIntegerValueField(.keyboardEventKeycode)
-            if keycode == code && (flags & TriggerSpec.modifierFlags) == mods {
-                if event.getIntegerValueField(.keyboardEventAutorepeat) == 0 { press(now) }
-                keyHeld = true
+            let match = specs.firstIndex {
+                if case let .key(code, mods) = $0.kind { return code == keycode && flags & TriggerSpec.modifierFlags == mods }
+                return false
+            }
+            if let i = match {
+                if event.getIntegerValueField(.keyboardEventAutorepeat) == 0 { press(now, by: i) }
+                keysHeld.insert(i)
                 return suppress ? nil : pass
             }
-            return escapeOrPass(keycode, flags, pass)
-        case let (.key(code, _), .keyUp):
-            // Matched to the down we acted on, not to the modifiers: a vendor
-            // utility may let go of them first.
-            if event.getIntegerValueField(.keyboardEventKeycode) == code && keyHeld {
-                keyHeld = false
-                release(now)
-                return suppress ? nil : pass
-            }
-            return pass
-        case let (.modifier(code, deviceMask), .flagsChanged):
-            // A modifier is never swallowed: the system's idea of which keys
-            // are down must stay intact.
-            if event.getIntegerValueField(.keyboardEventKeycode) == code {
-                if flags & deviceMask != 0 { press(now) } else { release(now) }
-            }
-            return pass
-        case (.modifier, .keyDown):
-            // Any other key while the modifier is held means a shortcut, not
-            // a dictation: drop the recording rather than transcribe it.
-            if case .holding = state {
+            // Any other key while a modifier trigger is held means a
+            // shortcut, not a dictation: drop the recording rather than
+            // transcribe it.
+            if case .holding = state, let h = holder, specs.indices.contains(h), case .modifier = specs[h].kind {
                 runner.cancel()
                 state = .spoiled
                 onState?()
                 return pass
             }
-            return escapeOrPass(event.getIntegerValueField(.keyboardEventKeycode), flags, pass)
-        case let (.mouse(button), .otherMouseDown):
-            if event.getIntegerValueField(.mouseEventButtonNumber) == button {
-                press(now)
+            return escapeOrPass(keycode, flags, pass)
+        case .keyUp:
+            // Matched to the down we acted on, not to the modifiers: a vendor
+            // utility may let go of them first.
+            let keycode = event.getIntegerValueField(.keyboardEventKeycode)
+            let match = keysHeld.first {
+                if specs.indices.contains($0), case let .key(code, _) = specs[$0].kind { return code == keycode }
+                return false
+            }
+            if let i = match {
+                keysHeld.remove(i)
+                release(now, by: i)
                 return suppress ? nil : pass
             }
             return pass
-        case let (.mouse(button), .otherMouseUp):
-            if event.getIntegerValueField(.mouseEventButtonNumber) == button {
-                release(now)
-                return suppress ? nil : pass
+        case .flagsChanged:
+            // A modifier is never swallowed: the system's idea of which keys
+            // are down must stay intact.
+            let keycode = event.getIntegerValueField(.keyboardEventKeycode)
+            for (i, spec) in specs.enumerated() {
+                if case let .modifier(code, deviceMask) = spec.kind, code == keycode {
+                    if flags & deviceMask != 0 { press(now, by: i) } else { release(now, by: i) }
+                    break
+                }
             }
             return pass
-        case (.mouse, .keyDown):
-            return escapeOrPass(event.getIntegerValueField(.keyboardEventKeycode), flags, pass)
+        case .otherMouseDown, .otherMouseUp:
+            let number = event.getIntegerValueField(.mouseEventButtonNumber)
+            let match = specs.firstIndex {
+                if case let .mouse(button) = $0.kind { return button == number }
+                return false
+            }
+            guard let i = match else { return pass }
+            if type == .otherMouseDown { press(now, by: i) } else { release(now, by: i) }
+            return suppress ? nil : pass
         default:
             return pass
         }
@@ -209,11 +234,12 @@ final class Trigger {
             || FileManager.default.fileExists(atPath: Shared.runPath("sayit.starting"))
     }
 
-    private func press(_ now: TimeInterval) {
+    private func press(_ now: TimeInterval, by trigger: Int) {
         switch state {
         case .idle:
             runner.start()
             lastPress = now
+            holder = trigger
             state = .holding(since: now)
         case .latched:
             // The recording may have ended without us: a start that failed,
@@ -224,6 +250,7 @@ final class Trigger {
             } else {
                 runner.start()
                 lastPress = now
+                holder = trigger
                 state = .holding(since: now)
             }
         case .holding, .spoiled:
@@ -232,7 +259,10 @@ final class Trigger {
         onState?()
     }
 
-    private func release(_ now: TimeInterval) {
+    /// Only the trigger that started a hold ends it: letting go of the
+    /// other one, pressed meanwhile, changes nothing.
+    private func release(_ now: TimeInterval, by trigger: Int) {
+        if let h = holder, h != trigger { return }
         switch state {
         case let .holding(since):
             let held = now - since
@@ -250,6 +280,51 @@ final class Trigger {
         onState?()
     }
 
+    // MARK: - Record
+
+    private func record(_ type: CGEventType, _ event: CGEvent) -> Unmanaged<CGEvent>? {
+        let pass = Unmanaged.passUnretained(event)
+        func finish(_ name: String?) {
+            let done = capture
+            capture = nil
+            captureModifier = nil
+            done?(name)
+        }
+        switch type {
+        case .otherMouseDown:
+            finish(TriggerSpec.name(mouse: event.getIntegerValueField(.mouseEventButtonNumber)))
+            return nil
+        case .otherMouseUp:
+            return nil
+        case .keyDown:
+            let code = event.getIntegerValueField(.keyboardEventKeycode)
+            let mods = event.flags.rawValue & TriggerSpec.modifierFlags
+            if code == 53 && mods == 0 {
+                finish(nil)
+                return nil
+            }
+            let held = mods & (CGEventFlags.maskCommand.rawValue | CGEventFlags.maskControl.rawValue
+                               | CGEventFlags.maskAlternate.rawValue)
+            guard Trigger.silentKeys.contains(code) || Trigger.typesNothing(event) || held != 0 else { return nil }
+            finish(TriggerSpec.name(key: code, modifiers: mods))
+            return nil
+        case .keyUp:
+            return nil
+        case .flagsChanged:
+            // Modifiers always pass: the system must know which are down.
+            let code = event.getIntegerValueField(.keyboardEventKeycode)
+            guard let mask = TriggerSpec.deviceMask(modifier: code) else { return pass }
+            if event.flags.rawValue & mask != 0 {
+                captureModifier = code
+            } else if captureModifier == code {
+                finish(TriggerSpec.name(modifier: code))
+            }
+            return pass
+        default:
+            return pass
+        }
+    }
+
     // MARK: - Probe
 
     /// Keys that type no character: safe to name in a probe log. Every other
@@ -260,6 +335,19 @@ final class Trigger {
         105, 107, 113, 106, 64, 79, 80, 90,                       // F13-F20
         53, 123, 124, 125, 126, 115, 119, 116, 121, 114, 117,     // Esc, arrows, navigation
     ]
+
+    /// A key that types nothing: no character, or only a function-key or
+    /// control character - a menu key or a vendor's extra key, not a letter,
+    /// and not Return, Tab, Backspace or Enter either. Safe to name in a probe
+    /// log and to record as a trigger.
+    static func typesNothing(_ event: CGEvent) -> Bool {
+        var length = 0
+        var chars = [UniChar](repeating: 0, count: 4)
+        event.keyboardGetUnicodeString(maxStringLength: 4, actualStringLength: &length, unicodeString: &chars)
+        return chars.prefix(length).allSatisfy {
+            ($0 < 0x20 && ![0x03, 0x08, 0x09, 0x0D].contains($0)) || (0xF700...0xF8FF).contains($0)
+        }
+    }
 
     func describe(_ type: CGEventType, _ event: CGEvent) -> String {
         let flags = event.flags
@@ -274,7 +362,7 @@ final class Trigger {
         case .keyDown, .keyUp:
             let code = event.getIntegerValueField(.keyboardEventKeycode)
             let shortcut = flags.contains(.maskCommand) || flags.contains(.maskControl)
-            guard Trigger.silentKeys.contains(code) || shortcut else {
+            guard Trigger.silentKeys.contains(code) || shortcut || Trigger.typesNothing(event) else {
                 return "key \(type == .keyDown ? "down" : "up") (a typing key - not recorded)"
             }
             let rep = event.getIntegerValueField(.keyboardEventAutorepeat) != 0 ? " repeat" : ""

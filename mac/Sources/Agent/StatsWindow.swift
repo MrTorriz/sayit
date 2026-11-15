@@ -4,22 +4,28 @@
 // Everything in it is read from history.jsonl when the window opens and again
 // whenever the file changes while it is open; nothing is kept once it closes,
 // and nothing is written anywhere. The numbers are the ones `sayit-history
-// --stat` prints, with TYPING_WPM as the typing speed to compare against.
+// --stat` prints, with TYPING_WPM as the typing speed to compare against, plus
+// the latency and the apps the history has on macOS.
 //
 // The look is the README's: its lockup, SAYIT with the red IT above DON'T
 // TYPE IT. SAY IT., one large number, the period as rounded bars against a
 // scale, and a year of days as a calendar. A window wide enough, as a quarter
 // of an ultrawide screen is, puts the lockup and the number in a panel beside
-// the charts and needs no scrolling; a narrower one stacks everything. In dark mode the ground is
-// all but black, with one small red glow in the corner, and the cards are
-// black glass: a faint lift, a lit top edge, Liquid Glass from macOS 26.
+// the chart, the calendar under it across the whole width and the tiles in a
+// row under that; a narrower one stacks everything. In dark mode the ground is
+// all but black, with one small glow in the corner, and the cards are black
+// glass: a faint lift, a lit top edge, Liquid Glass from macOS 26.
 //
-// It opens as the top left quarter of the screen. While it is open Sayit is
-// an ordinary app with a Dock icon and a
+// Settings > Appearance (Look.swift) sets the text size, the accent colour in
+// place of the red, light or dark, glass or solid cards, the glow, the layout,
+// which parts and cards show in which order, and where the window opens: by
+// default where it was left, the first time the top left quarter of the
+// screen. While it is open Sayit is an ordinary app with a Dock icon and a
 // menu bar, so the window can be found again with Cmd+Tab; closing it puts
 // Sayit back in the menu bar only.
 
 import AppKit
+import Combine
 import SwiftUI
 
 /// What the views themselves change. An observable object rather than @State:
@@ -40,10 +46,10 @@ final class StatsHover: ObservableObject {
     @Published var day: Int?
 }
 
-/// English month and weekday names, as the rest of the window is in English,
-/// with the user's own region for everything else: the 24-hour clock, the
-/// day before the month, the digit grouping.
-let statsLocale = Locale(identifier: "en_" + (Locale.current.region?.identifier ?? "US"))
+/// Month and weekday names in the app's language (Localize.swift), with the
+/// user's own region for everything else: the 24-hour clock, the day before
+/// the month, the digit grouping.
+let statsLocale = Locale(identifier: appLanguage + "_" + (Locale.current.region?.identifier ?? "US"))
 
 private extension Int {
     var grouped: String { formatted(.number.locale(statsLocale)) }
@@ -54,9 +60,7 @@ private extension Date {
 }
 
 /// The window's colours. In dark mode darker than the system's grey, towards
-/// the black of the pill; the red is the README's: the pill's lit lamp on
-/// dark, a darker one on light, where the lamp's red would be too faint for
-/// small text.
+/// the black of the pill. The accent is Settings' (Look.swift).
 enum StatsTheme {
     private static func dynamic(dark: NSColor, light: NSColor) -> NSColor {
         NSColor(name: nil) { appearance in
@@ -67,8 +71,6 @@ enum StatsTheme {
     /// Liquid Glass lightens what it covers; in dark mode it is tinted back
     /// towards black, so the cards stay black glass rather than grey.
     static let glassTint = dynamic(dark: NSColor(white: 0, alpha: 0.45), light: .clear)
-    static let red = Color(nsColor: dynamic(dark: NSColor(srgbRed: 1, green: 0.302, blue: 0.302, alpha: 1),
-                                            light: NSColor(srgbRed: 0.855, green: 0.267, blue: 0.325, alpha: 1)))
 }
 
 enum StatsTab: String, CaseIterable, Identifiable {
@@ -169,8 +171,15 @@ final class StatsModel: ObservableObject {
 final class StatsWindowController: NSObject, NSWindowDelegate {
     private let repository: String
     private let model = StatsModel()
+    private let look = Look.shared
     private var window: NSWindow?
     private var timer: Timer?
+    private var lookWatch: AnyCancellable?
+    /// Called once the window has closed, so the app can leave the Dock.
+    var onClose: (() -> Void)?
+
+    /// AppKit keeps the window's place under this name in Sayit's defaults.
+    private static let frameName = "SayitStatistics"
 
     init(repository: String) {
         self.repository = repository
@@ -202,12 +211,18 @@ final class StatsWindowController: NSObject, NSWindowDelegate {
             w.toolbar = NSToolbar(identifier: "SayitStatistics")
             w.toolbarStyle = .unified
             w.titlebarSeparatorStyle = .none
-            w.contentView = NSHostingView(rootView: StatsView(model: model, state: model.view))
+            w.contentView = NSHostingView(rootView: StatsView(model: model, state: model.view, look: look))
             window = w
+            place(w)
+            w.setFrameAutosaveName(Self.frameName)
+            w.appearance = look.theme.appearance
+            lookWatch = look.objectWillChange.sink { [weak self] in
+                // objectWillChange fires before the value changes.
+                DispatchQueue.main.async { self?.window?.appearance = self?.look.theme.appearance }
+            }
+        } else if let w = window, !w.isVisible {
+            place(w)
         }
-        // A quarter of the screen, its top left, each time the window opens.
-        if let w = window, !w.isVisible { w.setFrame(quarter(for: w), display: false) }
-        if NSApp.mainMenu == nil { NSApp.mainMenu = mainMenu() }
         NSApp.setActivationPolicy(.regular)
         window?.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
@@ -217,6 +232,21 @@ final class StatsWindowController: NSObject, NSWindowDelegate {
     }
 
     @objc func close() { window?.close() }
+
+    /// Where the window opens, as Settings > Appearance says: where it was
+    /// left (the first time, the top left quarter), the top left quarter of
+    /// the screen each time, or that size in the middle.
+    private func place(_ w: NSWindow) {
+        switch look.openAt {
+        case .lastPlace:
+            if !w.setFrameUsingName(Self.frameName) { w.setFrame(quarter(for: w), display: false) }
+        case .quarter:
+            w.setFrame(quarter(for: w), display: false)
+        case .centred:
+            w.setFrame(quarter(for: w), display: false)
+            w.center()
+        }
+    }
 
     /// The top left quarter of the visible screen, no smaller than the
     /// window's minimum.
@@ -231,58 +261,42 @@ final class StatsWindowController: NSObject, NSWindowDelegate {
         timer?.invalidate()
         timer = nil
         model.clear()
-        NSApp.setActivationPolicy(.accessory)
-    }
-
-    /// The menu bar Sayit has while the window is open. Cmd+Q closes the
-    /// window rather than quitting: quitting would take the push-to-talk
-    /// trigger with it, and that stays with Quit Sayit in the menu bar item.
-    private func mainMenu() -> NSMenu {
-        func item(_ title: String, _ action: Selector?, _ key: String, target: AnyObject? = nil) -> NSMenuItem {
-            let i = NSMenuItem(title: title, action: action, keyEquivalent: key)
-            i.target = target
-            return i
-        }
-        func submenu(_ title: String, _ items: [NSMenuItem]) -> NSMenuItem {
-            let top = NSMenuItem(title: title, action: nil, keyEquivalent: "")
-            let menu = NSMenu(title: title)
-            items.forEach(menu.addItem)
-            top.submenu = menu
-            return top
-        }
-        let main = NSMenu()
-        main.addItem(submenu("Sayit", [
-            item("Hide Sayit", #selector(NSApplication.hide(_:)), "h"),
-            .separator(),
-            item("Close Statistics", #selector(close), "q", target: self),
-        ]))
-        main.addItem(submenu("Edit", [
-            item("Undo", Selector(("undo:")), "z"),
-            item("Redo", Selector(("redo:")), "Z"),
-            .separator(),
-            item("Cut", #selector(NSText.cut(_:)), "x"),
-            item("Copy", #selector(NSText.copy(_:)), "c"),
-            item("Paste", #selector(NSText.paste(_:)), "v"),
-            item("Select All", #selector(NSText.selectAll(_:)), "a"),
-        ]))
-        let windowMenu = submenu("Window", [
-            item("Minimize", #selector(NSWindow.performMiniaturize(_:)), "m"),
-            item("Close", #selector(NSWindow.performClose(_:)), "w"),
-        ])
-        main.addItem(windowMenu)
-        NSApp.windowsMenu = windowMenu.submenu
-        return main
+        // After the close, when the window no longer counts as visible.
+        DispatchQueue.main.async { self.onClose?() }
     }
 }
 
 // MARK: - Building blocks
 
-private extension View {
-    /// Black glass in `shape`: barely lifted off the ground, lighter at the
-    /// top, with a hairline that catches the light along the top edge. Over
-    /// it Liquid Glass where the system has it, for the rim and the depth.
-    @ViewBuilder func glass<S: InsettableShape>(_ shape: S) -> some View {
-        let body = self
+extension StatsTheme {
+    /// A solid card: a step up from the ground, plain white on light.
+    static let solidCard = NSColor(name: nil) { appearance in
+        appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua ? NSColor(white: 0.085, alpha: 1) : .white
+    }
+}
+
+/// A card's surface: black glass, or a solid card when Settings say so.
+private struct Surface<S: InsettableShape>: ViewModifier {
+    let shape: S
+    @Environment(\.sayit) private var st
+
+    @ViewBuilder func body(content: Content) -> some View {
+        if st.solid {
+            content
+                .background { shape.fill(Color(nsColor: StatsTheme.solidCard)) }
+                .overlay {
+                    shape.strokeBorder(Color.primary.opacity(0.1), lineWidth: 0.75).allowsHitTesting(false)
+                }
+        } else {
+            glass(content)
+        }
+    }
+
+    /// Black glass: barely lifted off the ground, lighter at the top, with a
+    /// hairline that catches the light along the top edge. Over it Liquid
+    /// Glass where the system has it, for the rim and the depth.
+    @ViewBuilder private func glass(_ content: Content) -> some View {
+        let body = content
             .background {
                 shape.fill(LinearGradient(colors: [Color.primary.opacity(0.05), Color.primary.opacity(0.012)],
                                           startPoint: .top, endPoint: .bottom))
@@ -309,23 +323,37 @@ private extension View {
         body
         #endif
     }
+}
 
-    func card() -> some View {
-        padding(16)
+private struct CardPadding: ViewModifier {
+    @Environment(\.sayit) private var st
+
+    func body(content: Content) -> some View {
+        content
+            .padding(16 * st.heroScale)
             // As tall as its row allows: beside the tiles it matches them.
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             .glass(RoundedRectangle(cornerRadius: 18, style: .continuous))
     }
 }
 
-/// The window's ground: all but black, with one small red glow in the top
-/// right corner, behind the comparison with typing, and none behind the cards.
+private extension View {
+    func glass<S: InsettableShape>(_ shape: S) -> some View { modifier(Surface(shape: shape)) }
+    func card() -> some View { modifier(CardPadding()) }
+}
+
+/// The window's ground: all but black, with one small glow in the top right
+/// corner, behind the comparison with typing, and none behind the cards.
 private struct Backdrop: View {
+    @Environment(\.sayit) private var st
+
     var body: some View {
         ZStack {
             Color(nsColor: StatsTheme.background)
-            RadialGradient(colors: [StatsTheme.red.opacity(0.17), .clear], center: UnitPoint(x: 1.0, y: 0.0),
-                           startRadius: 0, endRadius: 340)
+            if st.glow {
+                RadialGradient(colors: [st.accent.opacity(0.17), .clear], center: UnitPoint(x: 1.0, y: 0.0),
+                               startRadius: 0, endRadius: 340)
+            }
         }
         .ignoresSafeArea()
     }
@@ -357,38 +385,40 @@ private struct WordmarkShape: Shape {
 }
 
 /// The README's lockup, drawn from its own outlines: SAYIT, and under it
-/// DON'T TYPE IT. SAY IT. set to the wordmark's width. The reds are the
-/// window's; the tagline's first half is quieter than the wordmark.
+/// DON'T TYPE IT. SAY IT. set to the wordmark's width, in the accent colour;
+/// the tagline's first half is quieter than the wordmark.
 private struct Lockup: View {
     let height: CGFloat
+    @Environment(\.sayit) private var st
 
     var body: some View {
         ZStack {
             WordmarkShape(part: .say, lockup: true).fill(Color.primary)
-            WordmarkShape(part: .it, lockup: true).fill(StatsTheme.red)
+            WordmarkShape(part: .it, lockup: true).fill(st.accent)
             WordmarkShape(part: .dontTypeIt, lockup: true).fill(Color.secondary)
-            WordmarkShape(part: .sayIt, lockup: true).fill(StatsTheme.red)
+            WordmarkShape(part: .sayIt, lockup: true).fill(st.accent)
         }
         .frame(width: height * Wordmark.lockupAspect, height: height)
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("Sayit: don't type it. Say it.")
+        .accessibilityLabel(L("Sayit: don't type it. Say it."))
     }
 }
 
 /// The periods and History as one glass capsule in the titlebar, the
-/// selected one lit red.
+/// selected one lit in the accent colour.
 private struct NavBar: View {
     @ObservedObject var model: StatsModel
     @ObservedObject var state: StatsViewState
+    @Environment(\.sayit) private var st
 
     private func item(_ title: String, active: Bool, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Text(title)
-                .font(.system(size: 12.5, weight: active ? .semibold : .regular))
-                .foregroundStyle(active ? StatsTheme.red : Color.secondary)
-                .padding(.horizontal, 14)
+                .font(st.font(12.5, active ? .semibold : .regular))
+                .foregroundStyle(active ? st.accent : Color.secondary)
+                .padding(.horizontal, 14 * st.heroScale)
                 .padding(.vertical, 6)
-                .background(Capsule().fill(StatsTheme.red.opacity(active ? 0.16 : 0)))
+                .background(Capsule().fill(st.accent.opacity(active ? 0.16 : 0)))
                 .contentShape(Capsule())
         }
         .buttonStyle(.plain)
@@ -398,52 +428,154 @@ private struct NavBar: View {
     var body: some View {
         HStack(spacing: 2) {
             ForEach(StatsRange.allCases) { r in
-                item(r.title, active: state.tab == .overview && model.range == r) {
+                item(L(r.title), active: state.tab == .overview && model.range == r) {
                     state.tab = .overview
                     model.range = r
                 }
             }
             Divider().frame(height: 16).padding(.horizontal, 6)
-            item("History", active: state.tab == .history) { state.tab = .history }
+            item(L("History"), active: state.tab == .history) { state.tab = .history }
         }
         .padding(3)
         .glass(Capsule())
     }
 }
 
-/// One fact as a tile: a red symbol in a soft disc, the label in small
-/// capitals, the figure, and a line of context.
+/// One fact as a tile: a symbol in a soft disc, the label in small capitals,
+/// the figure, a line of context, and for some a small chart under them or a
+/// ring beside them.
 private struct StatTile: View {
     let symbol: String
     let label: String
     let value: String
     let note: String
+    var extra: AnyView? = nil
+    var trailing: AnyView? = nil
+    @Environment(\.sayit) private var st
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: 5 * st.heroScale) {
             HStack(spacing: 7) {
                 Image(systemName: symbol)
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(StatsTheme.red)
-                    .frame(width: 24, height: 24)
-                    .background(Circle().fill(StatsTheme.red.opacity(0.15)))
-                    .overlay(Circle().strokeBorder(StatsTheme.red.opacity(0.35), lineWidth: 0.5))
+                    .font(st.font(11, .semibold))
+                    .foregroundStyle(st.accent)
+                    .frame(width: st.size(24), height: st.size(24))
+                    .background(Circle().fill(st.accent.opacity(0.15)))
+                    .overlay(Circle().strokeBorder(st.accent.opacity(0.35), lineWidth: 0.5))
                 Text(label)
-                    .font(.system(size: 10, weight: .semibold)).kerning(1.2)
+                    .font(st.font(10, .semibold)).kerning(1.2)
                     .foregroundStyle(.secondary)
-                    .lineLimit(1)
+                    .lineLimit(1).minimumScaleFactor(0.75)
             }
-            Text(value)
-                .font(.system(size: 22, weight: .bold)).monospacedDigit()
-                .lineLimit(1).minimumScaleFactor(0.6)
-            Text(note)
-                .font(.caption).foregroundStyle(.secondary)
-                .lineLimit(1)
+            HStack(alignment: .center, spacing: 10) {
+                VStack(alignment: .leading, spacing: 4 * st.heroScale) {
+                    if !value.isEmpty {
+                        Text(value)
+                            .font(st.font(22, .bold)).monospacedDigit()
+                            .lineLimit(1).minimumScaleFactor(0.6)
+                    }
+                    if !note.isEmpty {
+                        Text(note).font(st.font(10.5)).foregroundStyle(.secondary)
+                            .lineLimit(1).minimumScaleFactor(0.8)
+                    }
+                }
+                if let trailing = trailing {
+                    Spacer(minLength: 0)
+                    trailing
+                }
+            }
+            if let extra = extra { extra }
         }
-        .padding(12)
+        .padding(12 * st.heroScale)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .glass(RoundedRectangle(cornerRadius: 16, style: .continuous))
         .accessibilityElement(children: .combine)
+    }
+}
+
+/// Words by hour of the day, 0 to 23, the busiest hour brightest.
+private struct HoursBars: View {
+    let hours: [Int]
+    let peak: Int?
+    @Environment(\.sayit) private var st
+
+    var body: some View {
+        let top = max(hours.max() ?? 0, 1)
+        VStack(spacing: 3) {
+            HStack(alignment: .bottom, spacing: 2) {
+                ForEach(hours.indices, id: \.self) { h in
+                    RoundedRectangle(cornerRadius: 1.5)
+                        .fill(h == peak ? st.accent : st.accent.opacity(hours[h] > 0 ? 0.45 : 0.12))
+                        .frame(height: max(2, st.size(20) * CGFloat(hours[h]) / CGFloat(top)))
+                        .frame(maxWidth: .infinity)
+                }
+            }
+            .frame(height: st.size(20), alignment: .bottom)
+            HStack {
+                ForEach(["00", "06", "12", "18", "24"], id: \.self) { t in
+                    Text(t)
+                    if t != "24" { Spacer(minLength: 0) }
+                }
+            }
+            .font(st.font(9.5)).foregroundStyle(.tertiary).monospacedDigit()
+        }
+        .padding(.top, 2)
+        .accessibilityHidden(true)
+    }
+}
+
+/// The apps with the most words, as shares of the words with an app: at
+/// most three rows, the rest as one, so the tile is as tall with ten apps as
+/// with three and the window never has to scroll for it.
+private struct AppBars: View {
+    let apps: [AppShare]
+    let total: Int
+    @Environment(\.sayit) private var st
+
+    private var rows: [AppShare] {
+        guard apps.count > 3 else { return apps }
+        let top = Array(apps.prefix(2))
+        return top + [AppShare(name: L("Other apps"), words: total - top.reduce(0) { $0 + $1.words })]
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6 * st.heroScale) {
+            ForEach(rows, id: \.name) { app in
+                let share = total > 0 ? Double(app.words) / Double(total) : 0
+                VStack(alignment: .leading, spacing: 3) {
+                    HStack {
+                        Text(app.name).lineLimit(1)
+                        Spacer(minLength: 6)
+                        Text("\(Int((share * 100).rounded())) %").monospacedDigit().foregroundStyle(.secondary)
+                    }
+                    .font(st.font(11))
+                    GeometryReader { geo in
+                        ZStack(alignment: .leading) {
+                            Capsule().fill(Color.primary.opacity(0.08))
+                            Capsule().fill(st.accent).frame(width: max(4, geo.size.width * share))
+                        }
+                    }
+                    .frame(height: st.size(5))
+                }
+            }
+        }
+    }
+}
+
+/// Today's words against the daily goal, as a ring.
+private struct GoalRing: View {
+    let progress: Double
+    @Environment(\.sayit) private var st
+
+    var body: some View {
+        ZStack {
+            Circle().stroke(Color.primary.opacity(0.1), lineWidth: st.size(5))
+            Circle().trim(from: 0, to: min(max(progress, 0), 1))
+                .stroke(st.accent, style: StrokeStyle(lineWidth: st.size(5), lineCap: .round))
+                .rotationEffect(.degrees(-90))
+        }
+        .frame(width: st.size(44), height: st.size(44))
+        .accessibilityHidden(true)
     }
 }
 
@@ -452,6 +584,7 @@ private struct StatTile: View {
 struct StatsView: View {
     @ObservedObject var model: StatsModel
     @ObservedObject var state: StatsViewState
+    @ObservedObject var look: Look
 
     /// The titlebar's height with its toolbar: the capsule is centred in it,
     /// level with the window buttons.
@@ -467,7 +600,7 @@ struct StatsView: View {
                 if model.loaded && model.rows.isEmpty {
                     EmptyHistory(hint: model.hint)
                 } else if state.tab == .overview {
-                    OverviewView(model: model, hover: model.hover)
+                    OverviewView(model: model, hover: model.hover, look: look)
                 } else {
                     HistoryList(rows: model.rows, state: state)
                 }
@@ -478,16 +611,21 @@ struct StatsView: View {
         .frame(minWidth: 680, minHeight: 480)
         .background(Backdrop())
         .environment(\.locale, statsLocale)
+        .environment(\.sayit, look.style)
+        .tint(look.accent.color)
     }
 }
 
 private struct EmptyHistory: View {
     let hint: String
+    @Environment(\.sayit) private var st
+
     var body: some View {
         VStack(spacing: 14) {
-            Lockup(height: 44)
-            Text("No dictations yet").font(.title3.weight(.semibold)).padding(.top, 10)
-            Text(hint.isEmpty ? "Dictate something and it shows up here." : hint + " — it shows up here.")
+            Lockup(height: 44 * st.heroScale)
+            Text("No dictations yet").font(st.font(15, .semibold)).padding(.top, 10)
+            Text(hint.isEmpty ? L("Dictate something and it shows up here.") : L("%@ — it shows up here.", hint))
+                .font(st.font(13))
                 .foregroundStyle(.secondary)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -497,35 +635,39 @@ private struct EmptyHistory: View {
 private struct OverviewView: View {
     @ObservedObject var model: StatsModel
     @ObservedObject var hover: StatsHover
+    @ObservedObject var look: Look
 
     private var s: Summary { model.summary }
+    private var st: SayitStyle { look.style }
+    private var k: CGFloat { st.scale }
+    private var hk: CGFloat { st.heroScale }
 
-    private func words(_ n: Int) -> String { "\(n.grouped) \(n == 1 ? "word" : "words")" }
-    private func days(_ n: Int) -> String { "\(n) \(n == 1 ? "day" : "days")" }
-    private func dictations(_ n: Int) -> String { "\(n.grouped) \(n == 1 ? "dictation" : "dictations")" }
+    private func words(_ n: Int) -> String { L(n == 1 ? "%@ word" : "%@ words", n.grouped) }
+    private func days(_ n: Int) -> String { L(n == 1 ? "%d day" : "%d days", n) }
+    private func dictations(_ n: Int) -> String { L(n == 1 ? "%@ dictation" : "%@ dictations", n.grouped) }
 
     private var rangeLabel: String {
         switch model.range {
-        case .today: return "TODAY"
-        case .week: return "LAST 7 DAYS"
-        case .month: return "LAST 30 DAYS"
-        case .all: return "ALL TIME"
+        case .today: return L("TODAY")
+        case .week: return L("LAST 7 DAYS")
+        case .month: return L("LAST 30 DAYS")
+        case .all: return L("ALL TIME")
         }
     }
 
     private var heroNote: String {
         guard s.dictations > 0 else {
-            return model.range == .today ? "Nothing dictated yet today" : "Nothing dictated in this period"
+            return L(model.range == .today ? "Nothing dictated yet today" : "Nothing dictated in this period")
         }
-        return "\(s.words == 1 ? "word" : "words") in \(Stats.duration(s.seconds)) of speaking, "
-            + dictations(s.dictations)
+        return L(s.words == 1 ? "word in %@ of speaking, %@" : "words in %@ of speaking, %@",
+                 Stats.duration(s.seconds), dictations(s.dictations))
     }
 
     private var chartTitle: String {
         switch s.unit {
-        case .hour: return "Words per hour"
-        case .weekOfYear: return "Words per week"
-        default: return "Words per day"
+        case .hour: return L("Words per hour")
+        case .weekOfYear: return L("Words per week")
+        default: return L("Words per day")
         }
     }
 
@@ -535,7 +677,7 @@ private struct OverviewView: View {
             let h = Calendar.current.component(.hour, from: b.start)
             return String(format: "%02d:00–%02d:00", h, (h + 1) % 24)
         case .weekOfYear:
-            return "Week of " + b.start.text(.dateTime.day().month(.abbreviated))
+            return L("Week of %@", b.start.text(.dateTime.day().month(.abbreviated)))
         default:
             return b.start.text(.dateTime.weekday(.abbreviated).day().month(.abbreviated))
         }
@@ -544,11 +686,11 @@ private struct OverviewView: View {
     /// The line above the chart: the bar under the pointer, else the average.
     private var chartReadout: String {
         if let b = s.buckets.first(where: { $0.start == hover.bucket }) {
-            guard b.dictations > 0 else { return bucketLabel(b) + " · nothing dictated" }
+            guard b.dictations > 0 else { return bucketLabel(b) + L(" · nothing dictated") }
             return bucketLabel(b) + " · \(words(b.words)) · \(Stats.duration(b.seconds)) · " + dictations(b.dictations)
         }
         if s.unit == .day, s.activeDays > 1 {
-            return "\((s.words / s.activeDays).grouped) words on an average day with dictation"
+            return L("%@ words on an average day with dictation", (s.words / s.activeDays).grouped)
         }
         return ""
     }
@@ -559,43 +701,87 @@ private struct OverviewView: View {
         return s.hours.firstIndex(of: top)
     }
 
-    /// The left panel's width in the wide layout.
-    private static let panelWidth: CGFloat = 380
-    /// The narrowest window for the wide layout: the panel, the calendar and
-    /// two 170-point columns of tiles, the gaps and the margins.
-    private static let wideWidth: CGFloat = panelWidth + YearView.cardWidth + 340 + 24 + 40
+    private var shown: [TileKind] { look.tiles.filter(\.on).map(\.kind) }
+
+    /// The narrowest a tile gets in the row under the calendar.
+    private var tileMin: CGFloat { 140 * k }
+    /// The wide layout's columns: the panel, and beside it the calendar at
+    /// 10-point days or three tiles, whichever is wider.
+    private var panelWidth: CGFloat { 380 * hk }
+    private var wideWidth: CGFloat {
+        panelWidth + 12 + 40
+            + max(look.showYear ? YearView.width(step: 10 * k, scale: k) : 0,
+                  shown.isEmpty ? 0 : CGFloat(min(shown.count, 3)) * (tileMin + 12) - 12)
+    }
 
     var body: some View {
         GeometryReader { geo in
             // Wide and tall enough for the panel beside the charts, with the
-            // calendar and two columns of tiles under them, as a quarter of
-            // an ultrawide screen is: everything at once, nothing to scroll.
-            if geo.size.width >= Self.wideWidth && geo.size.height >= 520 {
-                wide
+            // calendar across and the tiles in a row under it, as a quarter
+            // of an ultrawide screen is: everything at once. More than fits
+            // that height scrolls.
+            if useWide(geo.size) {
+                let column = geo.size.width - 40 - panelWidth - 12
+                ViewThatFits(in: .vertical) {
+                    wide(fill: true, column: column)
+                    ScrollView { wide(fill: false, column: column) }
+                }
             } else {
                 narrow
             }
         }
     }
 
-    private var wide: some View {
+    private func useWide(_ size: CGSize) -> Bool {
+        switch look.layout {
+        case .side: return true
+        case .stacked: return false
+        case .automatic: return size.width >= wideWidth && size.height >= 520
+        }
+    }
+
+    /// The chart takes what height is left; the calendar, across the whole
+    /// column, and the tiles take what they need.
+    private func wide(fill: Bool, column: CGFloat) -> some View {
         HStack(alignment: .top, spacing: 12) {
-            panel.frame(width: Self.panelWidth)
+            panel.frame(width: panelWidth)
             VStack(spacing: 12) {
-                chart(minHeight: 120)
-                HStack(alignment: .top, spacing: 12) {
-                    year.frame(width: YearView.cardWidth)
-                    Grid(horizontalSpacing: 12, verticalSpacing: 12) {
-                        GridRow { tiles[0]; tiles[1] }
-                        GridRow { tiles[2]; tiles[3] }
+                if look.showChart {
+                    if fill {
+                        chart(minHeight: 72 * k)
+                    } else {
+                        chart(minHeight: 120 * k).frame(height: 200 * k)
                     }
                 }
-                .fixedSize(horizontal: false, vertical: true)
+                if look.showYear {
+                    year.fixedSize(horizontal: false, vertical: true)
+                }
+                tileRows(shown, width: column)
                 corruptNote
             }
         }
+        // Scrolling, the panel is as tall as the column beside it.
+        .fixedSize(horizontal: false, vertical: !fill)
         .padding(.horizontal, 20)
         .padding(.bottom, 20)
+    }
+
+    /// The tiles in as few rows as `width` allows, as even as can be, each
+    /// row as tall as its tallest tile.
+    @ViewBuilder private func tileRows(_ kinds: [TileKind], width: CGFloat) -> some View {
+        if !kinds.isEmpty {
+            let fit = max(1, Int((width + 12) / (tileMin + 12)))
+            let rows = (kinds.count + fit - 1) / fit
+            let perRow = (kinds.count + rows - 1) / rows
+            VStack(spacing: 12) {
+                ForEach(0..<rows, id: \.self) { r in
+                    HStack(alignment: .top, spacing: 12) {
+                        ForEach(Array(kinds[(r * perRow)..<min(kinds.count, (r + 1) * perRow)])) { tile($0) }
+                    }
+                    .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+        }
     }
 
     private var narrow: some View {
@@ -603,17 +789,16 @@ private struct OverviewView: View {
             VStack(alignment: .leading, spacing: 12) {
                 HStack(alignment: .center, spacing: 24) {
                     VStack(alignment: .leading, spacing: 16) {
-                        Lockup(height: 36)
-                        figure(alignment: .leading, size: 56)
+                        Lockup(height: 36 * hk)
+                        figure(alignment: .leading, size: 56 * hk)
                     }
                     Spacer(minLength: 0)
-                    speed.frame(width: 270)
+                    if look.showSpeed { speed.frame(width: 270 * k) }
                 }
                 .card()
-                chart(minHeight: 124).frame(height: 190)
-                year
-                HStack(spacing: 12) { ForEach(0..<4) { tiles[$0] } }
-                    .fixedSize(horizontal: false, vertical: true)
+                if look.showChart { chart(minHeight: 124 * k).frame(height: 190 * k) }
+                if look.showYear { year }
+                if !shown.isEmpty { tileGrid(shown) }
                 corruptNote
             }
             .padding(.horizontal, 20)
@@ -621,24 +806,33 @@ private struct OverviewView: View {
         }
     }
 
+    /// As many columns as fit, for the stacked layout.
+    private func tileGrid(_ kinds: [TileKind]) -> some View {
+        LazyVGrid(columns: [GridItem(.adaptive(minimum: 170 * k), spacing: 12)], spacing: 12) {
+            ForEach(kinds) { tile($0) }
+        }
+    }
+
     /// The wide layout's left column: the lockup at the top like a poster's
     /// title, the figure in the middle, speaking against typing at the foot,
-    /// over a red glow that rises from behind the lockup.
+    /// over a glow that rises from behind the lockup.
     private var panel: some View {
         VStack(spacing: 0) {
-            Lockup(height: 84)
+            Lockup(height: 84 * hk)
                 .padding(.top, 6)
             Spacer(minLength: 18)
-            figure(alignment: .center, size: 84)
+            figure(alignment: .center, size: 84 * hk)
             Spacer(minLength: 18)
-            speed
+            if look.showSpeed { speed }
         }
         .padding(24)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background {
-            RadialGradient(colors: [StatsTheme.red.opacity(0.22), .clear], center: .top,
-                           startRadius: 0, endRadius: 260)
-                .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+            if st.glow {
+                RadialGradient(colors: [st.accent.opacity(0.22), .clear], center: .top,
+                               startRadius: 0, endRadius: 260 * hk)
+                    .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+            }
         }
         .glass(RoundedRectangle(cornerRadius: 22, style: .continuous))
     }
@@ -647,12 +841,12 @@ private struct OverviewView: View {
     private func figure(alignment: HorizontalAlignment, size: CGFloat) -> some View {
         VStack(alignment: alignment, spacing: 2) {
             Text(rangeLabel)
-                .font(.system(size: 11, weight: .semibold)).kerning(1.6)
-                .foregroundStyle(StatsTheme.red)
+                .font(st.font(11, .semibold)).kerning(1.6)
+                .foregroundStyle(st.accent)
             Text(s.words.grouped)
                 .font(.system(size: size, weight: .heavy)).monospacedDigit().kerning(-size / 40)
                 .lineLimit(1).minimumScaleFactor(0.5)
-            Text(heroNote).font(.callout).foregroundStyle(.secondary).lineLimit(1)
+            Text(heroNote).font(st.font(12)).foregroundStyle(.secondary).lineLimit(1)
                 .multilineTextAlignment(alignment == .center ? .center : .leading)
         }
         .accessibilityElement(children: .combine)
@@ -665,9 +859,9 @@ private struct OverviewView: View {
     private func chart(minHeight: CGFloat) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(alignment: .firstTextBaseline) {
-                Text(chartTitle).font(.headline)
+                Text(chartTitle).font(st.font(13, .bold))
                 Spacer()
-                Text(chartReadout).font(.callout).foregroundStyle(.secondary).lineLimit(1)
+                Text(chartReadout).font(st.font(12)).foregroundStyle(.secondary).lineLimit(1)
             }
             WordsChart(buckets: s.buckets, unit: s.unit, hovered: hover.bucket) { hover.bucket = $0 }
                 .frame(minHeight: minHeight, maxHeight: .infinity)
@@ -677,8 +871,9 @@ private struct OverviewView: View {
 
     @ViewBuilder private var corruptNote: some View {
         if model.corrupt > 0 {
-            Text("\(model.corrupt) history \(model.corrupt == 1 ? "line" : "lines") could not be read and \(model.corrupt == 1 ? "is" : "are") left out.")
-                .font(.caption).foregroundStyle(.secondary)
+            Text(L(model.corrupt == 1 ? "%d history line could not be read and is left out."
+                                      : "%d history lines could not be read and are left out.", model.corrupt))
+                .font(st.font(10)).foregroundStyle(.secondary)
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
@@ -688,22 +883,48 @@ private struct OverviewView: View {
             .card()
     }
 
-    private var tiles: [StatTile] {
-        let perDictation = s.dictations > 0 ? Int((Double(s.words) / Double(s.dictations)).rounded()) : 0
-        return [
-            StatTile(symbol: "flame", label: "STREAK", value: days(s.streak),
-                     note: "longest " + days(s.longestStreak)),
-            StatTile(symbol: "clock", label: "PEAK HOUR",
-                     value: peakHour.map { String(format: "%02d–%02d", $0, ($0 + 1) % 24) } ?? "–",
-                     note: peakHour.map { words(s.hours[$0]) } ?? "nothing yet"),
-            StatTile(symbol: "trophy", label: "BEST DAY", value: s.bestDay.map { $0.words.grouped } ?? "–",
-                     note: s.bestDay.map { $0.start.text(.dateTime.weekday(.abbreviated).day().month(.abbreviated)) }
-                        ?? "nothing yet"),
-            StatTile(symbol: "text.bubble", label: "PER DICTATION",
-                     value: s.dictations > 0 ? words(perDictation) : "–",
-                     note: s.dictations > 0 ? Stats.duration(s.seconds / Double(s.dictations)) + " on average"
-                                            : "nothing yet"),
-        ]
+    private func tile(_ kind: TileKind) -> StatTile {
+        let label = kind.title.uppercased()
+        switch kind {
+        case .streak:
+            return StatTile(symbol: kind.symbol, label: label, value: days(s.streak),
+                            note: L("longest %@", days(s.longestStreak)))
+        case .peakHour:
+            return StatTile(symbol: kind.symbol, label: label,
+                            value: peakHour.map { String(format: "%02d–%02d", $0, ($0 + 1) % 24) } ?? "–",
+                            note: peakHour.map { words(s.hours[$0]) } ?? L("nothing yet"),
+                            extra: peakHour == nil ? nil : AnyView(HoursBars(hours: s.hours, peak: peakHour)))
+        case .bestDay:
+            return StatTile(symbol: kind.symbol, label: label, value: s.bestDay.map { $0.words.grouped } ?? "–",
+                            note: s.bestDay.map { $0.start.text(.dateTime.weekday(.abbreviated).day().month(.abbreviated)) }
+                                ?? L("nothing yet"))
+        case .perDictation:
+            let perDictation = s.dictations > 0 ? Int((Double(s.words) / Double(s.dictations)).rounded()) : 0
+            return StatTile(symbol: kind.symbol, label: label,
+                            value: s.dictations > 0 ? words(perDictation) : "–",
+                            note: s.dictations > 0 ? L("%@ on average", Stats.duration(s.seconds / Double(s.dictations)))
+                                                   : L("nothing yet"))
+        case .latency:
+            guard let median = s.latencyMedian else {
+                return StatTile(symbol: kind.symbol, label: label, value: "–",
+                                note: L("measured from the next dictation"))
+            }
+            return StatTile(symbol: kind.symbol, label: label, value: String(format: "%.2f s", median),
+                            note: L("median · slowest %@", String(format: "%.1f s", s.latencySlowest ?? median)))
+        case .apps:
+            guard !s.apps.isEmpty else {
+                return StatTile(symbol: kind.symbol, label: label, value: "–",
+                                note: L("recorded from the next dictation"))
+            }
+            return StatTile(symbol: kind.symbol, label: label, value: "", note: "",
+                            extra: AnyView(AppBars(apps: s.apps, total: s.appWords)))
+        case .goal:
+            let goal = max(look.dailyGoal, 1)
+            let done = s.todayWords >= goal
+            return StatTile(symbol: kind.symbol, label: label, value: s.todayWords.grouped,
+                            note: L(done ? "goal of %@ reached today" : "of %@ words today", goal.grouped),
+                            trailing: AnyView(GoalRing(progress: Double(s.todayWords) / Double(goal))))
+        }
     }
 }
 
@@ -712,10 +933,11 @@ private struct SpeedView: View {
     let pace: Double
     let typing: Double
     let saved: Double
+    @Environment(\.sayit) private var st
 
     private func bar(_ label: String, _ value: Double, top: Double, _ fill: Color) -> some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text(label).font(.caption).foregroundStyle(.secondary)
+            Text(label).font(st.font(10.5)).foregroundStyle(.secondary)
             HStack(spacing: 8) {
                 GeometryReader { geo in
                     ZStack(alignment: .leading) {
@@ -724,30 +946,29 @@ private struct SpeedView: View {
                             .frame(width: value > 0 ? max(10, geo.size.width * value / top) : 0)
                     }
                 }
-                .frame(height: 10)
-                Text("\(Int(value.rounded())) wpm").font(.caption).monospacedDigit()
-                    .frame(width: 58, alignment: .leading)
+                .frame(height: st.size(10))
+                Text(L("%d wpm", Int(value.rounded()))).font(st.font(10.5)).monospacedDigit()
+                    .frame(width: st.size(60), alignment: .leading)
             }
         }
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("\(label): \(Int(value.rounded())) words a minute")
+        .accessibilityLabel(L("%@: %d words a minute", label, Int(value.rounded())))
     }
 
     var body: some View {
         let top = max(pace, typing, 1)
         VStack(alignment: .leading, spacing: 10) {
-            bar("Typing", typing, top: top, Color.secondary.opacity(0.6))
-            bar("Speaking", pace, top: top, StatsTheme.red)
+            bar(L("Typing"), typing, top: top, Color.secondary.opacity(0.6))
+            bar(L("Speaking"), pace, top: top, st.accent)
             HStack(alignment: .firstTextBaseline, spacing: 6) {
                 if pace > 0 && typing > 0 {
                     Text(String(format: "%.1f×", pace / typing))
-                        .font(.system(size: 26, weight: .bold)).monospacedDigit()
-                        .foregroundStyle(StatsTheme.red)
-                    Text(pace >= typing ? "faster, \(Stats.duration(saved)) saved"
-                                        : "the speed of typing, \(Stats.duration(saved)) lost")
-                        .font(.callout).foregroundStyle(.secondary).lineLimit(1)
+                        .font(st.font(26, .bold)).monospacedDigit()
+                        .foregroundStyle(st.accent)
+                    Text(L(pace >= typing ? "faster, %@ saved" : "the speed of typing, %@ lost", Stats.duration(saved)))
+                        .font(st.font(12)).foregroundStyle(.secondary).lineLimit(1)
                 } else {
-                    Text("Dictate to compare with typing").font(.callout).foregroundStyle(.secondary)
+                    Text("Dictate to compare with typing").font(st.font(12)).foregroundStyle(.secondary)
                 }
             }
             .accessibilityElement(children: .combine)
@@ -764,6 +985,7 @@ private struct WordsChart: View {
     let unit: Calendar.Component
     let hovered: Date?
     let onHover: (Date?) -> Void
+    @Environment(\.sayit) private var st
 
     private struct Mark: Identifiable {
         let index: Int
@@ -777,7 +999,7 @@ private struct WordsChart: View {
     private var scale: (step: Int, top: Int) { Stats.scale(buckets.map(\.words).max() ?? 0) }
 
     /// Room on the left for the scale's widest number.
-    private var axisWidth: CGFloat { CGFloat(scale.top.grouped.count) * 6.5 + 12 }
+    private var axisWidth: CGFloat { CGFloat(scale.top.grouped.count) * 6.5 * st.scale + 12 }
 
     private var marks: [Mark] {
         let n = buckets.count
@@ -787,10 +1009,10 @@ private struct WordsChart: View {
             let d = buckets[i].start
             switch unit {
             case .hour: return String(format: "%02d", Calendar.current.component(.hour, from: d))
-            case .weekOfYear: return i == last ? "This week" : d.text(.dateTime.day().month(.abbreviated))
+            case .weekOfYear: return i == last ? L("This week") : d.text(.dateTime.day().month(.abbreviated))
             default:
                 if n <= 7 { return d.text(.dateTime.weekday(.abbreviated).day()) }
-                return i == last ? "Today" : d.text(.dateTime.day().month(.abbreviated))
+                return i == last ? L("Today") : d.text(.dateTime.day().month(.abbreviated))
             }
         }
         let picked: [Int]
@@ -805,6 +1027,9 @@ private struct WordsChart: View {
         let current = self.current
         let scale = self.scale
         let axis = axisWidth
+        let accent = st.accent
+        let axisFont = st.font(10)
+        let axisLine = st.size(13)
         VStack(spacing: 6) {
             GeometryReader { geo in
                 let n = max(buckets.count, 1)
@@ -814,12 +1039,17 @@ private struct WordsChart: View {
                     let bottom = size.height - 7, high: CGFloat = 7
                     let plot = bottom - high
                     func y(_ v: Int) -> CGFloat { scale.top > 0 ? bottom - plot * CGFloat(v) / CGFloat(scale.top) : bottom }
-                    // The scale: a line and a number per step, 0 included.
+                    // The scale: a line per step, 0 included, and a number
+                    // on each - on every other one when a short chart would
+                    // crowd them.
                     if scale.step > 0 {
+                        let steps = max(scale.top / scale.step, 1)
+                        let every = plot / CGFloat(steps) < axisLine * 1.6 ? 2 : 1
                         for v in stride(from: 0, through: scale.top, by: scale.step) {
                             ctx.fill(Path(CGRect(x: axis, y: y(v) - 0.25, width: size.width - axis, height: 0.5)),
                                      with: .color(Color.primary.opacity(v == 0 ? 0.14 : 0.07)))
-                            ctx.draw(Text(v.grouped).font(.system(size: 10)).foregroundStyle(.secondary).monospacedDigit(),
+                            guard (v / scale.step) % every == 0 else { continue }
+                            ctx.draw(Text(v.grouped).font(axisFont).foregroundStyle(.secondary).monospacedDigit(),
                                      at: CGPoint(x: axis - 8, y: y(v)), anchor: .trailing)
                         }
                     } else {
@@ -837,7 +1067,7 @@ private struct WordsChart: View {
                             let now = i == current
                             let alpha: Double = dim ? 0.28 : (now ? 1 : 0.72)
                             ctx.fill(Path(roundedRect: rect, cornerRadius: min(w / 2, 6, h / 2)),
-                                     with: .color(StatsTheme.red.opacity(alpha)))
+                                     with: .color(accent.opacity(alpha)))
                         } else {
                             let d = min(w, 5)
                             ctx.fill(Path(ellipseIn: CGRect(x: cx - d / 2, y: bottom - d - 1.5, width: d, height: d)),
@@ -867,7 +1097,7 @@ private struct WordsChart: View {
                     Color.clear.frame(width: geo.size.width, height: 1)
                     ForEach(marks) { m in
                         Text(m.text)
-                            .font(.caption)
+                            .font(axisFont)
                             .foregroundStyle(m.index == current ? .primary : .secondary)
                             .fixedSize()
                             .alignmentGuide(.leading) { d in
@@ -879,28 +1109,34 @@ private struct WordsChart: View {
                 }
                 .frame(width: geo.size.width, alignment: .leading)
             }
-            .frame(height: 14)
+            .frame(height: st.size(14))
         }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("Words per period")
-        .accessibilityValue("\(buckets.reduce(0) { $0 + $1.words }.grouped) words in \(buckets.count) periods")
+        .accessibilityValue(L("%@ words in %d periods", buckets.reduce(0) { $0 + $1.words }.grouped, buckets.count))
     }
 }
 
-/// A year of days, one column a week, darker red for more words.
+/// A year of days, one column a week, a deeper accent for more words.
 private struct YearView: View {
     let year: YearMap
     let streak: Int
     let hovered: Int?
     let onHover: (Int?) -> Void
+    @Environment(\.sayit) private var st
 
-    private static let labelWidth: CGFloat = 30
-    private static let monthHeight: CGFloat = 16
     private static let gap: CGFloat = 2.5
-    /// Past about 14 points a cell stops looking like a calendar.
-    private static let maxStep: CGFloat = 14
-    /// The card at its widest: the grid at `maxStep`, and the card's padding.
-    static let cardWidth: CGFloat = labelWidth + CGFloat(Stats.yearWeeks) * maxStep + 32
+    /// Past about 20 points a cell stops looking like a calendar.
+    static let maxStep: CGFloat = 20
+
+    /// The card's width with days `step` apart: the weekday labels, the grid
+    /// and the card's padding.
+    static func width(step: CGFloat, scale: CGFloat) -> CGFloat {
+        30 * scale + CGFloat(Stats.yearWeeks) * step + 32 * (1 + (scale - 1) * 0.5)
+    }
+
+    private var labelWidth: CGFloat { 30 * st.scale }
+    private var monthHeight: CGFloat { 16 * st.scale }
 
     private func date(_ i: Int) -> Date {
         Calendar.current.date(byAdding: .day, value: i, to: year.start) ?? year.start
@@ -908,33 +1144,35 @@ private struct YearView: View {
 
     private var readout: String {
         guard let i = hovered, year.words.indices.contains(i) else {
-            return streak > 0 ? "\(streak) \(streak == 1 ? "day" : "days") in a row" : ""
+            return streak > 0 ? L(streak == 1 ? "%d day in a row" : "%d days in a row", streak) : ""
         }
         let n = year.words[i]
         return date(i).text(.dateTime.weekday(.abbreviated).day().month(.abbreviated))
-            + (n > 0 ? " · \(n.grouped) \(n == 1 ? "word" : "words")" : " · nothing dictated")
+            + (n > 0 ? " · " + L(n == 1 ? "%@ word" : "%@ words", n.grouped) : L(" · nothing dictated"))
     }
 
-    /// The red's opacity per level, 1 to 4.
+    /// The accent's opacity per level, 1 to 4.
     private static let shades: [Double] = [0, 0.3, 0.52, 0.76, 1]
 
-    private static func fill(_ level: Int) -> Color {
+    private func fill(_ level: Int) -> Color {
         if level <= 0 { return Color.primary.opacity(0.07) }
-        return StatsTheme.red.opacity(shades[min(level, 4)])
+        return st.accent.opacity(Self.shades[min(level, 4)])
     }
 
     var body: some View {
         let columns = CGFloat(Stats.yearWeeks)
+        let labelWidth = self.labelWidth, monthHeight = self.monthHeight
         VStack(alignment: .leading, spacing: 10) {
             HStack(alignment: .firstTextBaseline) {
-                Text("\(year.total.grouped) \(year.total == 1 ? "word" : "words") in the last year").font(.headline)
+                Text(L(year.total == 1 ? "%@ word in the last year" : "%@ words in the last year", year.total.grouped))
+                    .font(st.font(13, .bold))
                 Spacer()
-                Text(readout).font(.callout).foregroundStyle(.secondary).lineLimit(1)
+                Text(readout).font(st.font(12)).foregroundStyle(.secondary).lineLimit(1)
             }
             VStack(alignment: .trailing, spacing: 8) {
                 GeometryReader { geo in
-                    let step = min((geo.size.width - Self.labelWidth) / columns,
-                                   (geo.size.height - Self.monthHeight) / 7)
+                    let step = min((geo.size.width - labelWidth) / columns,
+                                   (geo.size.height - monthHeight) / 7)
                     Canvas { ctx, _ in grid(ctx, step: step) }
                         .contentShape(Rectangle())
                         .onContinuousHover { phase in
@@ -942,10 +1180,10 @@ private struct YearView: View {
                                 if hovered != nil { onHover(nil) }
                                 return
                             }
-                            let c = Int((p.x - Self.labelWidth) / step)
-                            let r = Int((p.y - Self.monthHeight) / step)
+                            let c = Int((p.x - labelWidth) / step)
+                            let r = Int((p.y - monthHeight) / step)
                             let i = c * 7 + r
-                            let inside = p.x >= Self.labelWidth && p.y >= Self.monthHeight && r < 7
+                            let inside = p.x >= labelWidth && p.y >= monthHeight && r < 7
                             let found: Int? = inside && year.words.indices.contains(i) ? i : nil
                             if found != hovered { onHover(found) }
                         }
@@ -954,32 +1192,33 @@ private struct YearView: View {
                 HStack(spacing: 3) {
                     Text("Less").padding(.trailing, 2)
                     ForEach(0..<5) { l in
-                        RoundedRectangle(cornerRadius: 2).fill(Self.fill(l)).frame(width: 10, height: 10)
+                        RoundedRectangle(cornerRadius: 2).fill(fill(l)).frame(width: st.size(10), height: st.size(10))
                     }
                     Text("More").padding(.leading, 2)
                 }
-                .font(.caption).foregroundStyle(.secondary)
+                .font(st.font(10)).foregroundStyle(.secondary)
             }
             // The grid and its legend stop growing at `maxStep` and sit in the
             // middle.
-            .frame(maxWidth: Self.labelWidth + columns * Self.maxStep)
+            .frame(maxWidth: labelWidth + columns * Self.maxStep * st.scale)
             .frame(maxWidth: .infinity)
         }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("A year of dictation")
-        .accessibilityValue("\(year.total.grouped) words, \(year.words.filter { $0 > 0 }.count) days with dictation")
+        .accessibilityValue(L("%@ words, %d days with dictation", year.total.grouped, year.words.filter { $0 > 0 }.count))
     }
 
     private func grid(_ ctx: GraphicsContext, step: CGFloat) {
         let cell = max(step - Self.gap, 1)
+        let labelFont = st.font(10)
         var cal = Calendar.current
         cal.locale = statsLocale
         var lastMonth = -1, lastLabel = -10
         for (i, level) in year.levels.enumerated() {
             let c = i / 7, r = i % 7
-            let rect = CGRect(x: Self.labelWidth + CGFloat(c) * step, y: Self.monthHeight + CGFloat(r) * step,
+            let rect = CGRect(x: labelWidth + CGFloat(c) * step, y: monthHeight + CGFloat(r) * step,
                               width: cell, height: cell)
-            ctx.fill(Path(roundedRect: rect, cornerRadius: min(2.5, cell / 4)), with: .color(Self.fill(level)))
+            ctx.fill(Path(roundedRect: rect, cornerRadius: min(2.5, cell / 4)), with: .color(fill(level)))
             if i == hovered || i == year.levels.count - 1 {
                 ctx.stroke(Path(roundedRect: rect.insetBy(dx: -1, dy: -1), cornerRadius: min(3, cell / 3)),
                            with: .color(Color.primary.opacity(i == hovered ? 0.9 : 0.5)), lineWidth: 1)
@@ -991,7 +1230,7 @@ private struct YearView: View {
                     // gets a name only if it has room before the next one.
                     if lastMonth != -1 || cal.component(.day, from: date(i)) <= 7, c - lastLabel >= 3,
                        c < Stats.yearWeeks - 2 {
-                        ctx.draw(Text(cal.shortMonthSymbols[month - 1]).font(.system(size: 10))
+                        ctx.draw(Text(cal.shortMonthSymbols[month - 1]).font(labelFont)
                                     .foregroundStyle(.secondary),
                                  at: CGPoint(x: rect.minX, y: 0), anchor: .topLeading)
                         lastLabel = c
@@ -1004,8 +1243,8 @@ private struct YearView: View {
         for r in 0..<7 {
             let weekday = (cal.firstWeekday - 1 + r) % 7 + 1
             guard [2, 4, 6].contains(weekday) else { continue }
-            ctx.draw(Text(cal.shortWeekdaySymbols[weekday - 1]).font(.system(size: 10)).foregroundStyle(.secondary),
-                     at: CGPoint(x: 0, y: Self.monthHeight + CGFloat(r) * step + cell / 2), anchor: .leading)
+            ctx.draw(Text(cal.shortWeekdaySymbols[weekday - 1]).font(labelFont).foregroundStyle(.secondary),
+                     at: CGPoint(x: 0, y: monthHeight + CGFloat(r) * step + cell / 2), anchor: .leading)
         }
     }
 }
@@ -1015,6 +1254,7 @@ private struct YearView: View {
 private struct HistoryList: View {
     let rows: [HistoryRow]
     @ObservedObject var state: StatsViewState
+    @Environment(\.sayit) private var st
     /// The newest matches shown; a search narrows it down further.
     private static let limit = 500
 
@@ -1029,15 +1269,17 @@ private struct HistoryList: View {
             HStack {
                 TextField("Search the history", text: $state.query)
                     .textFieldStyle(.roundedBorder)
-                    .frame(width: 260)
+                    .font(st.font(13))
+                    .frame(width: 260 * st.scale)
                 Spacer()
-                Text("\(rows.count.grouped) \(rows.count == 1 ? "dictation" : "dictations")")
-                    .font(.callout).foregroundStyle(.secondary)
+                Text(L(rows.count == 1 ? "%@ dictation" : "%@ dictations", rows.count.grouped))
+                    .font(st.font(12)).foregroundStyle(.secondary)
             }
             .padding(.horizontal, 24)
             .padding(.bottom, 8)
             if found.isEmpty {
                 Text("Nothing in the history matches.")
+                    .font(st.font(13))
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
@@ -1047,21 +1289,21 @@ private struct HistoryList: View {
                             VStack(alignment: .leading, spacing: 3) {
                                 Text(row.entry.time.text(.dateTime.weekday(.abbreviated).day().month(.abbreviated)
                                         .hour().minute())
-                                     + " · \(row.entry.words) \(row.entry.words == 1 ? "word" : "words")"
+                                     + " · " + L(row.entry.words == 1 ? "%@ word" : "%@ words", row.entry.words.grouped)
                                      + " · \(Stats.duration(row.entry.seconds))")
-                                    .font(.caption).foregroundStyle(.secondary)
-                                Text(row.entry.text).lineLimit(4).textSelection(.enabled)
+                                    .font(st.font(10.5)).foregroundStyle(.secondary)
+                                Text(row.entry.text).font(st.font(13)).lineLimit(4).textSelection(.enabled)
                             }
                             Spacer(minLength: 8)
-                            Button(state.copied == row.id ? "Copied" : "Copy") { copy(row) }
+                            Button(L(state.copied == row.id ? "Copied" : "Copy")) { copy(row) }
                                 .controlSize(.small)
                         }
                         .padding(.vertical, 4)
                         .listRowBackground(Color.clear)
                     }
                     if found.count > HistoryList.limit {
-                        Text("The newest \(HistoryList.limit) of \(found.count.grouped) are shown. Search to find older ones.")
-                            .font(.caption).foregroundStyle(.secondary)
+                        Text(L("The newest %d of %@ are shown. Search to find older ones.", HistoryList.limit, found.count.grouped))
+                            .font(st.font(10.5)).foregroundStyle(.secondary)
                             .listRowBackground(Color.clear)
                     }
                 }

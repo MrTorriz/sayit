@@ -17,7 +17,8 @@
 #     else into ~/Applications (SAYIT_APP_DIR overrides either); a copy left
 #     in the other place by an earlier install is removed. Menu bar only, with this repository's path in Info.plist and
 #     an icon (the pill on a dark tile) drawn by mac/Sources/Icon from the same
-#     geometry as the logo, then packed with iconutil.
+#     geometry as the logo, then packed with iconutil. The translations in
+#     mac/Resources/*.lproj go with it: Sayit follows the Mac's language.
 #   - Signs with a local, self-signed code-signing identity, created on the
 #     first install in a keychain of its own
 #     (~/Library/Keychains/sayit-signing.keychain-db, no password, never in
@@ -192,7 +193,8 @@ xml() {  # escape for an XML text node
 
 # The sources, the repository path, the signing identity and the build recipe
 # itself (compile, bundle, sign - everything between the two markers below).
-SOURCES_HASH=$( { find "$MAC_DIR/Sources" -name '*.swift' -print0 | sort -z | xargs -0 cat
+SOURCES_HASH=$( { find "$MAC_DIR/Sources" "$MAC_DIR/Resources" -type f \( -name '*.swift' -o -name '*.strings' \) \
+                    -print0 | sort -z | xargs -0 cat
                   printf '%s\n' "$REPO_ROOT" "$IDENTITY"
                   sed -n '/^# --- build recipe/,/^# --- end build recipe/p' "${BASH_SOURCE[0]}"; } | shasum -a 256 | cut -d' ' -f1)
 INSTALLED_HASH=$(cat "$DEST/Contents/Resources/source-hash" 2>/dev/null || true)
@@ -219,6 +221,8 @@ else
     rm -rf "$BUILD/AppIcon.iconset"
     "$BUILD/sayit-icon" "$BUILD/AppIcon.iconset"
     iconutil -c icns -o "$STAGE/Contents/Resources/AppIcon.icns" "$BUILD/AppIcon.iconset"
+    # The translations: the app shows the first of the user's languages it has.
+    cp -R "$MAC_DIR"/Resources/*.lproj "$STAGE/Contents/Resources/"
 
     VERSION=$(git -C "$REPO_ROOT" describe --tags --always 2>/dev/null || echo dev)
     cat > "$STAGE/Contents/Info.plist" <<EOF
@@ -231,6 +235,9 @@ else
     <key>CFBundleDisplayName</key><string>Sayit</string>
     <key>CFBundleExecutable</key><string>Sayit</string>
     <key>CFBundleIconFile</key><string>AppIcon</string>
+    <key>CFBundleDevelopmentRegion</key><string>en</string>
+    <key>NSAppleEventsUsageDescription</key><string>With Pause music while recording on, Sayit pauses Music and Spotify while you dictate.</string>
+    <key>CFBundleLocalizations</key><array><string>en</string><string>sv</string></array>
     <key>CFBundlePackageType</key><string>APPL</string>
     <key>CFBundleShortVersionString</key><string>$(xml "$VERSION")</string>
     <key>CFBundleVersion</key><string>1</string>

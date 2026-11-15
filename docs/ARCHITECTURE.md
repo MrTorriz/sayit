@@ -36,7 +36,7 @@ flowchart LR
 |---|---|
 | **Model handling** | The base engine uses pinned whisper.cpp, GGML Whisper and Silero VAD. Linux and Windows can substitute the OpenVINO server; macOS runs whisper.cpp on Metal. Every platform uses the local daemon first and `whisper-cli` on HTTP/transport failure; an empty successful response is final |
 | **Wordlist format** | `original<TAB>replacement`; rules sorted by original length descending, applied sequentially and globally, case-insensitive on Unicode word boundaries, originals treated as literal strings rather than regexes |
-| **History format** | `history.jsonl`, one JSON object per line: `time` (local ISO-8601 to seconds), `seconds`, `words`, `text`. Same field names, order and types, so a history file is portable between the platforms |
+| **History format** | `history.jsonl`, one JSON object per line: `time` (local ISO-8601 to seconds), `seconds`, `words`, `text`. Same field names, order and types, so a history file is portable between the platforms. macOS may add `latency` (seconds from release to paste, when the paste succeeded) and `app` (the app in front); readers ignore fields they do not know |
 | **Settings** | One `.env` from one `.env.example`. A setting that exists on more than one platform has the same name and the same meaning; the file carries a clearly marked Windows section and a macOS section at the end. `Sayit.app` deliberately reads the Windows names for the trigger and the indicator |
 | **Diagnostics discipline** | A separate read-only `doctor` command on each platform; error logs record error *classes*, never dictated text; profiling records timings, never text |
 | **Documentation and identity** | Shared documentation and logo. Every platform shows the same voice wave while recording (21 bars, tallest in the middle, from the shared `VOICE_*` constants) without a lamp or wordmark; Windows also omits the outline. Optional resident views retain the lamp and wordmark. `docs/check-geometry.py` checks the Windows and macOS copies of the shared geometry against the Linux overlay; `docs/build-logo.py` generates the logo from the resident design |
@@ -312,14 +312,14 @@ sequenceDiagram
     T-->>S: final text on stdout
     S->>I: final text
     I->>I: snapshot the clipboard (every type), write the text, Cmd+V, guarded restore
-    S->>S: status to sayit.status, append {time, seconds, words, text} to history.jsonl
+    S->>S: status to sayit.status, append {time, seconds, words, latency, app, text} to history.jsonl
 ```
 
 ### Components
 
 | Component | Single responsibility |
 |---|---|
-| `Sayit.app` | The menu bar agent: the push-to-talk event tap, the pill, the menu and the permission prompts. Runs `bin/sayit start`, `stop` and `cancel`; records and pastes nothing itself |
+| `Sayit.app` | The menu bar agent: the push-to-talk event tap, the pill, the menu, the Settings and Statistics windows and the permission prompts. Runs `bin/sayit start`, `stop` and `cancel`; records and pastes nothing itself |
 | `sayit-rec` | Audio capture only — `AVCaptureSession` to 16 kHz mono WAV. Also publishes the level, enforces `MAX_RECORD_SECONDS` and reports a digitally silent capture. With `SAYIT_SEGMENTS=1` it also cuts the recording at pauses into pieces of their own. `--list` and `--resolve` serve diagnostics; `--replay` plays a WAV in as if it were being recorded, for tests and benchmarks |
 | `sayit-paste` | Text delivery: clipboard plus `Cmd+V` with the whole previous clipboard restored, or Unicode typing. `--check` reports Accessibility and Secure Input |
 | `mac/install.sh` | Builds the three with `swiftc`, signs and installs the bundle, writes and loads the two LaunchAgents; `--uninstall` |
@@ -329,13 +329,21 @@ sequenceDiagram
 | Source | Holds |
 |---|---|
 | `mac/Sources/Agent/main.swift` | Sayit's entry point, and `--probe` |
-| `mac/Sources/Agent/AppDelegate.swift` | The menu bar item, the status line, permission prompts, Reload Settings, the `sayit.agent` status file |
-| `mac/Sources/Agent/Config.swift` | Sayit's settings from `.env`, and the `TRIGGER_BUTTON` grammar |
-| `mac/Sources/Agent/Trigger.swift` | The event tap: the three modes, Escape, the modifier rule, the own-event signature |
+| `mac/Sources/Agent/AppDelegate.swift` | The menu bar item and the main menu, the status line, permission prompts, watching `.env` for changes, Learn From Selection, the `sayit.agent` status file |
+| `mac/Sources/Agent/Config.swift` | Sayit's settings from `.env`, and the `TRIGGER_BUTTON` grammar, both ways: parsing a name, and naming what Record captured |
+| `mac/Sources/Agent/Trigger.swift` | The event tap: one or two triggers, the three modes, Escape, the modifier rule, Record, the own-event signature |
 | `mac/Sources/Agent/Pill.swift` | The pill's two lifetimes, its position file and its animation |
 | `mac/Sources/Agent/Runner.swift` | Spawns `bin/sayit`; a stop waits for its start to have exited |
 | `mac/Sources/Agent/Stats.swift` | The Statistics window's numbers from `history.jsonl`: totals, bars per hour, day or week, streaks, the year calendar. Foundation only, unit-tested |
 | `mac/Sources/Agent/StatsWindow.swift` | The Statistics window itself (SwiftUI): overview and searchable history. Reads the history while open, keeps nothing once closed |
+| `mac/Sources/Agent/SettingsWindow.swift` | The Settings window (SwiftUI): six tabs, each control writing its setting to `.env` |
+| `mac/Sources/Agent/EnvFile.swift` | Writes a setting into `.env` in place, keeping comments, `export` and the file's permissions |
+| `mac/Sources/Agent/Look.swift` | Appearance: text size, accent colour, theme, cards and the Statistics window's layout, kept in the app's defaults |
+| `mac/Sources/Agent/Localize.swift` | The interface language: English, or Swedish from `mac/Resources/sv.lproj` when macOS prefers it |
+| `mac/Sources/Agent/AppProfiles.swift` | Per-app settings in `~/.config/sayit/apps/<bundle id>.env`, passed to `bin/sayit-transcribe` as `SAYIT_APP_PROFILE` |
+| `mac/Sources/Agent/MediaPause.swift` | `MEDIA_WHILE_RECORDING`: turns Music and Spotify down or pauses them by Apple events, and puts them back |
+| `mac/Sources/Agent/Corrections.swift` | Learn From Selection: aligns a corrected text with its dictation and proposes wordlist rules. Foundation only, unit-tested |
+| `mac/Sources/Agent/ModelDownloads.swift` | Downloads a KB-Whisper model and keeps it only if its sha256 matches the one `install.sh` pins |
 | `mac/Sources/Agent/Wordmark.swift` | The README's lockup for the window: the paths of `docs/logo-wordmark.svg` and a reader for them; `docs/check-geometry.py` keeps the two equal |
 | `mac/Sources/Rec/main.swift` | `sayit-rec` |
 | `mac/Sources/Rec/Segmenter.swift` | Where `sayit-rec` cuts a recording into pieces (`SEGMENT_WHILE_RECORDING`) |

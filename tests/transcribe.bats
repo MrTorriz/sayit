@@ -140,6 +140,20 @@ EOF
     ! grep -q -- '-F prompt=' "$STUB_CTL/curl.args"
 }
 
+@test "an app profile replaces the language and prompt for this dictation" {
+    printf 'SPEECH_LANGUAGE="en"\nINITIAL_PROMPT="kubectl and git"\n' > "$BATS_TEST_TMPDIR/app.env"
+    SAYIT_APP_PROFILE="$BATS_TEST_TMPDIR/app.env" SPEECH_LANGUAGE=sv run "$TRANSCRIBE" "$WAV"
+    [ "$status" -eq 0 ]
+    grep -q -- '--form-string language=en' "$STUB_CTL/curl.args"
+    grep -q -- '--form-string prompt=kubectl and git' "$STUB_CTL/curl.args"
+}
+
+@test "a missing app profile changes nothing" {
+    SAYIT_APP_PROFILE="$BATS_TEST_TMPDIR/none.env" SPEECH_LANGUAGE=sv run "$TRANSCRIBE" "$WAV"
+    [ "$status" -eq 0 ]
+    grep -q -- '--form-string language=sv' "$STUB_CTL/curl.args"
+}
+
 @test "curl deadline scales with audio length" {
     head -c 320000 /dev/zero > "$WAV"   # 10 s of audio -> deadline 20 s
     run "$TRANSCRIBE" "$WAV"

@@ -2,7 +2,9 @@
 //
 // Foundation only, no AppKit: mac/tests/StatsTests.swift compiles this file on
 // its own. The history is the file bin/sayit appends to, one JSON object per
-// line: time (local, ISO-8601 to seconds), seconds, words, text. A line that
+// line: time (local, ISO-8601 to seconds), seconds, words, text, and since
+// Sayit's Settings window two optional fields: latency (seconds from the
+// release to the pasted text) and app (where the text went). A line that
 // does not parse is counted and skipped, as bin/sayit-history does, so one
 // bad line never hides the healthy entries around it.
 
@@ -13,6 +15,10 @@ struct Dictation: Equatable {
     let seconds: Double
     let words: Int
     let text: String
+    /// Release to pasted text; nil for older entries and failed pastes.
+    var latency: Double? = nil
+    /// The app the text went to, by name; nil when nobody said.
+    var app: String? = nil
 }
 
 enum History {
@@ -61,8 +67,12 @@ enum History {
             }
             let seconds = (object["seconds"] as? NSNumber)?.doubleValue ?? 0
             let words = (object["words"] as? NSNumber)?.intValue ?? 0
+            let latency = (object["latency"] as? NSNumber)?.doubleValue
+            let app = (object["app"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
             entries.append(Dictation(time: time, seconds: seconds.isFinite ? max(0, seconds) : 0,
-                                     words: max(0, words), text: object["text"] as? String ?? ""))
+                                     words: max(0, words), text: object["text"] as? String ?? "",
+                                     latency: latency.flatMap { $0.isFinite && $0 >= 0 ? $0 : nil },
+                                     app: app.flatMap { $0.isEmpty ? nil : $0 }))
         }
         return (entries, corrupt)
     }
@@ -93,6 +103,11 @@ struct Bucket: Equatable, Identifiable {
     var id: Date { start }
 }
 
+struct AppShare: Equatable {
+    let name: String
+    let words: Int
+}
+
 struct Summary: Equatable {
     var dictations = 0
     var words = 0
@@ -111,6 +126,19 @@ struct Summary: Equatable {
     /// is over: today still open keeps yesterday's streak.
     var streak = 0
     var longestStreak = 0
+    /// Release to pasted text over the range's dictations that have it: the
+    /// median, the slowest, and how many there were.
+    var latencyMedian: Double?
+    var latencySlowest: Double?
+    var latencyCount = 0
+    /// Words per app over the range, most first, and the words with an app
+    /// to share them out of. Dictations from before apps were recorded are
+    /// left out of both.
+    var apps: [AppShare] = []
+    var appWords = 0
+    /// Today, whatever the range: for the daily goal and the menu.
+    var todayWords = 0
+    var todayDictations = 0
 
     /// Words a minute while speaking.
     var pace: Double { seconds > 0 ? Double(words) / (seconds / 60) : 0 }
@@ -248,8 +276,20 @@ enum Stats {
             slot = bucketStart(next)
         }
 
+        for entry in entries where entry.time >= today && entry.time < end {
+            out.todayWords += entry.words
+            out.todayDictations += 1
+        }
+
         var perDay: [Date: Bucket] = [:]
+        var latencies: [Double] = []
+        var perApp: [String: Int] = [:]
         for entry in entries where entry.time >= first && entry.time < end {
+            if let l = entry.latency { latencies.append(l) }
+            if let a = entry.app {
+                perApp[a, default: 0] += entry.words
+                out.appWords += entry.words
+            }
             out.dictations += 1
             out.words += entry.words
             out.seconds += entry.seconds
@@ -265,6 +305,16 @@ enum Stats {
             perDay[d]?.seconds += entry.seconds
             perDay[d]?.dictations += 1
         }
+        latencies.sort()
+        out.latencyCount = latencies.count
+        if !latencies.isEmpty {
+            let mid = latencies.count / 2
+            out.latencyMedian = latencies.count % 2 == 1 ? latencies[mid] : (latencies[mid - 1] + latencies[mid]) / 2
+            out.latencySlowest = latencies.last
+        }
+        // Most words first; a tie goes by name, so the order does not move about.
+        out.apps = perApp.map { AppShare(name: $0.key, words: $0.value) }
+            .sorted { ($0.words, $1.name) > ($1.words, $0.name) }
         out.activeDays = perDay.count
         // The earlier day wins a tie, so the answer does not move about.
         out.bestDay = perDay.values.max { ($0.words, $1.start) < ($1.words, $0.start) }

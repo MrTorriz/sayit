@@ -23,6 +23,8 @@
 #     an empty transcription from a healthy daemon is authoritative (silence)
 #     and is never re-run. whisper-cli and the model file are required only
 #     for the fallback path, never while the daemon serves.
+#   - SAYIT_APP_PROFILE (set by Sayit.app on macOS): a file of the app's own
+#     SPEECH_LANGUAGE, INITIAL_PROMPT and SPOKEN_PUNCTUATION, read after .env.
 #   - Reads configuration from .env. SPEECH_LANGUAGE, INITIAL_PROMPT and the
 #     four VAD tuning settings (VAD_SPEECH_PAD_MS, VAD_THRESHOLD,
 #     VAD_MIN_SPEECH_MS, VAD_MIN_SILENCE_MS) apply per request on both paths;
@@ -59,6 +61,14 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # shellcheck source=/dev/null
 [[ -f "$REPO_ROOT/.env" ]] && source "$REPO_ROOT/.env"
+# The profile of the app the dictation is for, when there is one: Sayit.app
+# passes it for the app in front when the recording starts. Its language,
+# prompt and spoken punctuation replace .env's for this dictation. Only a
+# file of the user's own is read.
+if [[ -n "${SAYIT_APP_PROFILE:-}" && -f "$SAYIT_APP_PROFILE" && -O "$SAYIT_APP_PROFILE" ]]; then
+    # shellcheck source=/dev/null
+    source "$SAYIT_APP_PROFILE"
+fi
 
 # macOS has no XDG_RUNTIME_DIR. Its per-user temporary directory (mode 0700,
 # private to the user, though on disk) plays the same role; exported, so every
