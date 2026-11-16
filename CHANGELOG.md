@@ -14,8 +14,9 @@
 - macOS: per-app settings. An app can have its own language, words to expect
   and spoken punctuation (Settings > Apps), kept in
   `~/.config/sayit/apps/<bundle id>.env`.
-- macOS: `MEDIA_WHILE_RECORDING` turns Music and Spotify down to a tenth
-  (`lower`) or pauses them (`pause`) while you dictate, and puts them back.
+- macOS: `MEDIA_WHILE_RECORDING` turns all sound down to a tenth (`lower`,
+  the output volume, so a video in a browser too) or pauses Music and Spotify
+  (`pause`) while you dictate, and puts back what it changed.
 - macOS: **Learn From Selection…** in the menu. Correct a dictation where it
   landed, select it, and Sayit proposes the replaced words as wordlist rules
   to tick.

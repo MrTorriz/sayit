@@ -127,6 +127,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        media.restoreNow()
         unlink(agentPath)
     }
 
