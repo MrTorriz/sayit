@@ -341,7 +341,7 @@ sequenceDiagram
 | `mac/Sources/Agent/Look.swift` | Appearance: text size, accent colour, theme, cards and the Statistics window's layout, kept in the app's defaults |
 | `mac/Sources/Agent/Localize.swift` | The interface language: English, or Swedish from `mac/Resources/sv.lproj` when macOS prefers it |
 | `mac/Sources/Agent/AppProfiles.swift` | Per-app settings in `~/.config/sayit/apps/<bundle id>.env`, passed to `bin/sayit-transcribe` as `SAYIT_APP_PROFILE` |
-| `mac/Sources/Agent/MediaPause.swift` | `MEDIA_WHILE_RECORDING`: turns Music and Spotify down or pauses them by Apple events, and puts them back |
+| `mac/Sources/Agent/MediaPause.swift` | `MEDIA_WHILE_RECORDING`: turns the output volume down by Core Audio, or pauses Music and Spotify by Apple events, and puts back what it changed |
 | `mac/Sources/Agent/Corrections.swift` | Learn From Selection: aligns a corrected text with its dictation and proposes wordlist rules. Foundation only, unit-tested |
 | `mac/Sources/Agent/ModelDownloads.swift` | Downloads a KB-Whisper model and keeps it only if its sha256 matches the one `install.sh` pins |
 | `mac/Sources/Agent/Wordmark.swift` | The README's lockup for the window: the paths of `docs/logo-wordmark.svg` and a reader for them; `docs/check-geometry.py` keeps the two equal |

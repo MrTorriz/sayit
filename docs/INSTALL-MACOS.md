@@ -481,19 +481,23 @@ comes first in **System Settings > General > Language & Region**.
 | Tab | What it holds |
 | --- | --- |
 | General | The trigger and a second trigger, each with **Record…**, the mode, keeping the button from other apps, the typing speed to compare with and a daily word goal |
-| Dictation | The microphone, music while recording, the model, language, search width, spoken punctuation, transcribing while recording, quicker short dictations and the words to expect (`INITIAL_PROMPT`); under **Models**, the KB-Whisper models to download and use; the indicator |
+| Dictation | The microphone, sound while recording, the model, language, search width, spoken punctuation, transcribing while recording, quicker short dictations and the words to expect (`INITIAL_PROMPT`); under **Models**, the KB-Whisper models to download and use; the indicator |
 | Text | The wordlist and snippets, and how long the previous clipboard waits before it is put back |
 | Apps | A language, words to expect and spoken punctuation of its own for an app |
 | Appearance | Text size, accent colour, light or dark, glass or solid cards, the glow, and which parts and tiles the Statistics window shows, in which order |
 | Advanced | The transcription server, the trigger probe, the permissions, **Edit .env…** and **Show History in Finder** |
 
-**Music while recording** (`MEDIA_WHILE_RECORDING`) turns Music and Spotify
-down to a tenth while you speak (`lower`), or pauses them (`pause`), and puts
-back what it changed afterwards. Only a player that was playing is touched,
-and nothing is launched. The first time, macOS asks whether Sayit may control
-the player; the answer is kept under **System Settings > Privacy & Security >
-Automation > Sayit**. Players in a browser are left alone: macOS gives an app
-no way to reach them.
+**Sound while recording** (`MEDIA_WHILE_RECORDING`) gets the Mac's sound out
+of the way while you speak, and puts back what it changed afterwards. **Turn
+down** (`lower`) lowers the output volume to a tenth, so everything goes down
+with it, a video in a browser as much as music; a volume you change yourself
+in the meantime is left as you set it. An output without a volume of its own,
+such as a display over HDMI, cannot be turned down, and then Music and Spotify
+are turned down instead. **Pause** (`pause`) pauses Music and Spotify, only if
+they were playing and without launching them. Controlling a player needs
+permission the first time: macOS asks, and keeps the answer under **System
+Settings > Privacy & Security > Automation > Sayit**. A player in a browser
+cannot be paused: macOS gives an app no way to reach it.
 
 **Apps** gives an app its own settings: add it from the apps that are running,
 then set its language, words to expect or spoken punctuation. They are kept in

@@ -236,7 +236,7 @@ else
     <key>CFBundleExecutable</key><string>Sayit</string>
     <key>CFBundleIconFile</key><string>AppIcon</string>
     <key>CFBundleDevelopmentRegion</key><string>en</string>
-    <key>NSAppleEventsUsageDescription</key><string>With Pause music while recording on, Sayit pauses Music and Spotify while you dictate.</string>
+    <key>NSAppleEventsUsageDescription</key><string>With Sound while recording on, Sayit pauses Music and Spotify while you dictate, or turns them down where the output has no volume of its own.</string>
     <key>CFBundleLocalizations</key><array><string>en</string><string>sv</string></array>
     <key>CFBundlePackageType</key><string>APPL</string>
     <key>CFBundleShortVersionString</key><string>$(xml "$VERSION")</string>

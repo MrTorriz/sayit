@@ -31,7 +31,7 @@ final class Runner {
     }
 
     /// A recording starts, and a dictation ends (stopped or cancelled): for
-    /// what goes with them, such as pausing music.
+    /// what goes with them, such as turning the sound down.
     var onStart: (() -> Void)?
     var onEnd: (() -> Void)?
 

@@ -289,11 +289,11 @@
 "Press it now… (Esc cancels)" = "Tryck på den nu… (Esc avbryter)";
 "Record…" = "Spela in…";
 "Press the mouse button, key or combination you want, once. Sayit saves it." = "Tryck en gång på musknappen, tangenten eller kombinationen du vill använda. Sayit sparar den.";
-"Music while recording" = "Musik under inspelning";
+"Sound while recording" = "Ljud under inspelning";
 "Keep playing" = "Spela vidare";
 "Turn down" = "Sänk";
 "Pause" = "Pausa";
-"Music and Spotify, and only if they were playing; afterwards they are put back. macOS asks once for permission, under Privacy & Security > Automation." = "Musik och Spotify, och bara om de spelade; efteråt återställs de. macOS frågar en gång om lov, under Integritet och säkerhet › Automatisering.";
+"Turn down lowers all sound to a tenth, a video in a browser as much as music. Pause pauses Music and Spotify if they were playing; macOS asks once for permission, under Privacy & Security > Automation. Afterwards Sayit puts back what it changed." = "Sänk drar ner allt ljud till en tiondel, ett klipp i webbläsaren lika väl som musik. Pausa pausar Musik och Spotify om de spelade; macOS frågar en gång om lov, under Integritet och säkerhet › Automatisering. Efteråt återställer Sayit det den ändrade.";
 "Apps" = "Appar";
 "An app's own settings replace the general ones while you dictate into it. Sayit looks at the app in front when you start to speak." = "En apps egna inställningar ersätter de allmänna när du dikterar i den. Sayit utgår från appen som är framme när du börjar tala.";
 "As in General" = "Som under Allmänt";

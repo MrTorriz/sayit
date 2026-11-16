@@ -131,7 +131,7 @@ struct TriggerSpec: Equatable {
     }
 }
 
-/// MEDIA_WHILE_RECORDING: what Music and Spotify do while you dictate.
+/// MEDIA_WHILE_RECORDING: what the Mac's sound does while you dictate.
 enum MediaMode: String {
     case off, lower, pause
 }
@@ -160,8 +160,8 @@ struct AgentConfig {
     let locked: Bool
     let scale: CGFloat
     let excludeFromCapture: Bool
-    /// MEDIA_WHILE_RECORDING: Music and Spotify turned down or paused while
-    /// recording (MediaPause.swift).
+    /// MEDIA_WHILE_RECORDING: the output turned down, or Music and Spotify
+    /// paused, while recording (MediaPause.swift).
     let media: MediaMode
 
     /// The triggers in effect, the first first.

@@ -393,13 +393,14 @@ private struct DictationPane: View {
                 if !source.isEmpty && !devices.contains(source) { Text(L("%@ (not connected)", source)).tag(source) }
             }
             VStack(alignment: .leading, spacing: 4) {
-                Picker("Music while recording", selection: env.choice("MEDIA_WHILE_RECORDING", "off")) {
+                Picker("Sound while recording", selection: env.choice("MEDIA_WHILE_RECORDING", "off")) {
                     Text("Keep playing").tag("off")
                     Text("Turn down").tag("lower")
                     Text("Pause").tag("pause")
                 }
-                Help("Music and Spotify, and only if they were playing; afterwards they are put back. "
-                     + "macOS asks once for permission, under Privacy & Security > Automation.")
+                Help("Turn down lowers all sound to a tenth, a video in a browser as much as music. "
+                     + "Pause pauses Music and Spotify if they were playing; macOS asks once for permission, "
+                     + "under Privacy & Security > Automation. Afterwards Sayit puts back what it changed.")
             }
         }
         Section("Transcription") {

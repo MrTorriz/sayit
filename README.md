@@ -54,7 +54,7 @@ Linux and Windows 11 remain fully supported for dictation.
 - **A real Mac app.** Settings for everything, in English or Swedish: record
   any mouse button, key or combination as the trigger, add a second one (a
   mouse button and a key, say), give each app its own language and words,
-  turn Music and Spotify down while you speak, download models, and choose
+  turn the sound down while you speak, download models, and choose
   the text size, accent colour and layout.
 - **Optional Turbo engine.** On Intel graphics, Linux and Windows can switch to
   Whisper large-v3-turbo on OpenVINO with one command, and back again.
