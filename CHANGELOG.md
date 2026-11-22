@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- A new social card (`docs/social-preview.png`): the wordmark in brushed
+  metal with a red glow on IT, the overlay's pill with a voice wave, on a
+  dark background. `docs/make-social-preview.py` now renders it as a page
+  in a headless Chrome or Chromium instead of with pycairo and librsvg.
 - macOS: a Settings window. **Settings…** (⌘,) in the menu shows every
   setting in six tabs (General, Dictation, Text, Apps, Appearance, Advanced)
   and writes each change to `.env` in place, keeping its comments; Sayit
